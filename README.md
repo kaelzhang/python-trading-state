@@ -6,7 +6,11 @@
 
 # trading-state
 
-A lightweight Python engine for simulating trading account balances, order states, and exchange-style constraints.
+`trading-state` is a small, focused Python library that models the dynamic state of a trading account, including balances, positions, open orders, and PnL, under realistic exchange-like constraints.
+
+It provides configurable rules for price limits, notional and quantity limits, order validation, and order lifecycle transitions (new, partially filled, filled, canceled, rejected), making it easy to plug into backtesting frameworks, execution simulators, or custom quant research tools.
+
+By separating “trading state” from strategy logic, `trading-state` helps you build cleaner, more testable quantitative trading systems.
 
 ## Install
 
@@ -17,7 +21,7 @@ $ pip install trading-state
 ## Usage
 
 ```py
-import trading_state
+from trading_state import TradingState
 ```
 
 ## License

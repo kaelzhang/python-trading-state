@@ -35,7 +35,7 @@ dev = [
     "coverage",
     "ruff",
     "pytest",
-    # "pytest-asyncio",
+    "pytest-asyncio",
     "pytest-cov",
     "twine",
     "mypy",
