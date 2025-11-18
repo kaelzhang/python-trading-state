@@ -1,7 +1,6 @@
 # Ref
 # https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
 
-# from dataclasses import dataclass
 from typing import (
     List, Union, Optional
 )
@@ -21,13 +20,19 @@ class BaseOrderTicket:
     An order ticket contains the necessary information to create an order
     """
 
-    BASE_MANDOTORY_PARAMS: List[str] = ['symbol', 'side']
+    type: OrderType
+
+    BASE_MANDOTORY_PARAMS: List[str] = ['symbol', 'side', 'quantity']
     ADDITIONAL_MANDOTORY_PARAMS: List[str] = []
 
-    BASE_OPTIONAL_PARAMS: List[str] = [
-        'stp'
-    ]
+    symbol: Symbol
+    side: OrderSide
+    quantity: Decimal
+
+    BASE_OPTIONAL_PARAMS: List[str] = ['stp']
     ADDITIONAL_OPTIONAL_PARAMS: List[str] = []
+
+    stp: Optional[STPMode] = None
 
     @property
     def REQUIRED_PARAMS(self) -> List[str]:
@@ -47,10 +52,6 @@ class BaseOrderTicket:
             self.REQUIRED_PARAMS + self.OPTIONAL_PARAMS
         )
 
-    symbol: Symbol
-    side: OrderSide
-    type: OrderType
-    stp: Optional[STPMode] = None
     others: dict[str, any]
 
     def __init__(
@@ -72,17 +73,34 @@ class BaseOrderTicket:
         self.others = kwargs
         self._validate_params()
 
+    def has(self, param: str) -> bool:
+        return (
+            param in self.PARAMS
+            and getattr(self, param) is not None
+        )
+
+    def is_a(
+        self,
+        order_type: OrderType,
+        order_side: Optional[OrderSide] = None
+    ) -> bool:
+        return (
+            self.type == order_type
+            and (order_side is None or self.side == order_side)
+        )
+
     def _validate_params(self) -> None:
+        # do nothing by default
+        # no extra validation is needed
         ...
 
 
 class LimitOrderTicket(BaseOrderTicket):
     type = OrderType.LIMIT
 
-    ADDITIONAL_MANDOTORY_PARAMS = ['price', 'quantity', 'time_in_force']
+    ADDITIONAL_MANDOTORY_PARAMS = ['price', 'time_in_force']
 
     price: Decimal
-    quantity: Decimal
     time_in_force: TimeInForce
 
     ADDITIONAL_OPTIONAL_PARAMS = ['post_only', 'iceberg_quantity']
@@ -101,9 +119,8 @@ class LimitOrderTicket(BaseOrderTicket):
 class MarketOrderTicket(BaseOrderTicket):
     type = OrderType.MARKET
 
-    ADDITIONAL_MANDOTORY_PARAMS = ['quantity', 'quantity_type']
+    ADDITIONAL_MANDOTORY_PARAMS = ['quantity_type']
 
-    quantity: Decimal
     quantity_type: MarketQuantityType
 
 
@@ -123,10 +140,6 @@ PARAMS_ST_AND_ICEBERG_QUANTITY = [
 class StopLossOrderTicket(BaseOrderTicket):
     type = OrderType.STOP_LOSS
 
-    ADDITIONAL_MANDOTORY_PARAMS = ['quantity']
-
-    quantity: Decimal
-
     ADDITIONAL_OPTIONAL_PARAMS = PARAMS_STOP_PRICE_AND_TRAILING_DELTA
 
     stop_price: Optional[Decimal] = None
@@ -139,7 +152,7 @@ class StopLossOrderTicket(BaseOrderTicket):
 class StopLossLimitOrderTicket(StopLossOrderTicket):
     type = OrderType.STOP_LOSS_LIMIT
 
-    ADDITIONAL_MANDOTORY_PARAMS = ['price', 'quantity', 'time_in_force']
+    ADDITIONAL_MANDOTORY_PARAMS = ['price', 'time_in_force']
 
     price: Decimal
     time_in_force: TimeInForce
