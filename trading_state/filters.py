@@ -3,13 +3,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import (
     Optional,
-    Tuple
+    Tuple,
+    Callable
 )
 
 from .order import OrderTicket
-# from .enums import OrderType
+from .enums import OrderType, OrderSide
 from .util import (
-    apply_precision, apply_tick_size
+    apply_tick_size
 )
 
 
@@ -28,13 +29,51 @@ class BaseFilter(ABC):
     def apply(
         self,
         ticket: OrderTicket,
-        validate_only: bool
+        validate_only: bool,
+        **kwargs
     ) -> FilterResult:
         ...
 
 
 PARAM_PRICE = 'price'
 PARAM_STOP_PRICE = 'stop_price'
+
+ApplyRangeResult = Tuple[None, Decimal] | Tuple[Exception, None]
+
+def apply_range(
+    target: Decimal,
+    min_value: Decimal,
+    max_value: Decimal,
+    tick_size: Decimal,
+    validate_only: bool,
+    param_name: str,
+    name: str
+) -> ApplyRangeResult:
+    if not min_value.is_zero() and target < min_value:
+        return (
+            ValueError(f'ticket.{param_name} {target} is less than the minimum {name} {min_value}'),
+            None
+        )
+
+    if not max_value.is_zero() and target > max_value:
+        return (
+            ValueError(f'ticket.{param_name} {target} is greater than the maximum {name} {max_value}'),
+            None
+        )
+
+    # No tick size restriction
+    if tick_size.is_zero():
+        return None, target
+
+    new_target = apply_tick_size(target, tick_size)
+
+    if validate_only and new_target != target:
+        return (
+            ValueError(f'ticket.{param_name} {target} does not follow the tick size {tick_size}'),
+            None
+        )
+
+    return None, new_target
 
 
 @dataclass
@@ -56,36 +95,22 @@ class PriceFilter(BaseFilter):
         price: Decimal,
         param_name: str,
         validate_only: bool
-    ) -> Tuple[None, Decimal] | Tuple[Exception, None]:
-        if not self.min_price.is_zero() and price < self.min_price:
-            return (
-                ValueError(f'ticket.{param_name} {price} is less than the minimum price {self.min_price}'),
-                None
-            )
-
-        if not self.max_price.is_zero() and price > self.max_price:
-            return (
-                ValueError(f'ticket.{param_name} {price} is greater than the maximum price {self.max_price}'),
-                None
-            )
-
-        if self.tick_size.is_zero():
-            return None, price
-
-        new_price = apply_tick_size(price, self.tick_size)
-
-        if validate_only and new_price != price:
-            return (
-                ValueError(f'ticket.{param_name} {price} does not follow the tick size {self.tick_size}'),
-                None
-            )
-
-        return None, new_price
+    ) -> ApplyRangeResult:
+        return apply_range(
+            target=price,
+            min_value=self.min_price,
+            max_value=self.max_price,
+            tick_size=self.tick_size,
+            validate_only=validate_only,
+            param_name=param_name,
+            name='price'
+        )
 
     def apply(
         self,
         ticket: OrderTicket,
-        validate_only: bool
+        validate_only: bool,
+        **kwargs
     ) -> FilterResult:
         modified = False
 
@@ -120,4 +145,182 @@ class QuantityFilter(BaseFilter):
         self,
         ticket: OrderTicket
     ) -> bool:
+        return ticket.type != OrderType.MARKET
+
+    def apply(
+        self,
+        ticket: OrderTicket,
+        validate_only: bool,
+        **kwargs
+    ) -> FilterResult:
+        exception, new_quantity = apply_range(
+            target=ticket.quantity,
+            min_value=self.min_quantity,
+            max_value=self.max_quantity,
+            tick_size=self.step_size,
+            validate_only=validate_only,
+            param_name='quantity',
+            name='quantity'
+        )
+
+        if exception:
+            return exception, False
+
+        return None, new_quantity != ticket.quantity
+
+
+class MarketQuantityFilter(QuantityFilter):
+    def when(
+        self,
+        ticket: OrderTicket
+    ) -> bool:
+        return ticket.type == OrderType.MARKET
+
+
+PARAM_ICEBERG_QUANTITY = 'iceberg_quantity'
+
+class IcebergQuantityFilter(BaseFilter):
+    limit: int
+
+    def when(
+        self,
+        ticket: OrderTicket
+    ) -> bool:
+        return ticket.has(PARAM_ICEBERG_QUANTITY)
+
+    def apply(
+        self,
+        ticket: OrderTicket,
+        validate_only: bool,
+        **kwargs
+    ) -> FilterResult:
+        if ticket.iceberg_quantity > self.limit:
+            if validate_only:
+                return (
+                    ValueError(f'ticket.iceberg_quantity {ticket.iceberg_quantity} is greater than the limit {self.limit}'),
+                    None
+                )
+
+            ticket.iceberg_quantity = self.limit
+            return None, True
+
+        return None, False
+
+
+PARAM_TRAILING_DELTA = 'trailing_delta'
+
+class TrailingDeltaFilter(BaseFilter):
+    min_trailing_above_delta: int
+    max_trailing_above_delta: int
+    min_trailing_below_delta: int
+    max_trailing_below_delta: int
+
+    def when(
+        self,
+        ticket: OrderTicket
+    ) -> bool:
+        return ticket.has(PARAM_TRAILING_DELTA)
+
+    def apply(
+        self,
+        ticket: OrderTicket,
+        validate_only: bool,
+        **kwargs
+    ) -> FilterResult:
+        modified = False
+
+        if (
+            ticket.is_a(OrderType.STOP_LOSS, OrderSide.BUY)
+            or ticket.is_a(OrderType.STOP_LOSS_LIMIT, OrderSide.BUY)
+            or ticket.is_a(OrderType.TAKE_PROFIT, OrderSide.SELL)
+            or ticket.is_a(OrderType.TAKE_PROFIT_LIMIT, OrderSide.SELL)
+        ):
+            min_delta = self.min_trailing_above_delta
+            max_delta = self.max_trailing_above_delta
+        else:
+            min_delta = self.min_trailing_below_delta
+            max_delta = self.max_trailing_below_delta
+
+        if ticket.trailing_delta < min_delta:
+            if validate_only:
+                return (
+                    ValueError(f'ticket.trailing_delta {ticket.trailing_delta} is less than the minimum {min_delta}'),
+                    None
+                )
+
+            modified = True
+            ticket.trailing_delta = min_delta
+
+        if ticket.trailing_delta > max_delta:
+            if validate_only:
+                return (
+                    ValueError(f'ticket.trailing_delta {ticket.trailing_delta} is greater than the maximum {max_delta}'),
+                    None
+                )
+
+            modified = True
+            ticket.trailing_delta = max_delta
+
+        return None, modified
+
+
+class NotionalFilter(BaseFilter):
+    min_notional: Decimal
+    apply_min_to_market: bool
+    max_notional: Decimal
+    apply_max_to_market: bool
+    avg_price_mins: int
+
+    def when(
+        self,
+        ticket: OrderTicket
+    ) -> bool:
         return True
+
+    def apply(
+        self,
+        ticket: OrderTicket,
+        validate_only: bool,
+        get_avg_price: Callable[[int], Decimal],
+        **kwargs
+    ) -> FilterResult:
+        market_order = ticket.is_a(OrderType.MARKET)
+
+        if (
+            market_order
+            and not self.apply_min_to_market
+            and not self.apply_max_to_market
+        ):
+            return None, False
+
+        min_notional = self.min_notional
+        max_notional = self.max_notional
+
+        if market_order:
+            price = get_avg_price(self.avg_price_mins)
+
+            if not self.apply_min_to_market:
+                min_notional = Decimal('0')
+            if not self.apply_max_to_market:
+                max_notional = Decimal('Infinity')
+        else:
+            price = ticket.price
+
+        notional = price * ticket.quantity
+
+        if notional < min_notional:
+            # In this situation, we should not fix the order ticket,
+            # or there might be severe side effects.
+            return (
+                ValueError(f'ticket notional {notional} is less than the minimum {min_notional}'),
+                None
+            )
+
+        if notional > max_notional:
+            # Similar to the above
+            return (
+                ValueError(f'ticket notional {notional} is greater than the maximum {max_notional}'),
+                None
+            )
+
+        return None, False
