@@ -111,8 +111,7 @@ def validate_stop_price_and_trailing_delta(self) -> None:
     if self.stop_price is None and self.trailing_delta is None:
         raise ValueError('Either stop_price or trailing_delta must be set')
 
-    if self.stop_price is not None and self.trailing_delta is not None:
-        raise ValueError('Only one of stop_price or trailing_delta can be set')
+    # stop_price and trailing_delta could be combined together
 
 
 PARAMS_STOP_PRICE_AND_TRAILING_DELTA = ['stop_price', 'trailing_delta']
@@ -132,7 +131,6 @@ class StopLossOrderTicket(BaseOrderTicket):
 
     stop_price: Optional[Decimal] = None
     trailing_delta: Optional[Decimal] = None
-    iceberg_quantity: Optional[Decimal] = None
 
     _validate_params = validate_stop_price_and_trailing_delta
 
@@ -151,31 +149,13 @@ class StopLossLimitOrderTicket(StopLossOrderTicket):
     iceberg_quantity: Optional[Decimal] = None
 
 
-class TakeProfitOrderTicket(BaseOrderTicket):
+# At the rest API level, they are structurally identical
+class TakeProfitOrderTicket(StopLossOrderTicket):
     type = OrderType.TAKE_PROFIT
 
-    ADDITIONAL_MANDOTORY_PARAMS = ['quantity']
 
-    quantity: Decimal
-
-    ADDITIONAL_OPTIONAL_PARAMS = ['stop_price', 'trailing_delta']
-
-    stop_price: Optional[Decimal] = None
-    trailing_delta: Optional[Decimal] = None
-
-    _validate_params = validate_stop_price_and_trailing_delta
-
-
-class TakeProfitLimitOrderTicket(TakeProfitOrderTicket):
+class TakeProfitLimitOrderTicket(StopLossOrderTicket):
     type = OrderType.TAKE_PROFIT_LIMIT
-
-    ADDITIONAL_MANDOTORY_PARAMS = ['price', 'quantity', 'time_in_force']
-
-    price: Decimal
-    time_in_force: TimeInForce
-
-    ADDITIONAL_OPTIONAL_PARAMS = PARAMS_ST_AND_ICEBERG_QUANTITY
-    iceberg_quantity: Optional[Decimal] = None
 
 
 OrderTicket = Union[
