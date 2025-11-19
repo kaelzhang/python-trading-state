@@ -7,9 +7,10 @@ from typing import (
     Callable
 )
 
-from .order import OrderTicket
-from .enums import OrderType, OrderSide
+from .order_ticket import OrderTicket
+from .enums import OrderType, OrderSide, MarketQuantityType
 from .util import (
+    apply_precision,
     apply_tick_size
 )
 
@@ -74,6 +75,62 @@ def apply_range(
         )
 
     return None, new_target
+
+
+@dataclass
+class PrecisionFilter(BaseFilter):
+    base_asset_precision: int
+    quote_asset_precision: int
+
+    def when(
+        self,
+        ticket: OrderTicket
+    ) -> bool:
+        return True
+
+    def apply(
+        self,
+        ticket: OrderTicket,
+        validate_only: bool,
+        **kwargs
+    ) -> FilterResult:
+        is_market_order = ticket.is_a(OrderType.MARKET)
+
+        precision = (
+            self.base_asset_precision
+            if (
+                (
+                    not is_market_order
+                    and ticket.side == OrderSide.SELL
+                )
+                or (
+                    is_market_order
+                    and ticket.quantity_type == MarketQuantityType.QUOTE
+                )
+            )
+            else self.quote_asset_precision
+        )
+
+        quantity = apply_precision(ticket.quantity, precision)
+        modified = quantity != ticket.quantity
+
+        if modified and validate_only:
+            return (
+                ValueError(f'ticket.quantity {ticket.quantity} does not follow the precision {precision}'),
+                False
+            )
+
+        ticket.quantity = quantity
+
+        return None, modified
+
+
+@dataclass
+class FeatureGateFilter(BaseFilter):
+    iceberg: bool
+    oco: bool
+    oto: bool
+    trailing_stop: bool
 
 
 @dataclass
@@ -198,7 +255,7 @@ class IcebergQuantityFilter(BaseFilter):
             if validate_only:
                 return (
                     ValueError(f'ticket.iceberg_quantity {ticket.iceberg_quantity} is greater than the limit {self.limit}'),
-                    None
+                    False
                 )
 
             ticket.iceberg_quantity = self.limit
@@ -230,10 +287,10 @@ class TrailingDeltaFilter(BaseFilter):
         modified = False
 
         if (
-            ticket.is_a(OrderType.STOP_LOSS, OrderSide.BUY)
-            or ticket.is_a(OrderType.STOP_LOSS_LIMIT, OrderSide.BUY)
-            or ticket.is_a(OrderType.TAKE_PROFIT, OrderSide.SELL)
-            or ticket.is_a(OrderType.TAKE_PROFIT_LIMIT, OrderSide.SELL)
+            ticket.is_a(OrderType.STOP_LOSS, side=OrderSide.BUY)
+            or ticket.is_a(OrderType.STOP_LOSS_LIMIT, side=OrderSide.BUY)
+            or ticket.is_a(OrderType.TAKE_PROFIT, side=OrderSide.SELL)
+            or ticket.is_a(OrderType.TAKE_PROFIT_LIMIT, side=OrderSide.SELL)
         ):
             min_delta = self.min_trailing_above_delta
             max_delta = self.max_trailing_above_delta
@@ -245,7 +302,7 @@ class TrailingDeltaFilter(BaseFilter):
             if validate_only:
                 return (
                     ValueError(f'ticket.trailing_delta {ticket.trailing_delta} is less than the minimum {min_delta}'),
-                    None
+                    False
                 )
 
             modified = True
@@ -255,7 +312,7 @@ class TrailingDeltaFilter(BaseFilter):
             if validate_only:
                 return (
                     ValueError(f'ticket.trailing_delta {ticket.trailing_delta} is greater than the maximum {max_delta}'),
-                    None
+                    False
                 )
 
             modified = True
@@ -313,14 +370,16 @@ class NotionalFilter(BaseFilter):
             # or there might be severe side effects.
             return (
                 ValueError(f'ticket notional {notional} is less than the minimum {min_notional}'),
-                None
+                False
             )
 
         if notional > max_notional:
             # Similar to the above
             return (
                 ValueError(f'ticket notional {notional} is greater than the maximum {max_notional}'),
-                None
+                False
             )
 
         return None, False
+
+

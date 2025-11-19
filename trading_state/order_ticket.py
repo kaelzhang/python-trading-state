@@ -82,12 +82,22 @@ class BaseOrderTicket:
     def is_a(
         self,
         order_type: OrderType,
-        order_side: Optional[OrderSide] = None
+        **kwargs
     ) -> bool:
-        return (
-            self.type == order_type
-            and (order_side is None or self.side == order_side)
-        )
+        if self.type != order_type:
+            return False
+
+        if not kwargs:
+            return True
+
+        for key, value in kwargs.items():
+            if value is None:
+                continue
+
+            if getattr(self, key) != value:
+                return False
+
+        return True
 
     def _validate_params(self) -> None:
         # do nothing by default
