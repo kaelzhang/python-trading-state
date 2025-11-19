@@ -1,7 +1,10 @@
 from typing import (
     List,
-    Dict
+    Dict,
+    Optional,
+    overload,
 )
+from enum import Enum
 
 from .filters import BaseFilter, FilterResult
 from .order_ticket import OrderTicket
@@ -13,10 +16,9 @@ class Symbol:
     """
 
     __slots__ = (
-        'symbol',
-
-        'min_price',
-        'max_price'
+        'name',
+        'base_asset',
+        'quote_asset'
     )
 
     name: str
@@ -24,7 +26,7 @@ class Symbol:
     quote_asset: str
 
     _filters: List[BaseFilter]
-    _allowed_features: Dict[FeatureType, bool]
+    _allowed_features: Dict[FeatureType, bool | List[Enum]]
 
 
     def __repr__(self) -> str:
@@ -41,18 +43,50 @@ class Symbol:
         self.quote_asset = quote_asset
         self._filters = []
 
+    @overload
     def allow(
         self,
         feature: FeatureType,
         allow: bool = True
+    ) -> None:
+        ...
+
+    @overload
+    def allow(
+        self,
+        feature: FeatureType,
+        allow: List[Enum]
+    ) -> None:
+        ...
+
+    def allow(
+        self,
+        feature: FeatureType,
+        allow: bool | List[Enum]
     ) -> None:
         self._allowed_features[feature] = allow
 
     def support(
         self,
         feature: FeatureType,
+        value: Optional[Enum] = None
     ) -> bool:
-        return self._allowed_features.get(feature, False)
+        allowed = self._allowed_features.get(feature, None)
+
+        if allowed is None:
+            # The feature is not specified, we treat it as not supported
+            return False
+
+        if isinstance(allowed, list):
+            if value is None:
+                raise ValueError(f'symbol.support {feature} requires a value, but got None')
+
+            return value in allowed
+
+        if value is not None:
+            raise ValueError(f'symbol.support {feature} does not allow to test a value, but got {value}')
+
+        return allowed
 
     def add_filter (self, filter: BaseFilter) -> None:
         self._filters.append(filter)

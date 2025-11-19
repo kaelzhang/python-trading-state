@@ -17,7 +17,8 @@ from .util import dynamic_dataclass
 @dynamic_dataclass
 class BaseOrderTicket:
     """
-    An order ticket contains the necessary information to create an order
+    An order ticket contains the necessary information to create an order,
+    but order ticket is not an order
     """
 
     type: OrderType

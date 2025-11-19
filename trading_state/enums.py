@@ -108,3 +108,5 @@ class FeatureType(StringEnum):
     PEG_INSTRUCTIONS = 'PEG_INSTRUCTIONS'
     SPOT = 'SPOT'
     MARGIN = 'MARGIN'
+    ORDER_TYPE = 'ORDER_TYPE'
+    STP_MODE = 'STP_MODE'
