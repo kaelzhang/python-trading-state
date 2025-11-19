@@ -1,9 +1,10 @@
 # Ref
 # https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
 
+from __future__ import annotations
 from typing import (
     List, Union, Optional,
-    # TYPE_CHECKING
+    TYPE_CHECKING
 )
 
 from decimal import Decimal
@@ -13,8 +14,8 @@ from .enums import (
 )
 # from .util import dynamic_dataclass
 
-# if TYPE_CHECKING:
-#     from .symbol import Symbol
+if TYPE_CHECKING:
+    from .symbol import Symbol
 
 
 # @dynamic_dataclass

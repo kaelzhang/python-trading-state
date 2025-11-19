@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import (
     List,
     Dict,
@@ -40,7 +41,7 @@ class Symbol:
 
     def __init__(
         self,
-        name,
+        name: str,
         base_asset: str,
         quote_asset: str
     ):

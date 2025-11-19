@@ -48,6 +48,9 @@ version = {attr = "trading_state.__version__"}
 [tool.setuptools.package-data]
 trading_state = ["py.typed"]
 
+[tool.setuptools.packages.find]
+include = ["trading_state"]
+
 [tool.mypy]
 warn_return_any = true
 ignore_missing_imports = true
