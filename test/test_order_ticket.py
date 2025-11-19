@@ -8,7 +8,11 @@ from trading_state.order_ticket import (
 )
 
 from trading_state.symbol import Symbol
-from trading_state.enums import OrderSide, OrderType, TimeInForce
+from trading_state.enums import (
+    OrderSide, OrderType, TimeInForce, MarketQuantityType
+)
+
+from decimal import Decimal
 
 
 symbol = Symbol(
@@ -18,43 +22,77 @@ symbol = Symbol(
 )
 
 
+stop_loss_case = ({
+    'symbol': symbol,
+    'side': OrderSide.BUY,
+    'quantity': Decimal('1'),
+    'stop_price': Decimal('10000'),
+    'trailing_delta': Decimal('0.01'),
+}, ['stop_price', 'trailing_delta'])
+
+stop_loss_limit_case = ({
+    'symbol': symbol,
+    'side': OrderSide.BUY,
+    'quantity': Decimal('1'),
+    'price': Decimal('10000'),
+    'time_in_force': TimeInForce.GTC,
+    'stop_price': Decimal('10000'),
+    'trailing_delta': Decimal('0.01'),
+}, ['stop_price', 'trailing_delta'])
+
+
 RIGHT_CASES = [
-    (LimitOrderTicket, {
+    ('limit', LimitOrderTicket, {
         'symbol': symbol,
         'side': OrderSide.BUY,
-        'quantity': '1',
-        'price': '10000',
+        'quantity': Decimal('1'),
+        'price': Decimal('10000'),
         'time_in_force': TimeInForce.GTC,
-    })
+    }, []),
+    ('market', MarketOrderTicket, {
+        'symbol': symbol,
+        'side': OrderSide.BUY,
+        'quantity': Decimal('1'),
+        'quantity_type': MarketQuantityType.QUOTE
+    }, []),
+    ('stop-loss', StopLossOrderTicket, *stop_loss_case),
+    ('stop-loss-limit', StopLossLimitOrderTicket, *stop_loss_limit_case),
+    ('take-profit', TakeProfitOrderTicket, *stop_loss_case),
+    ('take-profit-limit', TakeProfitLimitOrderTicket, *stop_loss_limit_case),
 ]
 
 TEST_REQUIRED_CASES = []
 
-for (Order, kwargs) in RIGHT_CASES:
-    TEST_REQUIRED_CASES.append((Order, kwargs, None))
+for (prefix, Order, kwargs, either) in RIGHT_CASES:
+    TEST_REQUIRED_CASES.append((f'{prefix}-1', Order, kwargs, None))
 
     for i in range(len(kwargs)):
         new_kwargs = kwargs.copy()
         key = list(kwargs.keys())[i]
         del new_kwargs[key]
         TEST_REQUIRED_CASES.append(
-            (Order, new_kwargs, [key, 'required'])
+            (
+                f'{prefix}-{i+2} (missing {key})',
+                Order,
+                new_kwargs,
+                None if key in either else [key, 'required']
+            )
         )
 
 
 def test_order_ticket():
-    for index, (Order, kwargs, exceptions) in enumerate(TEST_REQUIRED_CASES):
+    for index, (prefix, Order, kwargs, exceptions) in enumerate(TEST_REQUIRED_CASES):
         try:
             Order(**kwargs)
         except Exception as e:
             if exceptions is None:
-                assert False, f'{index}: unexpected exception "{e}"'
+                assert False, f'{prefix}: unexpected exception "{e}"'
             else:
                 for exception in exceptions:
-                    assert exception in str(e), f'{index}: exception "{e}" does not contain "{exception}"'
+                    assert exception in str(e), f'{prefix}: exception "{e}" does not contain "{exception}"'
         else:
             if exceptions is not None:
-                assert False, f'{index}: expected exception "{exception}" but got none'
+                assert False, f'{prefix}: expected exception "{exception}" but got none'
             else:
-                assert True, f'{index}: passed'
+                assert True, f'{prefix}: passed'
 

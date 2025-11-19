@@ -163,7 +163,6 @@ class StopLossOrderTicket(BaseOrderTicket):
     _validate_params = validate_stop_price_and_trailing_delta
 
 
-
 class StopLossLimitOrderTicket(StopLossOrderTicket):
     type = OrderType.STOP_LOSS_LIMIT
 
@@ -182,7 +181,7 @@ class TakeProfitOrderTicket(StopLossOrderTicket):
     type = OrderType.TAKE_PROFIT
 
 
-class TakeProfitLimitOrderTicket(StopLossOrderTicket):
+class TakeProfitLimitOrderTicket(StopLossLimitOrderTicket):
     type = OrderType.TAKE_PROFIT_LIMIT
 
 
