@@ -35,7 +35,6 @@ class Symbol:
     _filters: List[BaseFilter]
     _allowed_features: Dict[FeatureType, bool | List[Enum]]
 
-
     def __repr__(self) -> str:
         return f'<Symbol {self.base_asset} / {self.quote_asset}>'
 
