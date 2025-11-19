@@ -1,10 +1,11 @@
 from typing import (
-    List
+    List,
+    Dict
 )
 
 from .filters import BaseFilter, FilterResult
-from .order import OrderTicket
-
+from .order_ticket import OrderTicket
+from .enums import FeatureType
 
 class Symbol:
     """
@@ -23,6 +24,8 @@ class Symbol:
     quote_asset: str
 
     _filters: List[BaseFilter]
+    _allowed_features: Dict[FeatureType, bool]
+
 
     def __repr__(self) -> str:
         return f'<Symbol {self.base_asset} / {self.quote_asset}>'
@@ -38,13 +41,27 @@ class Symbol:
         self.quote_asset = quote_asset
         self._filters = []
 
+    def allow(
+        self,
+        feature: FeatureType,
+        allow: bool = True
+    ) -> None:
+        self._allowed_features[feature] = allow
+
+    def support(
+        self,
+        feature: FeatureType,
+    ) -> bool:
+        return self._allowed_features.get(feature, False)
+
     def add_filter (self, filter: BaseFilter) -> None:
         self._filters.append(filter)
 
     def apply_filters(
         self,
         ticket: OrderTicket,
-        validate_only: bool = False
+        validate_only: bool = False,
+        **kwargs
     ) -> FilterResult:
         """
         Apply the filter to the order ticket, and try to fix the ticket if possible if `validate_only` is `False`.
@@ -64,7 +81,9 @@ class Symbol:
             if not filter.when(ticket):
                 continue
 
-            exception, new_modified = filter.apply(ticket, validate_only)
+            exception, new_modified = filter.apply(
+                ticket, validate_only, **kwargs
+            )
 
             if new_modified:
                 modified = True

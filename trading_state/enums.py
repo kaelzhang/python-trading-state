@@ -97,3 +97,14 @@ class STPMode(StringEnum):
     EXPIRE_BOTH = 'EXPIRE_BOTH'
     INCREMENT = 'INCREMENT'
 
+
+class FeatureType(StringEnum):
+    ICEBERG = 'ICEBERG'
+    OCO = 'OCO'
+    OTO = 'OTO'
+    TRAILING_STOP = 'TRAILING_STOP'
+    CANCEL_REPLACE = 'CANCEL_REPLACE'
+    AMEND = 'AMEND'
+    PEG_INSTRUCTIONS = 'PEG_INSTRUCTIONS'
+    SPOT = 'SPOT'
+    MARGIN = 'MARGIN'
