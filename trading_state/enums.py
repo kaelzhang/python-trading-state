@@ -95,7 +95,7 @@ class STPMode(StringEnum):
     EXPIRE_MAKER = 'EXPIRE_MAKER'
     EXPIRE_TAKER = 'EXPIRE_TAKER'
     EXPIRE_BOTH = 'EXPIRE_BOTH'
-    INCREMENT = 'INCREMENT'
+    DECREMENT = 'DECREMENT'
 
 
 class FeatureType(StringEnum):
@@ -110,3 +110,4 @@ class FeatureType(StringEnum):
     MARGIN = 'MARGIN'
     ORDER_TYPE = 'ORDER_TYPE'
     STP_MODE = 'STP_MODE'
+    POST_ONLY = 'POST_ONLY'

@@ -2,19 +2,22 @@
 # https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
 
 from typing import (
-    List, Union, Optional
+    List, Union, Optional,
+    TYPE_CHECKING
 )
 
 from decimal import Decimal
 
-from .symbol import Symbol
 from .enums import (
     OrderSide, OrderType, TimeInForce, MarketQuantityType, STPMode
 )
-from .util import dynamic_dataclass
+# from .util import dynamic_dataclass
+
+if TYPE_CHECKING:
+    from .symbol import Symbol
 
 
-@dynamic_dataclass
+# @dynamic_dataclass
 class BaseOrderTicket:
     """
     An order ticket contains the necessary information to create an order,

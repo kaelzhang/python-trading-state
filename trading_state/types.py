@@ -5,40 +5,19 @@ from typing import (
     Optional
 )
 
-from enum import Enum
+from decimal import Decimal
+
+from .symbol import Symbol
+from .enums import TicketOrderSide, TicketOrderStatus
+from .order_ticket import OrderTicket
 
 from .util import (
     class_repr,
-    float_to_str,
+    # float_to_str,
     # datetime_now_str
 )
 
 FLOAT_ZERO = 0.
-
-
-class Symbol:
-    __slots__ = (
-        'name',
-        'base_asset',
-        'quote_asset'
-    )
-
-    name: str
-    base_asset: str
-    quote_asset: str
-
-    def __init__(
-        self,
-        name: str,
-        base_asset: str,
-        quote_asset: str
-    ) -> None:
-        self.name = name
-        self.base_asset = base_asset
-        self.quote_asset = quote_asset
-
-    def __repr__(self) -> str:
-        return self.name
 
 
 class SymbolPosition:
@@ -92,131 +71,7 @@ class SymbolPosition:
         )
 
 
-class SymbolInfo:
-    __slots__ = (
-        'symbol',
-
-        'min_price',
-        'max_price',
-
-        # Minimum price step of a symbol
-        'min_price_step',
-        '_min_price_step_precision',
-
-        'min_quantity',
-        'max_quantity',
-
-        # Minimum quantity step of an asset based on quote asset
-        'min_quantity_step',
-        'min_quantity_step_precision',
-
-        # Minimum value which is the product of price and quantity
-        'min_notional'
-    )
-
-    symbol: Symbol
-
-    min_price: float
-    max_price: float
-    min_price_step: float
-
-    min_quantity: float
-    max_quantity: float
-    min_quantity_step: float
-    min_quantity_step_precision: int
-
-    min_notional: float
-
-    def __init__(
-        self,
-        symbol: str,
-        base_asset: str,
-        quote_asset: str,
-
-        min_price: str,
-        max_price: str,
-        min_price_step: str,
-
-        min_quantity: str,
-        max_quantity: str,
-        min_quantity_step: str,
-
-        # An order's notional value is the `price` * `quantity`
-        min_notional: str
-    ):
-        self.symbol = Symbol(
-            symbol,
-            base_asset,
-            quote_asset
-        )
-
-        self.min_price = float(min_price)
-        self.max_price = float(max_price)
-
-        self.min_price_step = float(min_price_step)
-        self._min_price_step_precision = len(
-            float_to_str(self.min_price_step)
-        ) - 2
-
-        self.min_quantity = float(min_quantity)
-        self.max_quantity = float(max_quantity)
-
-        self.min_quantity_step = float(min_quantity_step)
-        self.min_quantity_step_precision = len(
-            float_to_str(self.min_quantity_step)
-        ) - 2
-
-        self.min_notional = float(min_notional)
-
-    def __repr__(self) -> str:
-        price = format(
-            self.min_price_step,
-            f'.{self._min_price_step_precision}f'
-        )
-
-        quantity = format(
-            self.min_quantity_step,
-            f'.{self.min_quantity_step_precision}f'
-        )
-
-        return f'<SymbolInfo {self.symbol}: price_step >= {price}, quantity_step >= {quantity}>'
-
-
-class TicketOrderSide(Enum):
-    def __str__(self):
-        return self.value
-
-    # USDT is locked
-    BUY = 'BUY'
-    # BTC is locked
-    SELL = 'SELL'
-
-
-class TicketOrderStatus(Enum):
-    def __str__(self):
-        return self.value[0]
-
-    # The ticket is initialized but has not been submitted to the exchange,
-    # or the ticket is failed to create order so back to the initial state
-    INIT = 'INIT'
-
-    # The ticket order is creating,
-    #   the request is about to send to the exchange,
-    #   but not yet get response
-    SUBMITTING = 'SUBMITTING'
-
-    # The ticket order is created via the exchange API
-    CREATED = 'CREATED'
-
-    def lt(self, status: 'TicketOrderStatus') -> bool:
-        """
-        Returns `True` if the current status is less than the given status
-        """
-
-        return self.value[1] <= status.value[1]
-
-
-class OrderTicket:
+class Order:
     __slots__ = (
         'id',
         'order_side',
@@ -242,7 +97,7 @@ class OrderTicket:
     locked_asset: str
     locked_quantity: float
     position: SymbolPosition
-    info: SymbolInfo
+    info: Symbol
     status: TicketOrderStatus
     filled_quantity: str
     time: str
@@ -301,14 +156,14 @@ class Balance:
     )
 
     asset: str
-    free: float
-    locked: float
+    free: Decimal
+    locked: Decimal
 
     def __init__(
         self,
         asset: str,
-        free: float,
-        locked: float
+        free: Decimal,
+        locked: Decimal
     ):
         self.asset = asset
         self.free = free
@@ -322,7 +177,7 @@ class Balance:
         If the total balance is 0, then the asset does not exist
         """
 
-        return self.free + self.locked != 0.
+        return not (self.free + self.locked).is_zero()
 
 
 class TicketGroup:

@@ -6,6 +6,10 @@ from typing import (
     Optional
 )
 
+from decimal import Decimal
+
+from .symbol import Symbol
+
 from .util import (
     apply_precision
 )
@@ -71,8 +75,8 @@ class TraderState:
         TicketGroup
     ]
 
-    _symbol_prices: Dict[str, float]
-    _symbol_infos: Dict[str, SymbolInfo]
+    _symbol_prices: Dict[str, Decimal]
+    _symbols: Dict[str, Symbol]
 
     _cancel_order: Optional[FuncCancelOrder]
     _all_tickets: Set[OrderTicket]
@@ -89,7 +93,7 @@ class TraderState:
 
         self._symbol_prices = {}
 
-        self._symbol_infos = {}
+        self._symbols = {}
 
         self._tickets = {}
         self._all_tickets = set()
@@ -100,7 +104,7 @@ class TraderState:
     def set_price(
         self,
         symbol_name: str,
-        price: float
+        price: Decimal
     ) -> bool:
         """
         Set the price of a symbol
@@ -119,82 +123,29 @@ class TraderState:
 
         return True
 
-    def set_symbol_info(
+    def set_symbol(
         self,
-
-        # symbol name, ie the trading pair name, e.g. BTCUSDT
-        symbol_name: str,
-
-        # base asset, ie the coin, token or asset currency to trade, e.g. BTC
-        base_asset: str,
-
-        # quote asset, ie the asset to quote, quote currency, e.g. USDT
-        quote_asset: str,
-
-        # Price filters
-        # ------------------------------------------------
-        min_price: str,
-        max_price: str,
-
-        # min ticker size
-        min_price_step: str,
-
-        # Lot size filters
-        # ------------------------------------------------
-        min_quantity: str,
-        max_quantity: str,
-        min_quantity_step: str,
-
-        min_notional: str
+        symbol: Symbol
     ) -> None:
         """
-        Set trading info of a symbol
+        Set (add or update) the symbol info for a symbol
 
-        Usage::
-
-        state.set_symbol_info(
-            'BTCUSDT',
-            'BTC',
-            'USDT',
-
-            '0.01',
-            '1000000',
-            '0.01',
-
-            '0.000001',
-            '9000',
-            '0.000001',
-
-            '10.00000000'
-        )
+        Args:
+            symbol (Symbol): the symbol to set
         """
 
-        self._symbol_infos[symbol_name] = SymbolInfo(
-            symbol_name,
-            base_asset,
-            quote_asset,
-
-            min_price,
-            max_price,
-            min_price_step,
-
-            min_quantity,
-            max_quantity,
-            min_quantity_step,
-
-            min_notional
-        )
+        self._symbols[symbol.name] = symbol
 
     def set_quota(
         self,
         asset: str,
-        quota: Optional[float]
+        quota: Optional[Decimal] = None
     ) -> None:
         """
         Set the quota for a certain asset.
 
         The quota of an asset limits
-        the maximum quantity the trader could **BUY** the asset,
+        the maximum **QUOTE** asset quantity the trader could **BUY** the asset,
         but DON'T limit sell.
 
         Args:
@@ -248,7 +199,7 @@ class TraderState:
         Check whether the symbol is supported
         """
 
-        return symbol_name in self._symbol_infos
+        return symbol_name in self._symbols
 
     def expect(
         self,

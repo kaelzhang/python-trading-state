@@ -12,6 +12,8 @@ It provides configurable rules for price limits, notional and quantity limits, o
 
 By separating “trading state” from strategy logic, `trading-state` helps you build cleaner, more testable quantitative trading systems.
 
+- Use `Decimal` to do all internal calculations
+
 ## Install
 
 ```sh

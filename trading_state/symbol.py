@@ -3,12 +3,16 @@ from typing import (
     Dict,
     Optional,
     overload,
+    TYPE_CHECKING
 )
 from enum import Enum
 
 from .filters import BaseFilter, FilterResult
-from .order_ticket import OrderTicket
 from .enums import FeatureType
+
+if TYPE_CHECKING:
+    from .order_ticket import OrderTicket
+
 
 class Symbol:
     """
@@ -18,7 +22,9 @@ class Symbol:
     __slots__ = (
         'name',
         'base_asset',
-        'quote_asset'
+        'quote_asset',
+        '_filters',
+        '_allowed_features'
     )
 
     name: str
@@ -42,6 +48,7 @@ class Symbol:
         self.base_asset = base_asset
         self.quote_asset = quote_asset
         self._filters = []
+        self._allowed_features = {}
 
     @overload
     def allow(

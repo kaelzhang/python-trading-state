@@ -236,6 +236,7 @@ class MarketQuantityFilter(QuantityFilter):
 
 PARAM_ICEBERG_QUANTITY = 'iceberg_quantity'
 
+@dataclass
 class IcebergQuantityFilter(BaseFilter):
     limit: int
 
@@ -266,6 +267,7 @@ class IcebergQuantityFilter(BaseFilter):
 
 PARAM_TRAILING_DELTA = 'trailing_delta'
 
+@dataclass
 class TrailingDeltaFilter(BaseFilter):
     min_trailing_above_delta: int
     max_trailing_above_delta: int
@@ -321,6 +323,7 @@ class TrailingDeltaFilter(BaseFilter):
         return None, modified
 
 
+@dataclass
 class NotionalFilter(BaseFilter):
     min_notional: Decimal
     apply_min_to_market: bool
