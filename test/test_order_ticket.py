@@ -9,7 +9,7 @@ from trading_state.order_ticket import (
 
 from trading_state.symbol import Symbol
 from trading_state.enums import (
-    OrderSide, OrderType, TimeInForce, MarketQuantityType
+    OrderSide, TimeInForce, MarketQuantityType
 )
 
 from decimal import Decimal
@@ -81,7 +81,7 @@ for (prefix, Order, kwargs, either) in RIGHT_CASES:
 
 
 def test_order_ticket():
-    for index, (prefix, Order, kwargs, exceptions) in enumerate(TEST_REQUIRED_CASES):
+    for prefix, Order, kwargs, exceptions in TEST_REQUIRED_CASES:
         try:
             Order(**kwargs)
         except Exception as e:
@@ -95,4 +95,3 @@ def test_order_ticket():
                 assert False, f'{prefix}: expected exception "{exception}" but got none'
             else:
                 assert True, f'{prefix}: passed'
-

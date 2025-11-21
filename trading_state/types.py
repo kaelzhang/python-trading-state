@@ -8,7 +8,7 @@ from typing import (
 from decimal import Decimal
 
 from .symbol import Symbol
-from .enums import TicketOrderSide, TicketOrderStatus
+from .enums import OrderSide, OrderStatus
 from .order_ticket import OrderTicket
 
 from .util import (
@@ -17,7 +17,7 @@ from .util import (
     # datetime_now_str
 )
 
-FLOAT_ZERO = 0.
+# FLOAT_ZERO = 0.
 
 
 class SymbolPosition:
@@ -37,14 +37,14 @@ class SymbolPosition:
     symbol: Symbol
     value: float
     asap: bool
-    price: Optional[float]
+    price: Optional[Decimal]
 
     def __init__(
         self,
         symbol: Symbol,
         value: float,
         asap: bool,
-        price: Optional[float]
+        price: Optional[Decimal] = None
     ) -> None:
         self.symbol = symbol
         self.value = value
@@ -73,114 +73,86 @@ class SymbolPosition:
 
 class Order:
     __slots__ = (
-        'id',
-        'order_side',
-        'symbol',
-        'price',
-        'quantity',
-        'locked_asset',
-        'locked_quantity',
-        'position',
-        'info',
+        'ticket',
         'status',
-        'filled_quantity',
-        'time'
+        # 'id',
+        # 'side',
+        # 'symbol',
+        # 'price',
+        # 'quantity',
+        # 'locked_asset',
+        # 'locked_quantity',
+        # 'position',
+        # 'info',
+        # 'status',
+        # 'filled_quantity',
+        # 'time'
     )
 
     _UID: int = 0
 
-    id: int
-    order_side: TicketOrderSide
-    symbol: Symbol
-    price: float
-    quantity: str
+    ticket: OrderTicket
+    status: OrderStatus
     locked_asset: str
-    locked_quantity: float
-    position: SymbolPosition
-    info: Symbol
-    status: TicketOrderStatus
-    filled_quantity: str
-    time: str
+    locked_quantity: Decimal
+
+    # id: int
+    # side: OrderSide
+    # symbol: Symbol
+    # price: float
+    # quantity: str
+    # locked_asset: str
+    # locked_quantity: float
+    # position: SymbolPosition
+    # info: Symbol
+    # status: OrderStatus
+    # filled_quantity: str
+    # time: str
 
     def __init__(
         self,
-
-        # Order type, which will be used by trader
-        order_side: TicketOrderSide,
-        # The related symbol
-        symbol: Symbol,
-        # price of symbl
-        price: float,
-        # We should use str as quantity
-        quantity: str,
+        ticket: OrderTicket,
 
         # The quantity of which asset has been locked,
-        # could be either target asset and cash asset
+        # could be either base asset or quote asset
         locked_asset: str,
         # locked quantity
-        locked_quantity: float,
+        locked_quantity: Decimal,
 
-        position: SymbolPosition,
-        info: SymbolInfo
+        position: SymbolPosition
     ) -> None:
         self.id = OrderTicket._UID
 
         OrderTicket._UID += 1
 
-        self.order_side = order_side
-
-        self.symbol = symbol
-        self.price = price
-        self.quantity = quantity
-
+        self.ticket = ticket
+        self.status = OrderStatus.INIT
         self.locked_asset = locked_asset
         self.locked_quantity = locked_quantity
+        # self.position = position
 
-        self.position = position
-        self.info = info
+        # self.side = side
 
-        self.status = TicketOrderStatus.INIT
+        # self.symbol = symbol
+        # self.price = price
+        # self.quantity = quantity
 
-        self.filled_quantity = '0'
+        # self.locked_asset = locked_asset
+        # self.locked_quantity = locked_quantity
+
+        # self.position = position
+        # self.info = info
+
+        # self.status = OrderStatus.INIT
+
+        # self.filled_quantity = '0'
 
         # self.time = datetime_now_str()
 
     __repr__ = class_repr
 
 
-class Balance:
-    __slots__ = (
-        'asset',
-        'free',
-        'locked'
-    )
-
-    asset: str
-    free: Decimal
-    locked: Decimal
-
-    def __init__(
-        self,
-        asset: str,
-        free: Decimal,
-        locked: Decimal
-    ):
-        self.asset = asset
-        self.free = free
-        self.locked = locked
-
-    def __repr__(self) -> str:
-        return class_repr(self, main='asset')
-
-    def exists(self) -> bool:
-        """
-        If the total balance is 0, then the asset does not exist
-        """
-
-        return not (self.free + self.locked).is_zero()
-
-
-class TicketGroup:
+class OrderGroup:
     """
     Group sell and group buy are mutually exclusive
     """
@@ -191,9 +163,9 @@ class TicketGroup:
     )
 
     # The tickets that buy the asset
-    buy: Set[OrderTicket]
+    buy: Set[Order]
     # The tickets that sell the asset
-    sell: Set[OrderTicket]
+    sell: Set[Order]
 
     def __init__(self):
         self.buy = set()
@@ -201,22 +173,22 @@ class TicketGroup:
 
     def get(
         self,
-        direction: TicketOrderSide
-    ) -> Set[OrderTicket]:
+        direction: OrderSide
+    ) -> Set[Order]:
         """
         Get a copied group of the given direction
         """
 
         return (
-            self.buy if direction is TicketOrderSide.BUY else self.sell
+            self.buy if direction is OrderSide.BUY else self.sell
         ).copy()
 
-    def close(self, ticket: OrderTicket) -> None:
+    def close(self, order: Order) -> None:
         """
         Close a ticket
         """
 
-        (self.buy or self.sell).discard(ticket)
+        (self.buy or self.sell).discard(order)
 
     def clear(self) -> None:
         """
@@ -226,4 +198,4 @@ class TicketGroup:
         (self.buy or self.sell).clear()
 
 
-FuncCancelOrder = Callable[[OrderTicket], Awaitable[None]]
+FuncCancelOrder = Callable[[Order], Awaitable[None]]

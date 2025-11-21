@@ -12,13 +12,11 @@ from decimal import Decimal
 from .enums import (
     OrderSide, OrderType, TimeInForce, MarketQuantityType, STPMode
 )
-# from .util import dynamic_dataclass
 
 if TYPE_CHECKING:
     from .symbol import Symbol
 
 
-# @dynamic_dataclass
 class BaseOrderTicket:
     """
     An order ticket contains the necessary information to create an order,
