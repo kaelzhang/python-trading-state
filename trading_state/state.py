@@ -3,31 +3,33 @@ from typing import (
     Dict,
     Tuple,
     Set,
-    Optional
+    Optional,
+    Callable,
 )
 from dataclasses import dataclass
 
 from decimal import Decimal
 
 from .symbol import Symbol
-
+from .balance import Balance
 from .types import (
     # Balance,
-    Order,
+    # Order,
     SymbolPosition,
+    PositionData,
 
-    TicketGroup,
+    # TicketGroup,
 
-    FuncCancelOrder,
+    # FuncCancelOrder,
 
     # FLOAT_ZERO
 )
 
 
-CreateTicketReturn = Tuple[
-    Optional[Order],
-    Set[Order]
-]
+# CreateTicketReturn = Tuple[
+#     Optional[Order],
+#     Set[Order]
+# ]
 
 
 """
@@ -42,6 +44,11 @@ Principle
 - no default parameters for public methods
 """
 
+
+def DEFAULT_GET_SYMBOL_NAME(base_asset: str, quote_asset: str) -> str:
+    return f"{base_asset}{quote_asset}"
+
+
 @dataclass
 class TradingConfig:
     """
@@ -51,6 +58,7 @@ class TradingConfig:
         - calculate value of quotas
     """
     numeraire: str
+    get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
 
 class TradingState:
@@ -69,6 +77,9 @@ class TradingState:
     """
 
     _config: TradingConfig
+
+    # Whether a symbol is already initialized
+    _ready: Dict[str, bool]
     _balances: Dict[str, Balance]
     _expected: Dict[str, SymbolPosition]
     _old_expected: Dict[str, SymbolPosition]
@@ -79,6 +90,7 @@ class TradingState:
         TicketGroup
     ]
 
+    # symbol_name -> price
     _symbol_prices: Dict[str, Decimal]
     _symbols: Dict[str, Symbol]
 
@@ -90,6 +102,8 @@ class TradingState:
         config: TradingConfig
     ) -> None:
         self._config = config
+
+        self._ready = {}
 
         # Asset quota dict: asset -> quantity
         self._quotas = {}
@@ -109,6 +123,24 @@ class TradingState:
 
     # Public methods
     # ------------------------------------------------------------------------
+
+    async def ready(
+        self,
+        symbol_name: str
+    ) -> None:
+        """
+        Wait for the symbol to be ready
+
+        Args:
+            symbol_name (str): the name of the symbol
+        """
+
+        if symbol_name in self._ready:
+            return
+
+        symbol = self._get_symbol(symbol_name)
+
+        ...
 
     def set_price(
         self,
@@ -213,7 +245,7 @@ class TradingState:
     def position(
         self,
         symbol_name: str,
-        realized: Optional[bool] = False
+        realized: bool = False
     ) -> Optional[float]:
         """
         Get the position of a symbol
@@ -233,41 +265,40 @@ class TradingState:
 
         return self._get_position(symbol, realized)
 
-    def _get_position(
-        self,
-        symbol: Symbol,
-        realized: bool
-    ) -> float:
-        # TODO
-        ...
-
-    # Case 1:
+    # Prerequisites:
     # - current price: $10
-    # - balance: 1 (position 0.5)
+    # - balance: 1
     # - quota: $20
     # - open orders:
     #   - buy 1 @ $9
     #   - sell 1 @ $11
     # - quota: $11
-    # - expect: + 0.1 @ current (+ $2)
+    #
+    # Case 1:
+    # expect: + 0.1 @ current (+ $2)
+    # Result:
+    # we will cancel the buy order
+    # since we plan to buy in a higher price
 
     # Case 2:
     def expect(
         self,
         symbol_name: str,
         position: float,
-        delta: Optional[bool] = False,
-        asap: Optional[bool] = False,
-        price: Optional[Decimal] = None
+        delta: bool = False,
+        asap: bool = False,
+        price: Decimal | None = None,
+        data: PositionData = {}
     ) -> bool:
         """
         Update expectation, returns whether it is successfully updated
 
         Args:
             position (float): the position to expect. The position refers to the current holding of the base asset as a proportion of its maximum allowed quota
-            delta (Optional[float]): whether the given position is a delta from the current position
-            asap (Optional[bool]): whether to execute the expectation immediately, that it will generate a market order
-            price (Optional[Decimal]): the price to expect. If not provided, the price will be determined by the market price.
+            delta (bool = False): whether the given position is a delta from the current position
+            asap (bool = False): whether to execute the expectation immediately, that it will generate a market order
+            price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the market price.
+            data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
 
         Returns:
             bool: whether the expectation is successfully updated
@@ -287,20 +318,21 @@ class TradingState:
             # The same is true for `self.create_ticket()`
             return False
 
+        if delta:
+            current_position = self._get_position(symbol, False)
+            position = current_position + position
+
         # Create a new dict so that will be considered as changed
         self._expected = {
             **self._expected
         }
 
-        if delta:
-            current_position = self._get_position(symbol, False)
-            position = current_position + position
-
         self._expected[symbol_name] = SymbolPosition(
             symbol,
             position,
             asap,
-            price
+            price,
+            data
         )
 
         return True
@@ -394,6 +426,34 @@ class TradingState:
     #     self._all_tickets.discard(ticket)
 
     # End of public methods ---------------------------------------------
+
+    def _get_symbol_price(
+        self,
+        symbol: Symbol
+    ) -> Decimal:
+        """
+        Get the price of a symbol based on numeraire asset
+        """
+
+        if symbol.quote_asset == self._config.numeraire:
+            return self._symbol_prices.get(symbol.name)
+
+        valuation_symbol = self._get_symbol(
+            self._config.get_symbol_name(
+                symbol.base_asset,
+                self._config.numeraire
+            )
+        )
+
+        ...
+
+    def _get_position(
+        self,
+        symbol: Symbol,
+        realized: bool
+    ) -> float:
+        # TODO
+        ...
 
     def _remove_expectation(self, position: SymbolPosition) -> None:
         symbol_name = position.symbol.name
