@@ -1,3 +1,6 @@
+# Ref:
+# https://developers.binance.com/docs/binance-spot-api-docs/enums
+
 from enum import Enum
 
 
@@ -68,6 +71,19 @@ class OrderStatus(Enum):
 
     # The order is created via the exchange API
     CREATED = ('CREATED', 2)
+
+    # The order is partially filled
+    PARTIALLY_FILLED = ('PARTIALLY_FILLED', 3)
+
+    # The order is being cancelled
+    CANCELLING = ('CANCELLING', 4)
+
+    # The order is cancelled
+    CANCELLED = ('CANCELLED', 5)
+
+    # The order is filled, the status has the same status value as CANCELED,
+    # which means the order is no longer active
+    FILLED = ('FILLED', 5)
 
     def lt(self, status: 'OrderStatus') -> bool:
         """
