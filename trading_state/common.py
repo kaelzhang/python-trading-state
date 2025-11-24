@@ -6,6 +6,9 @@ from typing import (
 )
 
 
+DECIMAL_ZERO = Decimal('0')
+
+
 def apply_precision(number: Decimal, precision: int) -> Decimal:
     """
     Scale `number` to exactly `precision` decimal places.
@@ -69,7 +72,3 @@ def class_repr(
     string += '>'
 
     return string
-
-
-def dynamic_dataclass(cls):
-    return cls

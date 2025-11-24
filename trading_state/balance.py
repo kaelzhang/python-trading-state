@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from .util import class_repr
+from .common import class_repr
 
 
 class Balance:

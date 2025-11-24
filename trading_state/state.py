@@ -10,30 +10,31 @@ from dataclasses import dataclass
 
 from decimal import Decimal
 
+from .enums import (
+    OrderStatus,
+)
 from .symbol import Symbol
 from .balance import Balance
+from .order import (
+    Order,
+    OrderHistory,
+)
 from .types import (
-    # Balance,
-    # Order,
     SymbolPosition,
-    PositionMetaData,
-
-    # TicketGroup,
-
-    # FuncCancelOrder,
-
-    # FLOAT_ZERO
+    PositionMetaData
+)
+from .common import (
+    DECIMAL_ZERO,
 )
 
 
-# CreateTicketReturn = Tuple[
-#     Optional[Order],
-#     Set[Order]
-# ]
-
-Decimal_ZERO = Decimal('0')
 FLOAT_ONE = 1.0
 FLOAT_ZERO = 0.0
+
+CreateOrderReturn = Tuple[
+    Set[Order], # orders to create
+    Set[Order]  # orders to cancel
+]
 
 
 """
@@ -70,6 +71,7 @@ class TradingConfig:
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
     numeraire: str
+    max_order_history_size: int = 10000
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
 
@@ -90,26 +92,30 @@ class TradingState:
 
     _config: TradingConfig
 
-    # Whether a symbol is already initialized
-    _ready: Dict[str, bool]
     _balances: Dict[str, Balance]
-    _expected: Dict[str, SymbolPosition]
-    _old_expected: Dict[str, SymbolPosition]
 
-    _tickets: Dict[
-        # asset
-        str,
-        TicketGroup
-    ]
+    # _tickets: Dict[
+    #     # asset
+    #     str,
+    #     TicketGroup
+    # ]
 
-    # symbol_name -> price
-    _symbol_prices: Dict[str, Decimal]
+    # For those dictionaries might be accessed by users,
+    # use `str` as key, else use `Symbol` as key
     _symbols: Dict[str, Symbol]
-
+    _symbol_prices: Dict[str, Decimal]
     _quotas: Dict[str, Decimal]
 
-    _cancel_order: Optional[FuncCancelOrder]
-    _all_tickets: Set[OrderTicket]
+    _expected: Dict[Symbol, SymbolPosition]
+    _old_expected: Dict[Symbol, SymbolPosition]
+
+    _orders_to_cancel: Set[Order]
+    _symbol_orders: Dict[Symbol, Order]
+
+    # Order.id -> Order
+    _orders: Dict[int, Order]
+
+    _history: OrderHistory
 
     def __init__(
         self,
@@ -117,7 +123,8 @@ class TradingState:
     ) -> None:
         self._config = config
 
-        self._ready = {}
+        self._symbols = {}
+        self._symbol_prices = {}
 
         # Asset quota dict: asset -> quantity
         self._quotas = {}
@@ -128,12 +135,13 @@ class TradingState:
         # In the beginning, they are the same
         self._old_expected = self._expected
 
-        self._symbol_prices = {}
+        self._orders_to_cancel = set[Order]()
+        self._symbol_orders = {}
 
-        self._symbols = {}
+        self._history = OrderHistory(max_size=config.max_order_history_size)
 
-        self._tickets = {}
-        self._all_tickets = set()
+        # self._tickets = {}
+        # self._all_tickets = set()
 
     # Public methods
     # ------------------------------------------------------------------------
@@ -159,6 +167,16 @@ class TradingState:
         self._reset_diff()
 
         return True
+
+    def get_price(
+        self,
+        symbol_name: str
+    ) -> Optional[Decimal]:
+        """
+        Get the price of a symbol
+        """
+
+        return self._symbol_prices.get(symbol_name)
 
     def set_symbol(
         self,
@@ -200,7 +218,7 @@ class TradingState:
         although the balance is enough to buy 10 BTC
         """
 
-        if quota is not None and quota < Decimal_ZERO:
+        if quota is not None and quota < DECIMAL_ZERO:
             # Decimal('-1') means no limit
             quota = None
 
@@ -220,12 +238,12 @@ class TradingState:
         new: List[Balance]
     ) -> None:
         """
-        Update user balances, including normal assets and cash asset(USDT)
+        Update user balances, including normal assets and quote assets
 
         Usage::
 
-            state.update([
-                ('BTC', 8.)
+            state.update_balances([
+                Balance('BTC', Decimal('8'), Decimal('0'))
             ])
         """
 
@@ -248,8 +266,8 @@ class TradingState:
 
         return symbol_name in self._symbols
 
-    def summarize(self):
-        ...
+    # def summarize(self):
+    #     ...
 
     def position(
         self,
@@ -337,7 +355,12 @@ class TradingState:
             **self._expected
         }
 
-        self._expected[symbol_name] = SymbolPosition(
+        if asap:
+            # If we want to trade asap (market order),
+            # then we should not set the price
+            price = None
+
+        self._expected[symbol] = SymbolPosition(
             symbol,
             position,
             asap,
@@ -358,19 +381,17 @@ class TradingState:
     #     for group in self._tickets.values():
     #         group.clear()
 
-    # def create_ticket(
-    #     self,
-    #     symbol_name: str,
-    #     position: float,
-    #     asap: bool,
-    #     price: Optional[float]
-    # ) -> CreateTicketReturn:
+    # def create_order(self) -> CreateOrderReturn:
     #     """
-    #     Create a ticket according to the position of a symbol, and remove position expectations of the symbol
+    #     Create orders according to the positions, and remove position expectations
 
     #     Returns:
-    #         tuple: An optional newly-created ticket and tickets which needs to be cancelled
+    #         tuple:
+    #         - A set of newly-created orders
+    #         - A set of orders which needs to be cancelled
     #     """
+
+    #     for symbol, position in self._expected.items():
 
     #     symbol = self._get_symbol(symbol_name)
 
@@ -390,32 +411,35 @@ class TradingState:
 
     #     return self._create_ticket(position)
 
-    # def get_tickets(
-    #     self,
-    #     status: TicketOrderStatus = TicketOrderStatus.INIT
-    # ) -> Tuple[
-    #     List[OrderTicket],
-    #     Set[OrderTicket]
-    # ]:
-    #     """
-    #     Get all unsubmitted tickets which are not submitted
+    def get_orders(self) -> Tuple[
+        Set[Order],
+        Set[Order]
+    ]:
+        """
+        Diff the orders, and get all unsubmitted orders, by calling this method
+        - Orders of OrderStatus.INIT -> OrderStatus.SUBMITTING
+        - Orders of OrderStatus.ABOUT_TO_CANCEL -> OrderStatus.CANCELLING
 
-    #     Args:
-    #         status (:obj:`TicketOrderStatus`, optional): The maximun status phase that the returned tickets will have. Defaults to `TicketOrderStatus.INIT`
+        Returns
+            tuple:
+            - a set of available orders
+            - a set of orders to cancel
+        """
 
-    #     Returns
-    #         tuple: a list of available tickets and a set of tickets to cancel
-    #     """
+        self._diff()
 
-    #     tickets_to_cancel = self._diff()
+        orders_to_cancel = self._orders_to_cancel
+        self._orders_to_cancel = set[Order]()
 
-    #     return [
-    #         ticket
-    #         for ticket in self._all_tickets
+        # TODO
 
-    #         # Only collect tickets whose status are <= `status`
-    #         if ticket.status.lt(status)
-    #     ], tickets_to_cancel
+        # return [
+        #     ticket
+        #     for ticket in self._all_tickets
+
+        #     # Only collect tickets whose status are <= `status`
+        #     if ticket.status.lt(status)
+        # ], tickets_to_cancel
 
     # def close_ticket(
     #     self,
@@ -472,20 +496,17 @@ class TradingState:
         if existed is not None and existed.equals_to(position):
             del self._expected[symbol_name]
 
-    def _reset_diff(self):
-        self._old_expected = {}
-
     def _get_symbol(self, symbol_name: str) -> Optional[Symbol]:
         return self._symbols.get(symbol_name)
 
-    def _get_ticket_group(self, asset: str) -> TicketGroup:
-        group = self._tickets.get(asset)
+    # def _get_ticket_group(self, asset: str) -> TicketGroup:
+    #     group = self._tickets.get(asset)
 
-        if group is None:
-            group = TicketGroup()
-            self._tickets[asset] = group
+    #     if group is None:
+    #         group = TicketGroup()
+    #         self._tickets[asset] = group
 
-        return group
+    #     return group
 
     def _get_ticket_locked(self, asset: str) -> float:
         group = self._get_ticket_group(asset)
@@ -500,7 +521,7 @@ class TradingState:
 
         return locked
 
-    def _get_balance(self, asset: str) -> Tuple[float, float]:
+    def _get_balance(self, asset: str) -> Tuple[Decimal, Decimal]:
         """
         The balance updates are not always in time, so that we should double confirm the locked quantity of an asset.
         This method will return the ensured tuple of free and locked quantity
@@ -510,7 +531,7 @@ class TradingState:
 
         if balance is None:
             # We dont have this asset
-            return FLOAT_ZERO, FLOAT_ZERO
+            return DECIMAL_ZERO, DECIMAL_ZERO
 
         locked_by_tickets = self._get_ticket_locked(asset)
 
@@ -524,164 +545,197 @@ class TradingState:
         # we use the larget locked quantity
         return balance.free + delta, locked_by_tickets
 
-    def _adjust_quote_quantity(
-        self,
-        asset: str,
-        price: float,
-        quantity: float
-    ) -> float:
-        """
-        Adjust the quote quantity according to quota
-        """
-
-        quota = self._quotas.get(asset)
-
-        if quota is None:
-            return quantity
-
-        free, locked = self._get_balance(asset)
-
-        return max(
-            min(quantity, quota) - (free + locked) * price,
-            0.
-        )
-
-    # def _diff(self) -> Set[OrderTicket]:
-    #     """
-    #     Diff the position expectations based on what we create tickets
-
-    #     Returns
-    #         set: a set of tickets to cancel
-    #     """
-
-    #     tickets_to_cancel = set()
-
-    #     if self._expected is self._old_expected:
-    #         # If there is no new expectation,
-    #         # so skip diffing
-    #         return tickets_to_cancel
-
-    #     self._old_expected = self._expected
-
-    #     if self._expected:
-    #         for position in self._expected.values():
-    #             _, to_cancel = self._create_ticket(position)
-    #             tickets_to_cancel |= to_cancel
-
-    #     return tickets_to_cancel
-
-    # def _create_ticket(
+    # def _adjust_quote_quantity(
     #     self,
-    #     position: SymbolPosition
-    # ) -> CreateTicketReturn:
+    #     asset: str,
+    #     price: float,
+    #     quantity: float
+    # ) -> float:
     #     """
-    #     Create a ticket from a symbol position
+    #     Adjust the quote quantity according to quota
     #     """
 
-    #     symbol = position.symbol
-    #     symbol_name = symbol.name
-    #     asset = symbol.base_asset
-    #     group = self._get_ticket_group(asset)
+    #     quota = self._quotas.get(asset)
 
-    #     tickets_to_cancel = self._get_tickets_to_cancel(
-    #         group,
-    #         position,
-    #         TicketOrderSide.SELL if position.value == FLOAT_ZERO
-    #         else TicketOrderSide.BUY
+    #     if quota is None:
+    #         return quantity
+
+    #     free, locked = self._get_balance(asset)
+
+    #     return max(
+    #         min(quantity, quota) - (free + locked) * price,
+    #         0.
     #     )
 
-    #     # `info` is always not None, which is ensured by self.expect()
-    #     info = self._get_symbol_info(symbol_name)
+    def _has_diff(self) -> bool:
+        """
+        Check whether the trading state has diff
+        """
 
-    #     price = (
-    #         # Order with specified price
-    #         position.price
-    #         or self._symbol_prices.get(symbol_name)
-    #     )
+        return self._expected is self._old_expected
 
-    #     if price is None:
-    #         # The price is not ready,
-    #         # then skip to avoid unexpected result
-    #         return None, tickets_to_cancel
+    def _reset_diff(self):
+        self._old_expected = {}
 
-    #     if position.value == FLOAT_ZERO:
-    #         # Sell all out
-    #         # ---------------------------------------------------------------
+    def _diff(self) -> None:
+        """
+        Diff the position expectations based on what we create tickets
 
-    #         quantity, _ = self._get_balance(asset)
+        Returns
+            set: a set of tickets to cancel
+        """
 
-    #         if quantity < info.min_quantity_step:
-    #             # is less than minimum trading quantity
-    #             return None, tickets_to_cancel
+        if self._has_diff():
+            # If there is no new expectation,
+            # so skip diffing
+            return
 
-    #         quantity_str = apply_precision(
-    #             quantity,
-    #             info.min_quantity_step_precision
-    #         )
+        self._old_expected = self._expected
 
-    #         # Apply precision
-    #         quantity = float(quantity_str)
+        for position in self._expected.values():
+            self._create_order_from_position(position)
 
-    #         ticket = OrderTicket(
-    #             TicketOrderSide.SELL,
-    #             symbol,
-    #             price,
-    #             quantity_str,
-    #             asset,
-    #             quantity,
-    #             position,
-    #             info  # type: ignore
-    #         )
+    def _mark_order_to_cancel(self, order: Order) -> None:
+        order.status = OrderStatus.ABOUT_TO_CANCEL
+        self._orders_to_cancel.add(order)
+        del self._symbol_orders[order.position.symbol]
 
-    #         self._get_ticket_group(asset).sell.add(ticket)
+    def _create_order_from_position(
+        self,
+        position: SymbolPosition
+    ) -> None:
+        """
+        Create a order from a symbol position
+        """
 
-    #     else:
-    #         # Buy all in
-    #         # ---------------------------------------------------------------
+        symbol = position.symbol
+        symbol_name = symbol.name
+        asset = symbol.base_asset
+        # group = self._get_ticket_group(asset)
 
-    #         quote_asset = symbol.quote_asset
+        existing_order = self._symbol_orders.get(symbol)
 
-    #         free, _ = self._get_balance(quote_asset)
+        # We only keep one order for a single symbol
+        if existing_order is not None:
+            if existing_order.position == position:
+                # already a valid order for the position
+                return
 
-    #         available = self._adjust_quote_quantity(asset, price, free)
+            self._mark_order_to_cancel(existing_order)
 
-    #         if available < info.min_price_step:
-    #             # The quantity of the current cash is less than
-    #             # the minimun trading price
-    #             return None, tickets_to_cancel
+        # TODO:
+        # How many orders could a single symbol have?
 
-    #         if available < info.min_notional:
-    #             return None, tickets_to_cancel
+        # tickets_to_cancel = self._get_tickets_to_cancel(
+        #     group,
+        #     position,
+        #     TicketOrderSide.SELL if position.value == FLOAT_ZERO
+        #     else TicketOrderSide.BUY
+        # )
 
-    #         if free < price * info.min_quantity_step:
-    #             # The quantity of the current cash is less than
-    #             # the value minium asset quantity
-    #             return None, tickets_to_cancel
+        # `info` is always not None, which is ensured by self.expect()
+        # info = self._get_symbol_info(symbol_name)
 
-    #         quantity_str = apply_precision(
-    #             available / price,
-    #             info.min_quantity_step_precision
-    #         )
+        price = position.price
 
-    #         locked_quote_quantity = price * float(quantity_str)
+        if not position.asap and price is None:
+            price = self.get_price(symbol_name)
 
-    #         ticket = OrderTicket(
-    #             TicketOrderSide.BUY,
-    #             symbol,
-    #             price,
-    #             quantity_str,
-    #             quote_asset,
-    #             locked_quote_quantity,
-    #             position,
-    #             info  # type: ignore
-    #         )
+            if price is None:
+                # The price is not ready,
+                # then skip to avoid unexpected result,
+                # it will have another in the next tick
+                return
 
-    #         self._get_ticket_group(asset).buy.add(ticket)
-    #         self._get_ticket_group(quote_asset).sell.add(ticket)
+        # price = (
+        #     # Order with specified price
+        #     position.price
+        #     or self._symbol_prices.get(symbol_name)
+        # )
 
-    #     self._all_tickets.add(ticket)
+        # if price is None:
+        #     # The price is not ready,
+        #     # then skip to avoid unexpected result
+        #     return None, tickets_to_cancel
 
-    #     return ticket, tickets_to_cancel
+        # if position.value == FLOAT_ZERO:
+        #     # Sell all out
+        #     # ---------------------------------------------------------------
+
+        #     quantity, _ = self._get_balance(asset)
+
+        #     if quantity < info.min_quantity_step:
+        #         # is less than minimum trading quantity
+        #         return None, tickets_to_cancel
+
+        #     quantity_str = apply_precision(
+        #         quantity,
+        #         info.min_quantity_step_precision
+        #     )
+
+        #     # Apply precision
+        #     quantity = float(quantity_str)
+
+        #     ticket = OrderTicket(
+        #         TicketOrderSide.SELL,
+        #         symbol,
+        #         price,
+        #         quantity_str,
+        #         asset,
+        #         quantity,
+        #         position,
+        #         info  # type: ignore
+        #     )
+
+        #     self._get_ticket_group(asset).sell.add(ticket)
+
+        # else:
+        #     # Buy all in
+        #     # ---------------------------------------------------------------
+
+        #     quote_asset = symbol.quote_asset
+
+        #     free, _ = self._get_balance(quote_asset)
+
+        #     available = self._adjust_quote_quantity(asset, price, free)
+
+        #     if available < info.min_price_step:
+        #         # The quantity of the current cash is less than
+        #         # the minimun trading price
+        #         return None, tickets_to_cancel
+
+        #     if available < info.min_notional:
+        #         return None, tickets_to_cancel
+
+        #     if free < price * info.min_quantity_step:
+        #         # The quantity of the current cash is less than
+        #         # the value minium asset quantity
+        #         return None, tickets_to_cancel
+
+        #     quantity_str = apply_precision(
+        #         available / price,
+        #         info.min_quantity_step_precision
+        #     )
+
+        #     locked_quote_quantity = price * float(quantity_str)
+
+        #     ticket = OrderTicket(
+        #         TicketOrderSide.BUY,
+        #         symbol,
+        #         price,
+        #         quantity_str,
+        #         quote_asset,
+        #         locked_quote_quantity,
+        #         position,
+        #         info  # type: ignore
+        #     )
+
+        #     self._get_ticket_group(asset).buy.add(ticket)
+        #     self._get_ticket_group(quote_asset).sell.add(ticket)
+
+        # self._all_tickets.add(ticket)
+
+        # return ticket, tickets_to_cancel
 
     # def _get_tickets_to_cancel(
     #     self,

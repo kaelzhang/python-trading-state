@@ -75,15 +75,18 @@ class OrderStatus(Enum):
     # The order is partially filled
     PARTIALLY_FILLED = ('PARTIALLY_FILLED', 3)
 
+    # It is determined that the order should be cancelled
+    ABOUT_TO_CANCEL = ('ABOUT_TO_CANCEL', 4)
+
     # The order is being cancelled
-    CANCELLING = ('CANCELLING', 4)
+    CANCELLING = ('CANCELLING', 5)
 
     # The order is cancelled
-    CANCELLED = ('CANCELLED', 5)
+    CANCELLED = ('CANCELLED', 6)
 
     # The order is filled, the status has the same status value as CANCELED,
     # which means the order is no longer active
-    FILLED = ('FILLED', 5)
+    FILLED = ('FILLED', 6)
 
     def lt(self, status: 'OrderStatus') -> bool:
         """
