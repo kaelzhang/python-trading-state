@@ -68,6 +68,9 @@ class TradingConfig:
         numeraire (str): the valuation currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
         - calculate value of positions
         - calculate value of quotas
+
+        max_order_history_size (int): the maximum size of the order history
+
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
     numeraire: str
@@ -92,20 +95,25 @@ class TradingState:
 
     _config: TradingConfig
 
+    # asset -> balance
     _balances: Dict[str, Balance]
 
-    # _tickets: Dict[
-    #     # asset
-    #     str,
-    #     TicketGroup
-    # ]
-
-    # For those dictionaries might be accessed by users,
-    # use `str` as key, else use `Symbol` as key
+    # symbol name -> symbol
     _symbols: Dict[str, Symbol]
+
+    # base asset -> symbol
+    _base_asset_symbols: Dict[str, Symbol]
+
+    # quote asset -> symbol
+    _quote_asset_symbols: Dict[str, Symbol]
+
+    # symbol name -> price
     _symbol_prices: Dict[str, Decimal]
+
+    # asset -> quota
     _quotas: Dict[str, Decimal]
 
+    # asset -> position expectation
     _expected: Dict[str, AssetPosition]
     _old_expected: Dict[str, AssetPosition]
 
@@ -113,7 +121,7 @@ class TradingState:
     _symbol_orders: Dict[Symbol, Order]
 
     # Order.id -> Order
-    _orders: Dict[int, Order]
+    _orders: Dict[str, Order]
 
     _history: OrderHistory
 
@@ -124,9 +132,11 @@ class TradingState:
         self._config = config
 
         self._symbols = {}
+        self._base_asset_symbols = {}
+        self._quote_asset_symbols = {}
+
         self._symbol_prices = {}
 
-        # Asset quota dict: asset -> quantity
         self._quotas = {}
 
         self._balances = {}
@@ -190,6 +200,8 @@ class TradingState:
         """
 
         self._symbols[symbol.name] = symbol
+        self._base_asset_symbols[symbol.base_asset] = symbol
+        self._quote_asset_symbols[symbol.quote_asset] = symbol
 
     def set_quota(
         self,
@@ -468,6 +480,13 @@ class TradingState:
 
         ...
 
+    def _get_asset_value(self, asset: str) -> Decimal:
+        """
+        Get the value of an asset
+        """
+
+        ...
+
     def _remove_expectation(self, position: SymbolPosition) -> None:
         symbol_name = position.symbol.name
 
@@ -504,7 +523,9 @@ class TradingState:
     def _get_balance(self, asset: str) -> Tuple[Decimal, Decimal]:
         """
         The balance updates are not always in time, so that we should double confirm the locked quantity of an asset.
-        This method will return the ensured tuple of free and locked quantity
+
+        Returns:
+            Tuple[Decimal, Decimal]: the ensured tuple of free and locked quantity
         """
 
         balance = self._balances.get(asset)
@@ -559,10 +580,7 @@ class TradingState:
 
     def _diff(self) -> None:
         """
-        Diff the position expectations based on what we create tickets
-
-        Returns
-            set: a set of tickets to cancel
+        Diff the position expectations
         """
 
         if self._has_diff():
@@ -582,10 +600,10 @@ class TradingState:
 
     def _create_order_from_position(
         self,
-        position: SymbolPosition
+        position: AssetPosition
     ) -> None:
         """
-        Create a order from a symbol position
+        Create a order from an asset position
         """
 
         symbol = position.symbol

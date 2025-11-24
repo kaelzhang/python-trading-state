@@ -12,7 +12,7 @@ from typing import (
 
 from .order_ticket import OrderTicket
 from .enums import OrderType, OrderSide, MarketQuantityType
-from .util import (
+from .common import (
     apply_precision,
     apply_tick_size
 )
