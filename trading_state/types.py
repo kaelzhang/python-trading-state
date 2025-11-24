@@ -14,7 +14,7 @@ from .util import (
 )
 
 
-PositionData = Dict[str, Any]
+PositionMetaData = Dict[str, Any]
 
 
 class SymbolPosition:
@@ -36,7 +36,7 @@ class SymbolPosition:
     value: float
     asap: bool
     price: Decimal | None
-    data: PositionData
+    data: PositionMetaData
 
     def __init__(
         self,

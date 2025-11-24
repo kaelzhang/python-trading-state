@@ -1,3 +1,6 @@
+# Ref:
+# https://developers.binance.com/docs/binance-spot-api-docs/filters
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal

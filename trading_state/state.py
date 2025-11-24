@@ -16,7 +16,7 @@ from .types import (
     # Balance,
     # Order,
     SymbolPosition,
-    PositionData,
+    PositionMetaData,
 
     # TicketGroup,
 
@@ -31,17 +31,28 @@ from .types import (
 #     Set[Order]
 # ]
 
+Decimal_ZERO = Decimal('0')
+FLOAT_ONE = 1.0
+FLOAT_ZERO = 0.0
+
 
 """
-Terminology
-- asset: BTC, USDT, or others
-- symbol: trading pairs of assets
-
-Principle
+Logical Principles:
+- terminology aligned with professional trading
 - be pure
-- be sync
 - be passive, no triggers
-- no default parameters for public methods
+- no strategies, strategies should be driven by external invocations
+- suppose the initialization is done before using the state, including
+  - setting up the symbols
+  - setting up the balances
+  - setting up the symbol prices
+- do not handle position control, just proceed with position expectations
+  - the purpose of a position change could be marked in position.data
+
+Implementation Principles:
+- be sync
+- no checking for unexpected param types, but should check unexpected values
+- no default parameters for all methods to avoid unexpected behavior
 """
 
 
@@ -56,6 +67,7 @@ class TradingConfig:
         numeraire (str): the valuation currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
         - calculate value of positions
         - calculate value of quotas
+        get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
     numeraire: str
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
@@ -94,6 +106,8 @@ class TradingState:
     _symbol_prices: Dict[str, Decimal]
     _symbols: Dict[str, Symbol]
 
+    _quotas: Dict[str, Decimal]
+
     _cancel_order: Optional[FuncCancelOrder]
     _all_tickets: Set[OrderTicket]
 
@@ -123,24 +137,6 @@ class TradingState:
 
     # Public methods
     # ------------------------------------------------------------------------
-
-    async def ready(
-        self,
-        symbol_name: str
-    ) -> None:
-        """
-        Wait for the symbol to be ready
-
-        Args:
-            symbol_name (str): the name of the symbol
-        """
-
-        if symbol_name in self._ready:
-            return
-
-        symbol = self._get_symbol(symbol_name)
-
-        ...
 
     def set_price(
         self,
@@ -180,19 +176,21 @@ class TradingState:
     def set_quota(
         self,
         asset: str,
-        quota: Optional[Decimal] = None
+        quota: Optional[Decimal]
     ) -> None:
         """
         Set the quota for a certain asset.
 
-        The quota of an asset limits
-        the maximum base **QUOTE** asset quantity the trader could **BUY** the asset,
-        but DON'T limit sell.
+        The quota of an asset limits:
+        - the maximum quantity of the **numeraire** asset the trader could **BUY** the asset,
+        - no SELL.
 
         Args:
-            quota (Optional[Decimal]): how much available base quote asset buy the asset. `None` means no quota.
+            asset (str): the asset to set the quota for
+            quota (Decimal | None): the maximum quantity of the numeraire asset the trader could BUY the asset. `None` means no quota.
 
         For example, if::
+
             state.set_quota('BTC', Decimal('35000'))
 
         - current BTC price: $7000
@@ -202,9 +200,17 @@ class TradingState:
         although the balance is enough to buy 10 BTC
         """
 
+        if quota is not None and quota < Decimal_ZERO:
+            # Decimal('-1') means no limit
+            quota = None
+
         old_quota = self._quotas.get(asset)
 
-        self._quotas[asset] = quota
+        if quota is None:
+            # Just remove the quota if no limit
+            del self._quotas[asset]
+        else:
+            self._quotas[asset] = quota
 
         if old_quota != quota:
             self._reset_diff()
@@ -242,17 +248,21 @@ class TradingState:
 
         return symbol_name in self._symbols
 
+    def summarize(self):
+        ...
+
     def position(
         self,
         symbol_name: str,
-        realized: bool = False
+        # TODO: whether to keep this or not
+        # realized: bool
     ) -> Optional[float]:
         """
         Get the position of a symbol
 
         Args:
             symbol_name (str): the name of the symbol
-            realized (Optional[bool]): A realized position does not include the ammount of base asset that is locked by tickets. Defaults to unrealized, which means it includes the locked quantity of order tickets.
+            # realized (bool): A realized position does not include the ammount of base asset that is locked by tickets.
 
         Returns:
             Optional[float]: the position of the symbol. If the symbol is not supported, returns `None`.
@@ -263,7 +273,7 @@ class TradingState:
         if symbol is None:
             return None
 
-        return self._get_position(symbol, realized)
+        return self._get_position(symbol)
 
     # Prerequisites:
     # - current price: $10
@@ -285,19 +295,17 @@ class TradingState:
         self,
         symbol_name: str,
         position: float,
-        delta: bool = False,
-        asap: bool = False,
-        price: Decimal | None = None,
-        data: PositionData = {}
+        price: Decimal | None,
+        asap: bool,
+        data: PositionMetaData = {}
     ) -> bool:
         """
         Update expectation, returns whether it is successfully updated
 
         Args:
-            position (float): the position to expect. The position refers to the current holding of the base asset as a proportion of its maximum allowed quota
-            delta (bool = False): whether the given position is a delta from the current position
+            position (float): the position to expect, should be between `0.0` and `1.0`. The position refers to the current holding of the base asset as a proportion of its maximum allowed quota
             asap (bool = False): whether to execute the expectation immediately, that it will generate a market order
-            price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the market price.
+            price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the current price.
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
 
         Returns:
@@ -312,15 +320,17 @@ class TradingState:
         symbol = self._get_symbol(symbol_name)
 
         if symbol is None:
-            # This is not duplicated with `self.support_symbol()`
-            # TradingState not cares about the usage of business,
-            # so it provides several util methods
-            # The same is true for `self.create_ticket()`
             return False
 
-        if delta:
-            current_position = self._get_position(symbol, False)
-            position = current_position + position
+        # Normalize the position to be between 0 and 1
+        position = max(FLOAT_ZERO, min(position, FLOAT_ONE))
+
+        current_position = self._get_position(symbol)
+
+        if current_position == position:
+            # If the position is the same, no need to update
+            # We treat it as a success
+            return True
 
         # Create a new dict so that will be considered as changed
         self._expected = {
@@ -449,8 +459,7 @@ class TradingState:
 
     def _get_position(
         self,
-        symbol: Symbol,
-        realized: bool
+        symbol: Symbol
     ) -> float:
         # TODO
         ...
