@@ -20,7 +20,7 @@ from .order import (
     OrderHistory,
 )
 from .types import (
-    SymbolPosition,
+    AssetPosition,
     PositionMetaData
 )
 from .common import (
@@ -106,8 +106,8 @@ class TradingState:
     _symbol_prices: Dict[str, Decimal]
     _quotas: Dict[str, Decimal]
 
-    _expected: Dict[Symbol, SymbolPosition]
-    _old_expected: Dict[Symbol, SymbolPosition]
+    _expected: Dict[str, AssetPosition]
+    _old_expected: Dict[str, AssetPosition]
 
     _orders_to_cancel: Set[Order]
     _symbol_orders: Dict[Symbol, Order]
@@ -271,27 +271,24 @@ class TradingState:
 
     def position(
         self,
-        symbol_name: str,
-        # TODO: whether to keep this or not
-        # realized: bool
+        asset: str
     ) -> Optional[float]:
         """
-        Get the position of a symbol
+        Get the position of an asset
 
         Args:
-            symbol_name (str): the name of the symbol
-            # realized (bool): A realized position does not include the ammount of base asset that is locked by tickets.
+            asset (str): the asset name to get the position for
 
         Returns:
             Optional[float]: the position of the symbol. If the symbol is not supported, returns `None`.
         """
 
-        symbol = self._get_symbol(symbol_name)
+        position = self._expected.get(asset)
 
-        if symbol is None:
-            return None
+        if position is not None:
+            return position.value
 
-        return self._get_position(symbol)
+        return self._get_position_by_asset_value(asset)
 
     # Prerequisites:
     # - current price: $10
@@ -321,6 +318,7 @@ class TradingState:
         Update expectation, returns whether it is successfully updated
 
         Args:
+            symbol_name (str): the name of the symbol to trade with
             position (float): the position to expect, should be between `0.0` and `1.0`. The position refers to the current holding of the base asset as a proportion of its maximum allowed quota
             asap (bool = False): whether to execute the expectation immediately, that it will generate a market order
             price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the current price.
@@ -330,9 +328,9 @@ class TradingState:
             bool: whether the expectation is successfully updated
 
         Usage::
-            state.expect('BTCUSDT', 1.) # to all-in BTC
 
-            state.expect('BTCUSDT', -0.1, delta=True, asap=True) # to decrease the position by 10% by market order
+            # to all-in BTC within the quota
+            state.expect('BTCUSDT', 1., ...)
         """
 
         symbol = self._get_symbol(symbol_name)
@@ -343,7 +341,9 @@ class TradingState:
         # Normalize the position to be between 0 and 1
         position = max(FLOAT_ZERO, min(position, FLOAT_ONE))
 
-        current_position = self._get_position(symbol)
+        asset = symbol.base_asset
+
+        current_position = self._get_position(asset)
 
         if current_position == position:
             # If the position is the same, no need to update
@@ -360,12 +360,12 @@ class TradingState:
             # then we should not set the price
             price = None
 
-        self._expected[symbol] = SymbolPosition(
-            symbol,
-            position,
-            asap,
-            price,
-            data
+        self._expected[asset] = AssetPosition(
+            symbol=symbol,
+            value=position,
+            asap=asap,
+            price=price,
+            data=data
         )
 
         return True
@@ -461,31 +461,11 @@ class TradingState:
 
     # End of public methods ---------------------------------------------
 
-    def _get_symbol_price(
-        self,
-        symbol: Symbol
-    ) -> Decimal:
+    def _get_position_by_asset_value(self, asset: str) -> float:
         """
-        Get the price of a symbol based on numeraire asset
+        Get the position of an asset by its valuation value
         """
 
-        if symbol.quote_asset == self._config.numeraire:
-            return self._symbol_prices.get(symbol.name)
-
-        valuation_symbol = self._get_symbol(
-            self._config.get_symbol_name(
-                symbol.base_asset,
-                self._config.numeraire
-            )
-        )
-
-        ...
-
-    def _get_position(
-        self,
-        symbol: Symbol
-    ) -> float:
-        # TODO
         ...
 
     def _remove_expectation(self, position: SymbolPosition) -> None:
@@ -611,7 +591,6 @@ class TradingState:
         symbol = position.symbol
         symbol_name = symbol.name
         asset = symbol.base_asset
-        # group = self._get_ticket_group(asset)
 
         existing_order = self._symbol_orders.get(symbol)
 
@@ -623,19 +602,6 @@ class TradingState:
 
             self._mark_order_to_cancel(existing_order)
 
-        # TODO:
-        # How many orders could a single symbol have?
-
-        # tickets_to_cancel = self._get_tickets_to_cancel(
-        #     group,
-        #     position,
-        #     TicketOrderSide.SELL if position.value == FLOAT_ZERO
-        #     else TicketOrderSide.BUY
-        # )
-
-        # `info` is always not None, which is ensured by self.expect()
-        # info = self._get_symbol_info(symbol_name)
-
         price = position.price
 
         if not position.asap and price is None:
@@ -646,6 +612,8 @@ class TradingState:
                 # then skip to avoid unexpected result,
                 # it will have another in the next tick
                 return
+
+        value_position = self._get_position_by_symbol_value(symbol)
 
         # price = (
         #     # Order with specified price

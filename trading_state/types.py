@@ -17,11 +17,34 @@ from .common import (
 PositionMetaData = Dict[str, Any]
 
 
-class SymbolPosition:
-    """The position ratio relative to the whole balance value
+class AssetPosition:
+    """An asset position is the position expectation of an asset via trading with a certain symbol.
+
+    The value of the position is based on the asset quota.
 
     Args:
-        value (float): should between 0 and 1, for now only support 0 or 1
+        symbol (Symbol): the symbol to trade with to achieve the position
+        value (float): should between 0 and 1
+        asap (bool): whether to trade asap (market order)
+        price (Decimal | None): the price to trade at
+        data (dict[str, Any]): the meta data of the position
+
+    For example::
+
+        position = AssetPosition(
+            symbol=Symbol(
+                name='BTCBNB',
+                base_asset='BTC',
+                quote_asset='BNB',
+                ...
+            ),
+            value=1.0,
+            asap=True,
+            price=None,
+            data={}
+        )
+
+    If the quota of the BTC is 1000 USDT, the `position` means that the trader should buy or sell BTCBNB so that the valuation value of the BTC is 1000 USDT.
     """
 
     __slots__ = (
@@ -65,12 +88,12 @@ class SymbolPosition:
 
     def __eq__(
         self,
-        position: 'SymbolPosition'
+        position: Any
     ) -> bool:
-        """To detect whether the given `SymbolPosition` has the same goal of the current one
+        """To detect whether the given `AssetPosition` has the same goal of the current one
         """
 
-        if not isinstance(position, SymbolPosition):
+        if not isinstance(position, AssetPosition):
             return False
 
         return (
