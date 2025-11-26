@@ -101,7 +101,7 @@ class Symbol:
     def apply_filters(
         self,
         ticket: OrderTicket,
-        validate_only: bool = False,
+        validate_only: bool,
         **kwargs
     ) -> FilterResult:
         """

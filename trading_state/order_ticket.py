@@ -35,7 +35,7 @@ class BaseOrderTicket:
     BASE_OPTIONAL_PARAMS: List[str] = ['stp']
     ADDITIONAL_OPTIONAL_PARAMS: List[str] = []
 
-    stp: Optional[STPMode] = None
+    stp: STPMode | None = None
 
     @property
     def REQUIRED_PARAMS(self) -> List[str]:

@@ -11,7 +11,7 @@ from .order_ticket import (
     OrderTicket
 )
 from .types import (
-    SymbolPosition,
+    AssetPosition,
 )
 from .common import (
     class_repr,
@@ -28,12 +28,14 @@ class Order:
     # Immutable properties
     id: int
     ticket: OrderTicket
-    position: SymbolPosition
-    locked_asset: str
-    locked_quantity: Decimal
+    position: Optional[AssetPosition]
+    # locked_asset: str
+    # locked_quantity: Decimal
 
     # Mutable properties
     _status: OrderStatus
+
+    # Cumulative filled quantity
     filled_quantity: Decimal
 
     _status_updated_callback: Optional[StatusUpdatedCallback]
@@ -49,13 +51,13 @@ class Order:
     def __init__(
         self,
         ticket: OrderTicket,
-        position: SymbolPosition,
+        position: Optional[AssetPosition],
 
         # The quantity of which asset has been locked,
         # could be either base asset or quote asset
-        locked_asset: str,
+        # locked_asset: str,
         # locked quantity
-        locked_quantity: Decimal
+        # locked_quantity: Decimal
     ) -> None:
         self.id = OrderTicket._UID
         OrderTicket._UID += 1
@@ -64,8 +66,8 @@ class Order:
 
         self.ticket = ticket
         self.position = position
-        self.locked_asset = locked_asset
-        self.locked_quantity = locked_quantity
+        # self.locked_asset = locked_asset
+        # self.locked_quantity = locked_quantity
 
         self._status = OrderStatus.INIT
         self.filled_quantity = DECIMAL_ZERO
@@ -78,7 +80,7 @@ class Order:
 
     def _trigger_status_updated(self, status: OrderStatus) -> None:
         if self._status_updated_callback is not None:
-            self._status_updated_callback(status)
+            self._status_updated_callback(self, status)
 
     @property
     def status(self) -> OrderStatus:

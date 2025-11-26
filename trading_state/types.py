@@ -52,7 +52,8 @@ class AssetPosition:
         'value',
         'asap',
         'price',
-        'data'
+        'data',
+        'reached'
     )
 
     symbol: Symbol
@@ -60,6 +61,7 @@ class AssetPosition:
     asap: bool
     price: Decimal | None
     data: PositionMetaData
+    reached: bool
 
     def __init__(
         self,
@@ -74,6 +76,7 @@ class AssetPosition:
         self.asap = asap
         self.price = price
         self.data = data
+        self.reached = False
 
     def __repr__(self) -> str:
         return class_repr(

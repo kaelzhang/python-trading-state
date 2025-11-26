@@ -1,8 +1,8 @@
 from decimal import Decimal, ROUND_DOWN
 
 from typing import (
+    Tuple,
     Optional,
-    Tuple
 )
 
 

@@ -184,7 +184,9 @@ class PriceFilter(BaseFilter):
                 ticket.price = new_price
 
         if ticket.has(PARAM_STOP_PRICE):
-            exception, new_stop_price = self._apply_price(ticket.stop_price, PARAM_STOP_PRICE)
+            exception, new_stop_price = self._apply_price(
+                ticket.stop_price, PARAM_STOP_PRICE
+            )
             if exception:
                 return exception, False
 
