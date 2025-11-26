@@ -13,9 +13,10 @@ def apply_precision(number: Decimal, precision: int) -> Decimal:
     """
     Scale `number` to exactly `precision` decimal places.
 
-    Examples:
-        apply_precision(Decimal('1.234'), 2) -> Decimal('1.23')
-        apply_precision(Decimal('1.235'), 2) -> Decimal('1.24')
+    Examples::
+
+        apply_precision(Decimal('1.234'), 2) # -> Decimal('1.23')
+        apply_precision(Decimal('1.235'), 2) # -> Decimal('1.24')
     """
 
     # Build a quantizer like:
@@ -30,9 +31,14 @@ def apply_precision(number: Decimal, precision: int) -> Decimal:
 def apply_tick_size(number: Decimal, tick_size: Decimal) -> Decimal:
     """
     Snap `number` down to the nearest multiple of `tick_size`.
-    Example:
-        apply_tick_size(Decimal('0.023422'), Decimal('0.01')) -> Decimal('0.02')
-        apply_tick_size(Decimal('0.053422'), Decimal('0.02')) -> Decimal('0.04')
+
+    Examples::
+
+        apply_tick_size(Decimal('0.023422'), Decimal('0.01'))
+        # -> Decimal('0.02')
+
+        apply_tick_size(Decimal('0.053422'), Decimal('0.02'))
+        # -> Decimal('0.04')
     """
 
     # scale = number / tick_size, then floor it, then multiply back
