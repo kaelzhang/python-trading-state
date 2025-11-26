@@ -6,5 +6,11 @@ class ExpectWithoutQuotaError(Exception):
 
 class SymbolNotDefinedError(Exception):
     def __init__(self, symbol_name: str) -> None:
-        message = f'symbol "{symbol_name}" is not defined'
+        message = f'symbol "{symbol_name}" is not defined yet'
+        super().__init__(message)
+
+
+class NumerairePriceNotReadyError(Exception):
+    def __init__(self, asset: str) -> None:
+        message = f'numeraire price for "{asset}" is not ready yet'
         super().__init__(message)

@@ -6,6 +6,7 @@ from typing import (
     Optional,
     Callable,
     Literal,
+    Union,
 )
 from dataclasses import dataclass
 
@@ -14,6 +15,7 @@ from decimal import Decimal
 from .exceptions import (
     ExpectWithoutQuotaError,
     SymbolNotDefinedError,
+    NumerairePriceNotReadyError,
 )
 from .enums import (
     OrderStatus,
@@ -46,6 +48,11 @@ FLOAT_ZERO = 0.0
 CreateOrderReturn = Tuple[
     Set[Order], # orders to create
     Set[Order]  # orders to cancel
+]
+
+SuccessOrException = Union[
+    Tuple[Literal[False], Exception],
+    Tuple[Literal[True], None]
 ]
 
 
@@ -113,6 +120,8 @@ class TradingState:
     # symbol name -> symbol
     _symbols: Dict[str, Symbol]
 
+    _checked_symbol_names: Set[str]
+
     # base asset -> symbol
     _base_asset_symbols: Dict[str, Symbol]
 
@@ -149,6 +158,8 @@ class TradingState:
         self._config = config
 
         self._symbols = {}
+        self._checked_symbol_names = set[str]()
+
         self._base_asset_symbols = {}
         self._quote_asset_symbols = {}
 
@@ -376,7 +387,7 @@ class TradingState:
         price: Decimal | None,
         asap: bool,
         data: PositionMetaData = {}
-    ) -> Tuple[Literal[False], Exception] | Tuple[Literal[True], None]:
+    ) -> SuccessOrException:
         """
         Update expectation, returns whether it is successfully updated
 
@@ -398,16 +409,13 @@ class TradingState:
             state.expect('BTCUSDT', 1., ...)
         """
 
+        passed, exception = self._check_symbol_name(symbol_name)
+
+        if not passed:
+            return False, exception
+
         symbol = self._get_symbol(symbol_name)
-
-        if symbol is None:
-            return False, SymbolNotDefinedError(symbol_name)
-
         asset = symbol.base_asset
-        quota = self._quotas.get(asset)
-
-        if quota is None:
-            return False, ExpectWithoutQuotaError(asset)
 
         # Normalize the position to be between 0 and 1
         position = max(FLOAT_ZERO, min(position, FLOAT_ONE))
@@ -474,12 +482,46 @@ class TradingState:
 
     # End of public methods ---------------------------------------------
 
-    def _get_asset_numeraire_price(self, asset: str) -> Optional[Decimal]:
-        numeraire_symbol = self._config.get_symbol_name(
+    def _check_symbol_name(self, symbol_name: str) -> SuccessOrException:
+        """
+        Check whether the given symbol name is ready to trade
+
+        Prerequisites:
+        - the symbol is defined: for example: `BNBBTC`
+        - the quota of `BNB` is set
+        - the numeraire price of `BNB`, i.e the price of `BNBUSDT` is ready
+        """
+
+        if symbol_name in self._checked_symbol_names:
+            return True, None
+
+        symbol = self._symbols.get(symbol_name)
+
+        if symbol is None:
+            return False, SymbolNotDefinedError(symbol_name)
+
+        asset = symbol.base_asset
+
+        if asset not in self._quotas:
+            return False, ExpectWithoutQuotaError(asset)
+
+        numeraire_symbol_name = self._get_numeraire_symbol_name(asset)
+
+        if numeraire_symbol_name not in self._symbol_prices:
+            return False, NumerairePriceNotReadyError(asset)
+
+        self._checked_symbol_names.add(symbol_name)
+
+        return True, None
+
+    def _get_numeraire_symbol_name(self, asset: str) -> str:
+        return self._config.get_symbol_name(
             asset,
             self._config.numeraire
         )
 
+    def _get_asset_numeraire_price(self, asset: str) -> Optional[Decimal]:
+        numeraire_symbol = self._get_numeraire_symbol_name(asset)
         return self.get_price(numeraire_symbol)
 
     def _get_symbol(self, symbol_name: str) -> Optional[Symbol]:

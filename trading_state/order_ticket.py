@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 from typing import (
-    List, Union, Optional,
+    List, Optional, Union,
     TYPE_CHECKING
 )
+from enum import Enum
 
 from decimal import Decimal
 
@@ -191,3 +192,12 @@ OrderTicket = Union[
     TakeProfitOrderTicket,
     TakeProfitLimitOrderTicket
 ]
+
+
+class OrderTicketEnum(Enum):
+    LIMIT = LimitOrderTicket
+    MARKET = MarketOrderTicket
+    STOP_LOSS = StopLossOrderTicket
+    STOP_LOSS_LIMIT = StopLossLimitOrderTicket
+    TAKE_PROFIT = TakeProfitOrderTicket
+    TAKE_PROFIT_LIMIT = TakeProfitLimitOrderTicket

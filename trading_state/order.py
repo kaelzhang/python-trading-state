@@ -3,6 +3,7 @@ from typing import (
     Callable, Optional,
     List, Iterator,
 )
+from datetime import datetime
 
 from .enums import (
     OrderStatus
@@ -37,6 +38,7 @@ class Order:
 
     # Cumulative filled quantity
     filled_quantity: Decimal
+    created_at: Optional[datetime]
 
     _status_updated_callback: Optional[StatusUpdatedCallback]
 
@@ -71,6 +73,7 @@ class Order:
 
         self._status = OrderStatus.INIT
         self.filled_quantity = DECIMAL_ZERO
+        self.created_at = None
 
     def when_status_updated(
         self,

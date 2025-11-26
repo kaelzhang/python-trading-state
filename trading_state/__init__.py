@@ -35,6 +35,7 @@ from .filters import (
 )
 
 from .order_ticket import (
+    OrderTicketEnum,
     OrderTicket,
     LimitOrderTicket,
     MarketOrderTicket,
