@@ -6,7 +6,7 @@ from typing import (
     Optional,
     Callable,
     Literal,
-    Union,
+    Union
 )
 from dataclasses import dataclass
 
@@ -16,6 +16,8 @@ from .exceptions import (
     ExpectWithoutQuotaError,
     SymbolNotDefinedError,
     NumerairePriceNotReadyError,
+    SymbolPriceNotReadyError,
+    ExpectWithoutPriceError
 )
 from .enums import (
     OrderStatus,
@@ -379,7 +381,6 @@ class TradingState:
     # we will cancel the buy order
     # since we plan to buy in a higher price
 
-    # Case 2:
     def expect(
         self,
         symbol_name: str,
@@ -427,15 +428,17 @@ class TradingState:
             # We treat it as a success
             return True, None
 
+        # TODO: whether we should use a new dict here?
         # Create a new dict so that will be considered as changed
         self._expected = {
             **self._expected
         }
 
         if asap:
-            # If we want to trade asap (market order),
-            # then we should not set the price
             price = None
+        else:
+            if price is None:
+                return False, ExpectWithoutPriceError(asset)
 
         self._expected[asset] = AssetPosition(
             symbol=symbol,
@@ -499,6 +502,9 @@ class TradingState:
 
         if symbol is None:
             return False, SymbolNotDefinedError(symbol_name)
+
+        if symbol_name not in self._symbol_prices:
+            return False, SymbolPriceNotReadyError(symbol_name)
 
         asset = symbol.base_asset
 

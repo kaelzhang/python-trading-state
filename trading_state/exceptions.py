@@ -4,6 +4,12 @@ class ExpectWithoutQuotaError(Exception):
         super().__init__(message)
 
 
+class ExpectWithoutPriceError(Exception):
+    def __init__(self, asset: str) -> None:
+        message = f'refused to set expectation to asset "{asset}" without a symbol price if not asap'
+        super().__init__(message)
+
+
 class SymbolNotDefinedError(Exception):
     def __init__(self, symbol_name: str) -> None:
         message = f'symbol "{symbol_name}" is not defined yet'
@@ -13,4 +19,10 @@ class SymbolNotDefinedError(Exception):
 class NumerairePriceNotReadyError(Exception):
     def __init__(self, asset: str) -> None:
         message = f'numeraire price for "{asset}" is not ready yet'
+        super().__init__(message)
+
+
+class SymbolPriceNotReadyError(Exception):
+    def __init__(self, symbol_name: str) -> None:
+        message = f'symbol price for "{symbol_name}" is not ready yet'
         super().__init__(message)
