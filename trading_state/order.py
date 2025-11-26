@@ -1,6 +1,6 @@
 from decimal import Decimal
 from typing import (
-    Callable, Awaitable, Optional,
+    Callable, Optional,
     List, Iterator,
 )
 
@@ -144,6 +144,3 @@ class OrderHistory:
                 matched.append(order)
 
         return matched
-
-
-FuncCancelOrder = Callable[[Order], Awaitable[None]]
