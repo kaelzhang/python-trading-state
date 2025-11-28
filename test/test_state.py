@@ -40,6 +40,7 @@ def test_trading_state():
 
     assert order.status == OrderStatus.SUBMITTING
     assert order.id is None
+    assert order.filled_quantity == Decimal('0')
 
     ticket = order.ticket
     assert ticket.type == OrderType.LIMIT

@@ -378,7 +378,7 @@ class TradingState:
         quote_asset = symbol.quote_asset
 
         self._get_base_asset_orders(asset).discard(order)
-        self._get_quote_asset_order(quote_asset).discard(order)
+        self._get_quote_asset_orders(quote_asset).discard(order)
 
         current_position = self._expected.get(asset)
 

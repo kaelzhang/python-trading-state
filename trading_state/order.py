@@ -2,9 +2,15 @@ from decimal import Decimal
 from typing import (
     Callable, Optional,
     List, Iterator,
+    Any,
+    Set,
+    Dict,
 )
 from datetime import datetime
 
+from .symbol import (
+    Symbol,
+)
 from .enums import (
     OrderStatus
 )
@@ -96,6 +102,22 @@ class Order:
             self._status_updated_callback = None
 
 
+def _compare_order(
+    order: Order,
+    key: Any,
+    expected: Any
+) -> bool:
+    if not hasattr(order, key):
+        return False
+
+    value = getattr(order, key)
+
+    if isinstance(expected, Callable):
+        return expected(value)
+
+    return value == expected
+
+
 class OrderHistory:
     _history: List[Order]
 
@@ -129,15 +151,29 @@ class OrderHistory:
     ) -> List[Order]:
         """
         Query the history orders by the given criteria
+
+        Usage::
+
+            results = history.query(
+                status=OrderStatus.FILLED,
+                created_at=lambda x: x.timestamp() > 1717171717,
+            )
+
+            print(results)
         """
 
         matched = []
 
         for order in self._history:
             if all(
-                getattr(order, key) == value
-                for key, value in criteria.items()
+                _compare_order(order, key, expected)
+                for key, expected in criteria.items()
             ):
                 matched.append(order)
 
         return matched
+
+
+class OrderManager:
+    _orders: Set[Order]
+    _symbol_orders: Dict[Symbol, Set[Order]]
