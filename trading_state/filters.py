@@ -128,12 +128,13 @@ class PrecisionFilter(BaseFilter):
         return None, modified
 
 
-@dataclass
-class FeatureGateFilter(BaseFilter):
-    iceberg: bool
-    oco: bool
-    oto: bool
-    trailing_stop: bool
+# TODO:
+# @dataclass
+# class FeatureGateFilter(BaseFilter):
+#     iceberg: bool
+#     oco: bool
+#     oto: bool
+#     trailing_stop: bool
 
 
 @dataclass
@@ -389,5 +390,3 @@ class NotionalFilter(BaseFilter):
             )
 
         return None, False
-
-

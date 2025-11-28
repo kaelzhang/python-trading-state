@@ -19,13 +19,17 @@ from .enums import (
 )
 
 from .exceptions import (
-    ExpectWithoutQuotaError,
-    SymbolNotDefinedError
+    ExpectWithoutPriceError,
+    SymbolNotDefinedError,
+    SymbolPriceNotReadyError,
+    NumerairePriceNotReadyError,
+    QuotaNotSetError,
+    BalanceNotSetError
 )
 
 from .filters import (
     PrecisionFilter,
-    FeatureGateFilter,
+    # FeatureGateFilter,
     PriceFilter,
     QuantityFilter,
     MarketQuantityFilter,

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import List
 
 from trading_state.symbol import Symbol
 from trading_state.filters import (
@@ -15,8 +16,8 @@ from trading_state.filters import (
 from trading_state.enums import FeatureType, OrderType, STPMode
 
 
-def load_symbol_info() -> dict:
-    with open(Path(__file__).parent / 'bn_symbol_info.json', 'r') as f:
+def load_exchange_info() -> dict:
+    with open(Path(__file__).parent / 'bn_exchange_info.json', 'r') as f:
         return json.load(f)
 
 
@@ -38,7 +39,15 @@ STP_MODE_MAP = {
 }
 
 
-def binance_symbol_loader(symbol_info: dict) -> Symbol:
+def get_symbols(exchange_info: dict) -> List[Symbol]:
+    symbols = {}
+    for symbol_info in exchange_info['symbols']:
+        symbol = get_symbol(symbol_info)
+        symbols[symbol.name] = symbol
+    return symbols
+
+
+def get_symbol(symbol_info: dict) -> Symbol:
     symbol = Symbol(
         name=symbol_info['symbol'],
         base_asset=symbol_info['baseAsset'],
@@ -97,10 +106,6 @@ def binance_symbol_loader(symbol_info: dict) -> Symbol:
                 min_trailing_below_delta=filter['minTrailingBelowDelta'],
                 max_trailing_below_delta=filter['maxTrailingBelowDelta']
             ))
-        # elif filter['filterType'] == 'PERCENT_PRICE_BY_SIDE':
-        #     symbol.add_filter(PercentPriceBySideFilter(
-        #         bid_multiplier_up=filter['bidMultiplierUp'],
-        #         bid_multiplier_down=filter['bidMultiplierDown'],
         elif filter['filterType'] == 'NOTIONAL':
             symbol.add_filter(NotionalFilter(
                 min_notional=filter['minNotional'],
