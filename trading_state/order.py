@@ -24,10 +24,6 @@ StatusUpdatedCallback = Callable[[OrderStatus], None]
 
 
 class Order:
-    _UID: int = 0
-
-    # Immutable properties
-    id: int
     ticket: OrderTicket
     position: Optional[AssetPosition]
     # locked_asset: str
@@ -35,6 +31,7 @@ class Order:
 
     # Mutable properties
     _status: OrderStatus
+    id: Optional[str] = None
 
     # Cumulative filled quantity
     filled_quantity: Decimal
@@ -61,9 +58,6 @@ class Order:
         # locked quantity
         # locked_quantity: Decimal
     ) -> None:
-        self.id = OrderTicket._UID
-        OrderTicket._UID += 1
-
         self._status_updated_callback = None
 
         self.ticket = ticket

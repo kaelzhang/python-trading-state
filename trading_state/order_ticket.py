@@ -14,6 +14,10 @@ from .enums import (
     OrderSide, OrderType, TimeInForce, MarketQuantityType, STPMode
 )
 
+from .common import (
+    class_repr
+)
+
 if TYPE_CHECKING:
     from .symbol import Symbol
 
@@ -57,6 +61,9 @@ class BaseOrderTicket:
         )
 
     others: dict[str, any]
+
+    def __repr__(self) -> str:
+        return class_repr(self, keys=['type', *self.PARAMS])
 
     def __init__(
         self,

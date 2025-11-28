@@ -190,7 +190,7 @@ class TradingState:
         self._quote_asset_orders = {}
 
         self._id_orders = {}
-        self._orders = set[Order]()
+        self._open_orders = set[Order]()
 
         self._history = OrderHistory(max_size=config.max_order_history_size)
 
@@ -461,14 +461,14 @@ class TradingState:
             ):
                 # If the position is the same, no need to update
                 # We treat it as a success
-                return True, None
+                return
 
         calculated_position = self._get_asset_position(asset)
 
         if calculated_position == position:
             # If the position is the same, no need to update
             # We treat it as a success
-            return True, None
+            return
 
         # TODO: whether we should use a new dict here?
         # Create a new dict so that will be considered as changed
@@ -483,8 +483,6 @@ class TradingState:
             price=price,
             data=data
         )
-
-        return True, None
 
     def get_orders(self) -> Tuple[
         Set[Order],
@@ -719,7 +717,7 @@ class TradingState:
 
         # quota must not be None, because of the position
         quota = self._quotas.get(asset)
-        value_delta = position.value * quota - value
+        value_delta = Decimal(str(position.value)) * quota - value
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / numeraire_price
 

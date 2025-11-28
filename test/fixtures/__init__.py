@@ -1,9 +1,13 @@
 import json
 from pathlib import Path
 from typing import Dict
+from decimal import Decimal
 
-from trading_state.symbol import Symbol
-from trading_state.filters import (
+from trading_state import (
+    Symbol,
+    TradingState,
+    TradingConfig,
+    Balance,
     PrecisionFilter,
     PriceFilter,
     QuantityFilter,
@@ -11,9 +15,9 @@ from trading_state.filters import (
     MarketQuantityFilter,
     TrailingDeltaFilter,
     # PercentPriceBySideFilter,
-    NotionalFilter
+    NotionalFilter,
+    FeatureType, OrderType, STPMode
 )
-from trading_state.enums import FeatureType, OrderType, STPMode
 
 
 def load_exchange_info() -> dict:
@@ -82,47 +86,78 @@ def get_symbol(symbol_info: dict) -> Symbol:
     ])
 
     symbol.add_filter(PrecisionFilter(
-        base_asset_precision=symbol_info['baseAssetPrecision'],
-        quote_asset_precision=symbol_info['quoteAssetPrecision']
+        base_asset_precision=int(symbol_info['baseAssetPrecision']),
+        quote_asset_precision=int(symbol_info['quoteAssetPrecision'])
     ))
 
     for filter in symbol_info['filters']:
         if filter['filterType'] == 'PRICE_FILTER':
             symbol.add_filter(PriceFilter(
-                min_price=filter['minPrice'],
-                max_price=filter['maxPrice'],
-                tick_size=filter['tickSize']
+                min_price=Decimal(filter['minPrice']),
+                max_price=Decimal(filter['maxPrice']),
+                tick_size=Decimal(filter['tickSize'])
             ))
         elif filter['filterType'] == 'LOT_SIZE':
             symbol.add_filter(QuantityFilter(
-                min_quantity=filter['minQty'],
-                max_quantity=filter['maxQty'],
-                step_size=filter['stepSize']
+                min_quantity=Decimal(filter['minQty']),
+                max_quantity=Decimal(filter['maxQty']),
+                step_size=Decimal(filter['stepSize'])
             ))
         elif filter['filterType'] == 'ICEBERG_PARTS':
             symbol.add_filter(IcebergQuantityFilter(
-                limit=filter['limit']
+                limit=int(filter['limit'])
             ))
         elif filter['filterType'] == 'MARKET_LOT_SIZE':
             symbol.add_filter(MarketQuantityFilter(
-                min_quantity=filter['minQty'],
-                max_quantity=filter['maxQty'],
-                step_size=filter['stepSize']
+                min_quantity=Decimal(filter['minQty']),
+                max_quantity=Decimal(filter['maxQty']),
+                step_size=Decimal(filter['stepSize'])
             ))
         elif filter['filterType'] == 'TRAILING_DELTA':
             symbol.add_filter(TrailingDeltaFilter(
-                min_trailing_above_delta=filter['minTrailingAboveDelta'],
-                max_trailing_above_delta=filter['maxTrailingAboveDelta'],
-                min_trailing_below_delta=filter['minTrailingBelowDelta'],
-                max_trailing_below_delta=filter['maxTrailingBelowDelta']
+                min_trailing_above_delta=int(filter['minTrailingAboveDelta']),
+                max_trailing_above_delta=int(filter['maxTrailingAboveDelta']),
+                min_trailing_below_delta=int(filter['minTrailingBelowDelta']),
+                max_trailing_below_delta=int(filter['maxTrailingBelowDelta'])
             ))
         elif filter['filterType'] == 'NOTIONAL':
             symbol.add_filter(NotionalFilter(
-                min_notional=filter['minNotional'],
-                max_notional=filter['maxNotional'],
-                apply_min_to_market=filter['applyMinToMarket'],
-                apply_max_to_market=filter['applyMaxToMarket'],
-                avg_price_mins=filter['avgPriceMins']
+                min_notional=Decimal(filter['minNotional']),
+                max_notional=Decimal(filter['maxNotional']),
+                apply_min_to_market=bool(filter['applyMinToMarket']),
+                apply_max_to_market=bool(filter['applyMaxToMarket']),
+                avg_price_mins=int(filter['avgPriceMins'])
             ))
 
     return symbol
+
+
+BTCUSDC = 'BTCUSDC'
+BTCUSDT = 'BTCUSDT'
+BTC = 'BTC'
+USDT = 'USDT'
+
+
+def init_state() -> TradingState:
+    symbols = get_symbols()
+
+    state = TradingState(
+        config=TradingConfig(
+            numeraire=USDT
+        )
+    )
+
+    for symbol in symbols.values():
+        state.set_symbol(symbol)
+
+    state.set_price(BTCUSDC, Decimal('10000'))
+    state.set_price(BTCUSDT, Decimal('10000'))
+
+    # 10 BTC
+    state.set_quota(BTC, Decimal('100000'))
+
+    state.set_balances([
+        Balance(BTC, Decimal('1'), Decimal('0'))
+    ])
+
+    return state

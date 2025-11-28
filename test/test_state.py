@@ -1,109 +1,52 @@
-from pytest import fixture
 from decimal import Decimal
 
 from trading_state import (
-    TradingState,
-    TradingConfig,
-    Balance,
-    SymbolPriceNotReadyError,
-    AssetNotDefinedError,
-    QuotaNotSetError,
-    BalanceNotReadyError,
-    ExpectWithoutPriceError,
-    NumerairePriceNotReadyError,
-    SymbolNotDefinedError
+    OrderSide,
+    MarketQuantityType,
+    TimeInForce,
+    OrderStatus,
+    OrderType,
 )
 
 from .fixtures import (
-    get_symbols,
-    Symbols
+    init_state,
+    BTCUSDC,
+    BTCUSDT,
+    BTC,
+    USDT
 )
 
 
-@fixture
-def test_symbols() -> Symbols:
-    return get_symbols()
+def test_trading_state():
+    state = init_state()
 
+    assert state.position(BTC) == (None, 0.1)
 
-BTCUSDC = 'BTCUSDC'
-BTCUSDT = 'BTCUSDT'
-
-def test_trading_state_errors(test_symbols: Symbols):
-    state = TradingState(
-        config=TradingConfig(
-            numeraire='USDT'
-        )
-    )
-
-    # with pytest.raises(SymbolNotDefinedError):
-    exception = state.expect(
+    assert state.expect(
         BTCUSDC,
-        position=1,
-        price=None,
-        asap=True
-    )
-
-    assert isinstance(exception, SymbolNotDefinedError)
-
-    exception, _ = state.position('BTC')
-
-    assert isinstance(exception, AssetNotDefinedError)
-
-    state.set_symbol(test_symbols[BTCUSDC])
-
-    exception = state.expect(
-        BTCUSDC,
-        position=1,
-        price=None,
-        asap=True
-    )
-
-    assert isinstance(exception, SymbolPriceNotReadyError)
-
-    state.set_price(BTCUSDC, Decimal('10000'))
-
-    exception = state.expect(
-        BTCUSDC,
-        position=1,
-        price=None,
-        asap=True
-    )
-
-    assert isinstance(exception, QuotaNotSetError)
-
-    state.set_quota('BTC', Decimal('10000'))
-
-    exception = state.expect(
-        BTCUSDC,
-        position=1,
-        price=None,
-        asap=True
-    )
-
-    assert isinstance(exception, NumerairePriceNotReadyError)
-
-    state.set_price(BTCUSDT, Decimal('10000'))
-
-    exception = state.expect(
-        BTCUSDC,
-        position=1,
-        price=None,
-        asap=True
-    )
-
-    assert isinstance(exception, BalanceNotReadyError)
-
-    state.set_balances([
-        Balance('BTC', Decimal('1'), Decimal('0'))
-    ])
-
-    exception = state.expect(
-        BTCUSDC,
-        position=1,
-        price=None,
+        position=0.2,
+        price=Decimal('10000'),
         asap=False
-    )
+    ) is None
 
-    assert isinstance(exception, ExpectWithoutPriceError)
+    assert state.position(BTC) == (None, 0.2)
 
-    assert state.position('BTC') == (None, 1.0)
+    orders, orders_to_cancel = state.get_orders()
+
+    assert not orders_to_cancel
+    assert len(orders) == 1
+
+    order = next(iter(orders))
+
+    assert order.status == OrderStatus.SUBMITTING
+    assert order.id is None
+
+    ticket = order.ticket
+    assert ticket.type == OrderType.LIMIT
+    assert ticket.symbol.name == BTCUSDC
+    assert ticket.side == OrderSide.BUY
+    assert ticket.quantity == Decimal('1')
+    assert ticket.price == Decimal('10000')
+    assert ticket.time_in_force == TimeInForce.GTC
+
+

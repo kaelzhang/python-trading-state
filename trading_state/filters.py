@@ -176,7 +176,9 @@ class PriceFilter(BaseFilter):
         modified = False
 
         if ticket.has(PARAM_PRICE):
-            exception, new_price = self._apply_price(ticket.price, PARAM_PRICE)
+            exception, new_price = self._apply_price(
+                ticket.price, PARAM_PRICE, validate_only
+            )
             if exception:
                 return exception, False
 
@@ -347,9 +349,11 @@ class NotionalFilter(BaseFilter):
         self,
         ticket: OrderTicket,
         validate_only: bool,
-        get_avg_price: Callable[[int], Decimal],
+        # TODO:
+        # get_avg_price: Callable[[int], Decimal],
         **kwargs
     ) -> FilterResult:
+        # TODO: other market order types
         market_order = ticket.is_a(OrderType.MARKET)
 
         if (
@@ -363,7 +367,7 @@ class NotionalFilter(BaseFilter):
         max_notional = self.max_notional
 
         if market_order:
-            price = get_avg_price(self.avg_price_mins)
+            price: Decimal = kwargs['get_avg_price'](self.avg_price_mins)
 
             if not self.apply_min_to_market:
                 min_notional = Decimal('0')
