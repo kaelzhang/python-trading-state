@@ -5,7 +5,6 @@ from typing import (
     Set,
     Optional,
     Callable,
-    Literal,
     Union
 )
 from dataclasses import dataclass
@@ -13,7 +12,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .exceptions import (
-    ExpectWithoutQuotaError,
+    BalanceNotSetError,
+    QuotaNotSetError,
     SymbolNotDefinedError,
     NumerairePriceNotReadyError,
     SymbolPriceNotReadyError,
@@ -52,9 +52,10 @@ CreateOrderReturn = Tuple[
     Set[Order]  # orders to cancel
 ]
 
-SuccessOrException = Union[
-    Tuple[Literal[False], Exception],
-    Tuple[Literal[True], None]
+SuccessOrException = Optional[Exception]
+type ValueOrException[T] = Union[
+    Tuple[None, T],
+    Tuple[Exception, None]
 ]
 
 
@@ -123,6 +124,7 @@ class TradingState:
     _symbols: Dict[str, Symbol]
 
     _checked_symbol_names: Set[str]
+    _checked_asset_names: Set[str]
 
     # base asset -> symbol
     _base_asset_symbols: Dict[str, Symbol]
@@ -161,6 +163,7 @@ class TradingState:
 
         self._symbols = {}
         self._checked_symbol_names = set[str]()
+        self._checked_asset_names = set[str]()
 
         self._base_asset_symbols = {}
         self._quote_asset_symbols = {}
@@ -176,6 +179,8 @@ class TradingState:
         self._old_expected = self._expected
 
         self._orders_to_cancel = set[Order]()
+
+        # TODO: order manager
         self._symbol_orders = {}
         self._base_asset_orders = {}
         self._quote_asset_orders = {}
@@ -316,7 +321,7 @@ class TradingState:
     def position(
         self,
         asset: str
-    ) -> Optional[float]:
+    ) -> ValueOrException[float]:
         """
         Get the position of an asset
 
@@ -324,15 +329,20 @@ class TradingState:
             asset (str): the asset name to get the position for
 
         Returns:
-            Optional[float]: the position of the symbol. If the symbol is not supported, returns `None`.
+            - Tuple[Exception, None]: the exception if the asset is not ready
+            - Tuple[None, float]: the position of the asset
         """
+
+        exception = self._check_asset_ready(asset)
+        if exception is not None:
+            return exception, None
 
         position = self._expected.get(asset)
 
         if position is not None:
-            return position.value
+            return None, position.value
 
-        return self._get_position_by_asset_value(asset)
+        return None, self._get_asset_position(asset)
 
     def cancel_order(self, order: Order) -> None:
         """
@@ -355,6 +365,10 @@ class TradingState:
         del self._symbol_orders[symbol]
 
         asset = symbol.base_asset
+        quote_asset = symbol.quote_asset
+
+        self._get_base_asset_orders(asset).discard(order)
+        self._get_quote_asset_order(quote_asset).discard(order)
 
         current_position = self._expected.get(asset)
 
@@ -410,20 +424,38 @@ class TradingState:
             state.expect('BTCUSDT', 1., ...)
         """
 
-        passed, exception = self._check_symbol_name(symbol_name)
+        exception = self._check_symbol_ready(symbol_name)
 
-        if not passed:
-            return False, exception
+        if exception is not None:
+            return exception
 
         symbol = self._get_symbol(symbol_name)
         asset = symbol.base_asset
 
+        if asap:
+            price = None
+        else:
+            if price is None:
+                return ExpectWithoutPriceError(asset)
+
         # Normalize the position to be between 0 and 1
         position = max(FLOAT_ZERO, min(position, FLOAT_ONE))
 
-        current_position = self._get_position(asset)
+        open_position = self._expected.get(asset)
 
-        if current_position == position:
+        if open_position is not None:
+            if (
+                open_position.value == position
+                and open_position.price == price
+                and open_position.asap == asap
+            ):
+                # If the position is the same, no need to update
+                # We treat it as a success
+                return True, None
+
+        calculated_position = self._get_asset_position(asset)
+
+        if calculated_position == position:
             # If the position is the same, no need to update
             # We treat it as a success
             return True, None
@@ -433,12 +465,6 @@ class TradingState:
         self._expected = {
             **self._expected
         }
-
-        if asap:
-            price = None
-        else:
-            if price is None:
-                return False, ExpectWithoutPriceError(asset)
 
         self._expected[asset] = AssetPosition(
             symbol=symbol,
@@ -485,7 +511,7 @@ class TradingState:
 
     # End of public methods ---------------------------------------------
 
-    def _check_symbol_name(self, symbol_name: str) -> SuccessOrException:
+    def _check_symbol_ready(self, symbol_name: str) -> SuccessOrException:
         """
         Check whether the given symbol name is ready to trade
 
@@ -496,29 +522,59 @@ class TradingState:
         """
 
         if symbol_name in self._checked_symbol_names:
-            return True, None
+            return
 
         symbol = self._symbols.get(symbol_name)
 
         if symbol is None:
-            return False, SymbolNotDefinedError(symbol_name)
+            return SymbolNotDefinedError(symbol_name)
 
         if symbol_name not in self._symbol_prices:
-            return False, SymbolPriceNotReadyError(symbol_name)
+            return SymbolPriceNotReadyError(symbol_name)
 
-        asset = symbol.base_asset
+        exception = self._check_asset_ready(symbol.base_asset)
+
+        if exception is not None:
+            return exception
+
+        self._checked_symbol_names.add(symbol_name)
+
+    def _check_asset_ready(self, asset: str) -> SuccessOrException:
+        """
+        Check whether the given asset is ready to trade
+        """
+
+        if asset in self._checked_asset_names:
+            return
 
         if asset not in self._quotas:
-            return False, ExpectWithoutQuotaError(asset)
+            return QuotaNotSetError(asset)
 
         numeraire_symbol_name = self._get_numeraire_symbol_name(asset)
 
         if numeraire_symbol_name not in self._symbol_prices:
-            return False, NumerairePriceNotReadyError(asset)
+            return NumerairePriceNotReadyError(asset)
 
-        self._checked_symbol_names.add(symbol_name)
+        if asset not in self._balances:
+            return BalanceNotSetError(asset)
 
-        return True, None
+        self._checked_asset_names.add(asset)
+
+    def _get_base_asset_orders(self, asset: str) -> Set[Order]:
+        if asset in self._base_asset_orders:
+            return self._base_asset_orders[asset]
+
+        orders = set[Order]()
+        self._base_asset_orders[asset] = orders
+        return orders
+
+    def _get_quote_asset_orders(self, asset: str) -> Set[Order]:
+        if asset in self._quote_asset_orders:
+            return self._quote_asset_orders[asset]
+
+        orders = set[Order]()
+        self._quote_asset_orders[asset] = orders
+        return orders
 
     def _get_numeraire_symbol_name(self, asset: str) -> str:
         return self._config.get_symbol_name(
@@ -526,9 +582,53 @@ class TradingState:
             self._config.numeraire
         )
 
-    def _get_asset_numeraire_price(self, asset: str) -> Optional[Decimal]:
+    def _get_asset_numeraire_price(self, asset: str) -> Decimal:
+        """
+        Get the price of an asset in the numeraire
+
+        Should only be called after `asset_ready`
+        """
+
         numeraire_symbol = self._get_numeraire_symbol_name(asset)
         return self.get_price(numeraire_symbol)
+
+    def _get_asset_balance(self, asset: str) -> Decimal:
+        """
+        Get the total balance of an asset, which includes
+        - free balance
+        - balance locked by open (SELL) orders
+
+        Exclude:
+        - balance locked by the Earn wallet or others
+
+        Should be called after `asset_ready`
+        """
+
+        balance = self._balances.get(asset)
+        free = balance.free
+
+        orders = self._get_base_asset_orders(asset)
+        for order in orders:
+            if order.side is OrderSide.SELL:
+                free += order.ticket.quantity - order.filled_quantity
+
+        return free
+
+    def _get_asset_position(self, asset: str) -> float:
+        """
+        Get the calculated position of an asset
+
+        Should only be called after `asset_ready`
+
+        Returns:
+            float: the calculated position of the asset
+        """
+
+        balance = self._get_asset_balance(asset)
+        price = self._get_asset_numeraire_price(asset)
+        quota = self._quotas.get(asset)
+
+        return float(balance * price / quota)
 
     def _get_symbol(self, symbol_name: str) -> Optional[Symbol]:
         return self._symbols.get(symbol_name)
@@ -599,17 +699,10 @@ class TradingState:
         # Precheck current position
         # --------------------------------------------------------
         asset = symbol.base_asset
+
+        balance = self._get_asset_balance(asset)
         numeraire_price = self._get_asset_numeraire_price(asset)
-
-        if numeraire_price is None:
-            # The asset is not supported for valuation
-            return None
-
-        balance = self._balances.get(asset)
-
-        free = balance.free if balance is not None else DECIMAL_ZERO
-
-        value = numeraire_price * free
+        value = balance * numeraire_price
 
         # quota must not be None, because of the position
         quota = self._quotas.get(asset)

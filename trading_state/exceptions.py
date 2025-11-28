@@ -1,9 +1,3 @@
-class ExpectWithoutQuotaError(Exception):
-    def __init__(self, asset: str) -> None:
-        message = f'refused to set expectation to asset "{asset}" without quota'
-        super().__init__(message)
-
-
 class ExpectWithoutPriceError(Exception):
     def __init__(self, asset: str) -> None:
         message = f'refused to set expectation to asset "{asset}" without a symbol price if not asap'
@@ -16,13 +10,25 @@ class SymbolNotDefinedError(Exception):
         super().__init__(message)
 
 
+class SymbolPriceNotReadyError(Exception):
+    def __init__(self, symbol_name: str) -> None:
+        message = f'symbol price for "{symbol_name}" is not ready yet'
+        super().__init__(message)
+
+
 class NumerairePriceNotReadyError(Exception):
     def __init__(self, asset: str) -> None:
         message = f'numeraire price for "{asset}" is not ready yet'
         super().__init__(message)
 
 
-class SymbolPriceNotReadyError(Exception):
-    def __init__(self, symbol_name: str) -> None:
-        message = f'symbol price for "{symbol_name}" is not ready yet'
+class QuotaNotSetError(Exception):
+    def __init__(self, asset: str) -> None:
+        message = f'quota of asset "{asset}" is not set'
+        super().__init__(message)
+
+
+class BalanceNotSetError(Exception):
+    def __init__(self, asset: str) -> None:
+        message = f'balance of asset "{asset}" is not ready yet'
         super().__init__(message)
