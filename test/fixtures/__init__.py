@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List
+from typing import Dict
 
 from trading_state.symbol import Symbol
 from trading_state.filters import (
@@ -39,8 +39,18 @@ STP_MODE_MAP = {
 }
 
 
-def get_symbols(exchange_info: dict) -> List[Symbol]:
-    symbols = {}
+symbols = {}
+Symbols = Dict[str, Symbol]
+
+
+def get_symbols() -> Symbols:
+    global symbols
+
+    if symbols:
+        return symbols
+
+    exchange_info = load_exchange_info()
+
     for symbol_info in exchange_info['symbols']:
         symbol = get_symbol(symbol_info)
         symbols[symbol.name] = symbol

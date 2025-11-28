@@ -3,6 +3,10 @@ from decimal import Decimal, ROUND_DOWN
 from typing import (
     Tuple,
     Optional,
+    TypeVar,
+    Dict,
+    Generic,
+    MutableSet
 )
 
 
@@ -78,3 +82,18 @@ def class_repr(
     string += '>'
 
     return string
+
+
+T = TypeVar('T')
+
+class DictSet(Generic[T]):
+    _data: Dict[str, MutableSet[T]]
+
+    def __init__(self):
+        self._data: Dict[str, MutableSet[T]] = {}
+
+    def __getitem__(self, key: str) -> MutableSet[T]:
+        return self._data.setdefault(key, set[T]())
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._data

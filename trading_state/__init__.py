@@ -20,11 +20,12 @@ from .enums import (
 
 from .exceptions import (
     ExpectWithoutPriceError,
+    AssetNotDefinedError,
     SymbolNotDefinedError,
     SymbolPriceNotReadyError,
     NumerairePriceNotReadyError,
     QuotaNotSetError,
-    BalanceNotSetError
+    BalanceNotReadyError
 )
 
 from .filters import (

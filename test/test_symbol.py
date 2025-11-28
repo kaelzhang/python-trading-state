@@ -5,15 +5,13 @@ from trading_state.symbol import Symbol
 from trading_state.enums import FeatureType, OrderType
 
 from .fixtures import (
-    load_exchange_info,
     get_symbols
 )
 
 
 @fixture
 def test_symbols():
-    exchange_info = load_exchange_info()
-    return get_symbols(exchange_info)
+    return get_symbols()
 
 
 def test_support_order_type(test_symbols: Dict[str, Symbol]):

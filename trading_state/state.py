@@ -12,8 +12,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .exceptions import (
-    BalanceNotSetError,
+    BalanceNotReadyError,
     QuotaNotSetError,
+    AssetNotDefinedError,
     SymbolNotDefinedError,
     NumerairePriceNotReadyError,
     SymbolPriceNotReadyError,
@@ -41,6 +42,7 @@ from .types import (
 )
 from .common import (
     DECIMAL_ZERO,
+    DictSet
 )
 
 
@@ -126,11 +128,12 @@ class TradingState:
     _checked_symbol_names: Set[str]
     _checked_asset_names: Set[str]
 
+    _assets: Set[str]
     # base asset -> symbol
-    _base_asset_symbols: Dict[str, Symbol]
+    _base_asset_symbols: DictSet[Symbol]
 
     # quote asset -> symbol
-    _quote_asset_symbols: Dict[str, Symbol]
+    _quote_asset_symbols: DictSet[Symbol]
 
     # symbol name -> price
     _symbol_prices: Dict[str, Decimal]
@@ -165,8 +168,9 @@ class TradingState:
         self._checked_symbol_names = set[str]()
         self._checked_asset_names = set[str]()
 
-        self._base_asset_symbols = {}
-        self._quote_asset_symbols = {}
+        self._assets = set[str]()
+        self._base_asset_symbols = DictSet[Symbol]()
+        self._quote_asset_symbols = DictSet[Symbol]()
 
         self._symbol_prices = {}
 
@@ -227,8 +231,14 @@ class TradingState:
         """
 
         self._symbols[symbol.name] = symbol
-        self._base_asset_symbols[symbol.base_asset] = symbol
-        self._quote_asset_symbols[symbol.quote_asset] = symbol
+
+        asset = symbol.base_asset
+        quote_asset = symbol.quote_asset
+
+        self._assets.add(asset)
+        self._assets.add(quote_asset)
+        self._base_asset_symbols[asset].add(symbol)
+        self._quote_asset_symbols[quote_asset].add(symbol)
 
     def set_quota(
         self,
@@ -272,7 +282,7 @@ class TradingState:
         if old_quota != quota:
             self._reset_diff()
 
-    def update_balances(
+    def set_balances(
         self,
         new: List[Balance]
     ) -> None:
@@ -547,6 +557,9 @@ class TradingState:
         if asset in self._checked_asset_names:
             return
 
+        if asset not in self._assets:
+            return AssetNotDefinedError(asset)
+
         if asset not in self._quotas:
             return QuotaNotSetError(asset)
 
@@ -556,7 +569,7 @@ class TradingState:
             return NumerairePriceNotReadyError(asset)
 
         if asset not in self._balances:
-            return BalanceNotSetError(asset)
+            return BalanceNotReadyError(asset)
 
         self._checked_asset_names.add(asset)
 
