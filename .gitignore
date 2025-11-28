@@ -1,3 +1,5 @@
+/test/**/*.raw.json
+
 # Python
 __pycache__
 *.pyc
