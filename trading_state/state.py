@@ -6,7 +6,8 @@ from typing import (
     Optional,
     Callable,
     Union,
-    Any
+    Any,
+    List
 )
 from dataclasses import dataclass, field
 
@@ -340,6 +341,39 @@ class TradingState:
             # It is allowed to cancel an order multiple times,
             # use pop to avoid unexpected raise
             self._expected.pop(asset, None)
+
+    def query_orders(
+        self,
+        descending: bool = True,
+        limit: Optional[int] = None,
+        **criteria
+    ) -> List[Order]:
+        """
+        Query the history orders by the given criteria
+
+        Args:
+            descending (bool): Whether to query the history in descending order, ie. the most recent orders first
+            limit (Optional[int]): Maximum number of orders to return. `None` means no limit.
+            **criteria: Criteria to match the orders
+
+        Usage::
+
+            results = state.query_orders(
+                status=OrderStatus.FILLED,
+                created_at=lambda x: x.timestamp() > 1717171717,
+            )
+
+            print(results)
+        """
+
+        return self._orders.history.query(
+            descending=descending,
+            limit=limit,
+            **criteria
+        )
+
+    def get_order_by_id(self, order_id: str) -> Optional[Order]:
+        return self._orders.get_order_by_id(order_id)
 
     def expect(
         self,

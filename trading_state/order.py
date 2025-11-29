@@ -165,6 +165,10 @@ class OrderHistory:
         limit: Optional[int],
         **criteria
     ) -> List[Order]:
+        """
+        See state.query_orders()
+        """
+
         matched = []
         count = 0
 
@@ -193,7 +197,8 @@ class OrderManager:
     _base_asset_orders: DictSet[str, Order]
     _quote_asset_orders: DictSet[str, Order]
 
-    _history: OrderHistory
+    # Just set it as a public property for convenience
+    history: OrderHistory
 
     def __init__(
         self,
@@ -206,7 +211,7 @@ class OrderManager:
         self._symbol_orders = {}
         self._base_asset_orders = DictSet[str, Order]()
         self._quote_asset_orders = DictSet[str,Order]()
-        self._history = OrderHistory(max_order_history_size)
+        self.history = OrderHistory(max_order_history_size)
 
     def _on_order_status_updated(
         self,
@@ -218,7 +223,7 @@ class OrderManager:
                 # When an order has an id,
                 # it means it has been created by the exchange,
                 # so we should add it to the order history
-                self._history.append(order)
+                self.history.append(order)
 
             case OrderStatus.FILLED:
                 position = order.position
@@ -259,35 +264,6 @@ class OrderManager:
     def get_orders_by_quote_asset(self, asset: str) -> Set[Order]:
         return self._quote_asset_orders[asset]
 
-    def query(
-        self,
-        descending: bool = True,
-        limit: Optional[int] = None,
-        **criteria
-    ) -> List[Order]:
-        """
-        Query the history orders by the given criteria
-
-        Args:
-            descending (bool): Whether to query the history in descending order, ie. the most recent orders first
-            limit (Optional[int]): Maximum number of orders to return. `None` means no limit.
-            **criteria: Criteria to match the orders
-
-        Usage::
-
-            results = manager.query(
-                status=OrderStatus.FILLED,
-                created_at=lambda x: x.timestamp() > 1717171717,
-            )
-
-            print(results)
-        """
-        return self._history.query(
-            descending=descending,
-            limit=limit,
-            **criteria
-        )
-
     def cancel(self, order: Order) -> None:
         # This method might be called
         # - from outside of the state
@@ -321,6 +297,9 @@ class OrderManager:
         self._symbol_orders.pop(symbol, None)
         self._base_asset_orders[asset].discard(order)
         self._quote_asset_orders[quote_asset].discard(order)
+
+        if order.id is not None:
+            self._id_orders.pop(order.id, None)
 
     def add(
         self,

@@ -11,8 +11,7 @@ from trading_state import (
 )
 
 from trading_state.binance import (
-    generate_symbols_from_exchange_info,
-    Symbols
+    generate_symbols_from_exchange_info
 )
 
 def load_exchange_info() -> dict:
@@ -30,16 +29,19 @@ def mock_get_avg_price(symbol_name: str, mins: int) -> Decimal:
     return Decimal('10000')
 
 
-symbols = None
+Symbols = Dict[str, Symbol]
+symbols: Symbols = {}
 
 def get_symbols() -> Symbols:
     global symbols
 
-    if symbols is not None:
+    if symbols:
         return symbols
 
     exchange_info = load_exchange_info()
-    symbols = generate_symbols_from_exchange_info(exchange_info)
+    for symbol in generate_symbols_from_exchange_info(exchange_info):
+        symbols[symbol.name] = symbol
+
     return symbols
 
 
@@ -55,7 +57,7 @@ def init_state() -> TradingState:
         )
     )
 
-    for symbol in symbols:
+    for symbol in symbols.values():
         state.set_symbol(symbol)
 
     state.set_price(BTCUSDC, Decimal('10000'))
