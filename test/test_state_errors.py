@@ -37,7 +37,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     )
 
     # with pytest.raises(SymbolNotDefinedError):
-    exception = state.expect(
+    exception, _ = state.expect(
         BTCUSDC,
         position=1,
         price=None,
@@ -52,7 +52,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     state.set_symbol(test_symbols[BTCUSDC])
 
-    exception = state.expect(
+    exception, _ = state.expect(
         BTCUSDC,
         position=1,
         price=None,
@@ -63,7 +63,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     state.set_price(BTCUSDC, Decimal('10000'))
 
-    exception = state.expect(
+    exception, _ = state.expect(
         BTCUSDC,
         position=1,
         price=None,
@@ -74,7 +74,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     state.set_quota(BTC, Decimal('10000'))
 
-    exception = state.expect(
+    exception, _ = state.expect(
         BTCUSDC,
         position=1,
         price=None,
@@ -85,7 +85,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     state.set_price(BTCUSDT, Decimal('10000'))
 
-    exception = state.expect(
+    exception, _ = state.expect(
         BTCUSDC,
         position=1,
         price=None,
@@ -98,7 +98,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         Balance(BTC, Decimal('1'), Decimal('0'))
     ])
 
-    exception = state.expect(
+    exception, _ = state.expect(
         BTCUSDC,
         position=1,
         price=None,

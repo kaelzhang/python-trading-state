@@ -36,6 +36,13 @@ class BaseFilter(ABC):
         validate_only: bool,
         **kwargs
     ) -> FilterResult:
+        """
+        Returns:
+            Tuple[Optional[Exception], bool]:
+            - the reason exception if the filter is not successfully applied
+            - whether the order ticket is modified
+        """
+
         ...
 
 

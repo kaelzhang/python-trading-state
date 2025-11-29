@@ -6,6 +6,7 @@ from trading_state import (
     TimeInForce,
     OrderStatus,
     OrderType,
+    Balance
 )
 
 from .fixtures import (
@@ -23,12 +24,14 @@ def test_trading_state():
     assert state.support_symbol(BTCUSDC)
     assert state.position(BTC) == (None, 0.1)
 
-    assert state.expect(
+    exception, updated = state.expect(
         BTCUSDC,
         position=0.2,
         price=Decimal('10000'),
         asap=False
-    ) is None
+    )
+    assert exception is None
+    assert updated
 
     assert state.position(BTC) == (None, 0.2)
 
@@ -56,25 +59,29 @@ def test_trading_state():
     assert not orders_to_cancel
 
     # Expect a new position
-    assert state.expect(
+    exception, updated = state.expect(
         BTCUSDC,
         position=0.3,
         # Although the price is provided, it will be ignored
         price=Decimal('10000'),
         asap=True
-    ) is None
+    )
+    assert exception is None
+    assert updated
 
     assert state.position(BTC) == (None, 0.3)
 
     # Even we set a new expectation with another symbol,
     # but the previous expectation is equivalent,
     # it will be skipped
-    assert state.expect(
+    exception, updated = state.expect(
         BTCUSDT,
         position=0.3,
         price=Decimal('20000'),
         asap=True
-    ) is None
+    )
+    assert exception is None
+    assert not updated
 
     orders, orders_to_cancel = state.get_orders()
 
@@ -115,7 +122,9 @@ def test_trading_state():
     assert len(orders_to_cancel) == 1
     assert next(iter(orders_to_cancel)) == order_to_cancel
 
+    # We just cancel the market order
     state.cancel_order(order)
+
     # We could cancel an order which is already canceled
     state.cancel_order(order_to_cancel)
 
@@ -123,3 +132,106 @@ def test_trading_state():
     assert not orders
     assert len(orders_to_cancel) == 1
     assert order is next(iter(orders_to_cancel))
+
+    order.status = OrderStatus.CANCELLED
+
+    # We should also remove the expectation for the asset
+    # to avoid unexpected behavior
+    assert BTC not in state._expected
+
+
+def test_order_filled():
+    state = init_state()
+
+    exception, updated = state.expect(
+        BTCUSDC,
+        position=0.2,
+        price=Decimal('10000'),
+        asap=False
+    )
+    assert exception is None
+    assert updated
+
+    # Same expectation, no need to update
+    exception, updated = state.expect(
+        BTCUSDC,
+        position=0.2,
+        price=Decimal('10000'),
+        asap=False
+    )
+    assert exception is None
+    assert not updated
+
+    orders, _ = state.get_orders()
+
+    order = next(iter(orders))
+    order.status = OrderStatus.CREATED
+    order.id = 'order-1'
+    order.filled_quantity = Decimal('0.5')
+
+    # Imitate the balance is increased
+    state.set_balances([
+        Balance(BTC, Decimal('1.5'), Decimal('0'))
+    ])
+
+    order.status = OrderStatus.FILLED
+
+    # The order is filled, so the expectation should marked as reached,
+    # but the balance might not be updated yet,
+    # we should keep tht expectation
+    assert state._expected[BTC].reached is True
+
+    assert state.position(BTC) == (None, 0.2)
+
+    orders, orders_to_cancel = state.get_orders()
+    assert not orders
+    assert not orders_to_cancel
+
+    # Although the balance is updated,
+    # but the balance is not changed,
+    state.set_balances([
+        Balance(BTC, Decimal('1.5'), Decimal('0'))
+    ])
+
+    state.set_balances([
+        Balance(BTC, Decimal('2'), Decimal('0'))
+    ])
+
+    # The balance is updated,
+    # but the intrinsic position is equal to the expectation,
+    # we keep the expectation to improve performance
+    assert state._expected[BTC].reached is True
+
+    assert state.position(BTC) == (None, 0.2)
+
+    # The expectation is equivalent to the current position,
+    # no need to update
+    exception, updated = state.expect(
+        BTCUSDC,
+        position=0.2,
+        price=Decimal('10000'),
+        asap=False
+    )
+    assert exception is None
+    assert not updated
+
+    state.set_balances([
+        Balance(BTC, Decimal('3'), Decimal('0'))
+    ])
+
+    # The balance is updated,
+    # but the intrinsic position is not equal to the expectation,
+    # we should remove the expectation
+    assert BTC not in state._expected
+
+    assert state.position(BTC) == (None, 0.3)
+
+    # The expectation is already reached based on calculation
+    exception, updated = state.expect(
+        BTCUSDC,
+        position=0.3,
+        price=Decimal('10000'),
+        asap=False
+    )
+    assert exception is None
+    assert not updated

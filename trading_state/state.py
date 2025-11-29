@@ -341,21 +341,6 @@ class TradingState:
             # use pop to avoid unexpected raise
             self._expected.pop(asset, None)
 
-    # Prerequisites:
-    # - current price: $10
-    # - balance: 1
-    # - quota: $20
-    # - open orders:
-    #   - buy 1 @ $9
-    #   - sell 1 @ $11
-    # - quota: $11
-    #
-    # Case 1:
-    # expect: + 0.1 @ current (+ $2)
-    # Result:
-    # we will cancel the buy order
-    # since we plan to buy in a higher price
-
     def expect(
         self,
         symbol_name: str,
@@ -363,7 +348,7 @@ class TradingState:
         price: Decimal | None,
         asap: bool,
         data: PositionMetaData = {}
-    ) -> SuccessOrException:
+    ) -> ValueOrException[bool]:
         """
         Update expectation, returns whether it is successfully updated
 
@@ -375,9 +360,9 @@ class TradingState:
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
 
         Returns:
-            tuple:
-            - bool: whether the expectation is successfully updated
-            - Optional[Exception]: the reason exception if the expectation is not successfully updated
+            Tuple[Optional[Exception], bool]:
+            - the reason exception if the expectation is not successfully updated
+            - whether the expectation is successfully updated
 
         Usage::
 
@@ -388,7 +373,7 @@ class TradingState:
         exception = self._check_symbol_ready(symbol_name)
 
         if exception is not None:
-            return exception
+            return exception, None
 
         symbol = self._get_symbol(symbol_name)
         asset = symbol.base_asset
@@ -397,7 +382,7 @@ class TradingState:
             price = None
         else:
             if price is None:
-                return ExpectWithoutPriceError(asset)
+                return ExpectWithoutPriceError(asset), None
 
         # Normalize the position to be between 0 and 1
         position = max(FLOAT_ZERO, min(position, FLOAT_ONE))
@@ -412,14 +397,14 @@ class TradingState:
             ):
                 # If the position is the same, no need to update
                 # We treat it as a success
-                return
+                return None, False
 
         calculated_position = self._get_asset_position(asset)
 
         if calculated_position == position:
             # If the position is the same, no need to update
             # We treat it as a success
-            return
+            return None, False
 
         self._expected[asset] = AssetPosition(
             symbol=symbol,
@@ -428,6 +413,8 @@ class TradingState:
             price=price,
             data=data
         )
+
+        return None, True
 
     def get_orders(self) -> Tuple[
         Set[Order],
@@ -605,7 +592,10 @@ class TradingState:
         position: AssetPosition
     ) -> None:
         """
-        Create a order from an asset position
+        Create a order from an asset position.
+
+        Actually it is always called after `symbol_ready`
+        because of `self.expect(...)`
         """
 
         if position.reached:
@@ -624,29 +614,13 @@ class TradingState:
 
             self.cancel_order(existing_order)
 
-        # Precheck price
-        # --------------------------------------------------------
-        price = position.price
-        symbol_name = symbol.name
-
-        if not position.asap and price is None:
-            price = self.get_price(symbol_name)
-
-            if price is None:
-                # The price is not ready,
-                # then skip to avoid unexpected result,
-                # it will have another in the next tick
-                return
-
-        # Precheck current position
+        # Calculate the numeraire value of the asset
         # --------------------------------------------------------
         asset = symbol.base_asset
-
         balance = self._get_asset_balance(asset)
         numeraire_price = self._get_asset_numeraire_price(asset)
         value = balance * numeraire_price
 
-        # quota must not be None, because of the position
         quota = self._quotas.get(asset)
         value_delta = Decimal(str(position.value)) * quota - value
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
@@ -676,6 +650,7 @@ class TradingState:
         )
 
         if exception is not None:
+            # TODO: logging
             return
 
         order = Order(

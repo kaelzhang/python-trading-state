@@ -78,6 +78,17 @@ class Symbol:
         feature: FeatureType,
         value: Optional[Enum] = None
     ) -> bool:
+        """
+        Check if the symbol supports a certain feature.
+
+        Args:
+            feature: (FeatureType) the feature to check
+            value: (Optional[Enum]=None) the value to check
+
+        Returns:
+            bool: whether the symbol supports the feature
+        """
+
         allowed = self._allowed_features.get(feature, None)
 
         if allowed is None:
@@ -86,12 +97,12 @@ class Symbol:
 
         if isinstance(allowed, list):
             if value is None:
-                raise ValueError(f'symbol.support {feature} requires a value, but got None')
+                raise ValueError(f'symbol.support {feature} requires a value for symbol {self}, but got None')
 
             return value in allowed
 
         if value is not None:
-            raise ValueError(f'symbol.support {feature} does not allow to test a value, but got {value}')
+            raise ValueError(f'symbol.support {feature} does not allow to test a value for symbol {self}, but got {value}')
 
         return allowed
 
