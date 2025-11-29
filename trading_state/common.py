@@ -6,7 +6,10 @@ from typing import (
     TypeVar,
     Dict,
     Generic,
-    MutableSet
+    MutableSet,
+    Callable,
+    Any,
+    Hashable
 )
 
 
@@ -84,16 +87,47 @@ def class_repr(
     return string
 
 
-T = TypeVar('T')
+K = TypeVar('K')
+V = TypeVar('V', bound=Hashable)
 
-class DictSet(Generic[T]):
-    _data: Dict[str, MutableSet[T]]
+class DictSet(Generic[K, V]):
+    _data: Dict[K, MutableSet[V]]
 
     def __init__(self):
-        self._data: Dict[str, MutableSet[T]] = {}
+        self._data: Dict[K, MutableSet[V]] = {}
 
-    def __getitem__(self, key: str) -> MutableSet[T]:
-        return self._data.setdefault(key, set[T]())
+    def __getitem__(self, key: K) -> MutableSet[V]:
+        return self._data.setdefault(key, set[V]())
 
-    def __contains__(self, key: str) -> bool:
+    def __contains__(self, key: K) -> bool:
         return key in self._data
+
+    def clear(self) -> None:
+        self._data.clear()
+
+
+EventEmitterCallback = Callable[[...], None]
+
+class EventEmitter(Generic[K]):
+    _listeners: DictSet[K, EventEmitterCallback]
+
+    def __init__(self):
+        self._listeners = DictSet[K, EventEmitterCallback]()
+
+    def on(
+        self,
+        event: str,
+        listener: EventEmitterCallback
+    ) -> None:
+        self._listeners[event].add(listener)
+
+    def emit(
+        self,
+        event: str,
+        *args: Any
+    ) -> None:
+        for listener in self._listeners[event]:
+            listener(*args)
+
+    def off(self) -> None:
+        self._listeners.clear()

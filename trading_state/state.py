@@ -31,6 +31,8 @@ from .balance import Balance
 from .order import (
     Order,
     OrderHistory,
+    OrderUpdatedType,
+    OrderManager
 )
 from .order_ticket import (
     LimitOrderTicket,
@@ -130,10 +132,10 @@ class TradingState:
 
     _assets: Set[str]
     # base asset -> symbol
-    _base_asset_symbols: DictSet[Symbol]
+    _base_asset_symbols: DictSet[str, Symbol]
 
     # quote asset -> symbol
-    _quote_asset_symbols: DictSet[Symbol]
+    _quote_asset_symbols: DictSet[str, Symbol]
 
     # symbol name -> price
     _symbol_prices: Dict[str, Decimal]
@@ -145,18 +147,7 @@ class TradingState:
     _expected: Dict[str, AssetPosition]
     _old_expected: Dict[str, AssetPosition]
 
-    _orders_to_cancel: Set[Order]
-
-    # Only allow one order for a single symbol
-    _symbol_orders: Dict[Symbol, Order]
-    _base_asset_orders: Dict[str, Set[Order]]
-    _quote_asset_orders: Dict[str, Set[Order]]
-
-    # Order.id -> Order
-    _id_orders: Dict[str, Order]
-    _open_orders: Set[Order]
-
-    _history: OrderHistory
+    _orders: OrderManager
 
     def __init__(
         self,
@@ -169,8 +160,8 @@ class TradingState:
         self._checked_asset_names = set[str]()
 
         self._assets = set[str]()
-        self._base_asset_symbols = DictSet[Symbol]()
-        self._quote_asset_symbols = DictSet[Symbol]()
+        self._base_asset_symbols = DictSet[str, Symbol]()
+        self._quote_asset_symbols = DictSet[str, Symbol]()
 
         self._symbol_prices = {}
 
@@ -182,17 +173,7 @@ class TradingState:
         # In the beginning, they are the same
         self._old_expected = self._expected
 
-        self._orders_to_cancel = set[Order]()
-
-        # TODO: order manager
-        self._symbol_orders = {}
-        self._base_asset_orders = {}
-        self._quote_asset_orders = {}
-
-        self._id_orders = {}
-        self._open_orders = set[Order]()
-
-        self._history = OrderHistory(max_size=config.max_order_history_size)
+        self._orders = OrderManager(config.max_order_history_size)
 
     # Public methods
     # ------------------------------------------------------------------------
@@ -361,24 +342,9 @@ class TradingState:
         The method should have no side effects if called multiple times
         """
 
-        # This method might be called
-        # - from outside of the state
-        # - from the status updated callback triggered by user actions
-        # so we should check the status
-        if order.status.lt(OrderStatus.ABOUT_TO_CANCEL):
-            order.status = OrderStatus.ABOUT_TO_CANCEL
-            self._orders_to_cancel.add(order)
+        self._orders.cancel(order)
 
-        self._open_orders.discard(order)
-
-        symbol = order.ticket.symbol
-        del self._symbol_orders[symbol]
-
-        asset = symbol.base_asset
-        quote_asset = symbol.quote_asset
-
-        self._get_base_asset_orders(asset).discard(order)
-        self._get_quote_asset_orders(quote_asset).discard(order)
+        asset = order.ticket.symbol.base_asset
 
         current_position = self._expected.get(asset)
 
@@ -501,21 +467,7 @@ class TradingState:
 
         self._diff()
 
-        orders_to_cancel = self._orders_to_cancel
-        self._orders_to_cancel = set[Order]()
-
-        for order in orders_to_cancel:
-            order.status = OrderStatus.CANCELLING
-
-        orders_to_create = set[Order]()
-
-        for order in self._open_orders:
-            if order.status is OrderStatus.INIT:
-                orders_to_create.add(order)
-                order.status = OrderStatus.SUBMITTING
-                self._history.append(order)
-
-        return orders_to_create, orders_to_cancel
+        return self._orders.get_orders()
 
     # End of public methods ---------------------------------------------
 
@@ -682,7 +634,7 @@ class TradingState:
 
         symbol = position.symbol
 
-        existing_order = self._symbol_orders.get(symbol)
+        existing_order = self._orders.get_order_by_symbol(symbol)
 
         # We only keep one order for a single symbol
         if existing_order is not None:
@@ -748,23 +700,17 @@ class TradingState:
             position=position
         )
 
-        order.when_status_updated(
+        order.on(
+            OrderUpdatedType.STATUS_UPDATED,
             self._on_order_status_updated
         )
 
-        self._open_orders.add(order)
+        self._orders.add(order)
 
     def _on_order_status_updated(
         self,
         order: Order,
         status: OrderStatus
     ) -> None:
-        match status:
-            case OrderStatus.FILLED:
-                position = order.position
-
-                if position is not None:
-                    position.reached = True
-
-            case OrderStatus.CANCELLED:
-                self.cancel_order(order)
+        if status is OrderStatus.CANCELLED:
+            self.cancel_order(order)

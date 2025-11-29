@@ -5,8 +5,10 @@ from typing import (
     Any,
     Set,
     Dict,
+    Tuple,
 )
 from datetime import datetime
+from enum import Enum
 
 from .symbol import (
     Symbol,
@@ -23,27 +25,33 @@ from .types import (
 from .common import (
     class_repr,
     DECIMAL_ZERO,
+    DictSet,
+    EventEmitter
 )
 
 
-StatusUpdatedCallback = Callable[[OrderStatus], None]
+type UpdatedCallback[T] = Callable[[T], None]
 
 
-class Order:
+class OrderUpdatedType(Enum):
+    STATUS_UPDATED = 1
+    ID_UPDATED = 2
+
+
+class Order(EventEmitter[OrderUpdatedType]):
     ticket: OrderTicket
     position: Optional[AssetPosition]
-    # locked_asset: str
-    # locked_quantity: Decimal
+
+    _status: OrderStatus
+    _id: Optional[str] = None
 
     # Mutable properties
-    _status: OrderStatus
-    id: Optional[str] = None
-
     # Cumulative filled quantity
     filled_quantity: Decimal
     created_at: Optional[datetime]
 
-    _status_updated_callback: Optional[StatusUpdatedCallback]
+    # _status_updated_callback: Optional[UpdatedCallback[OrderStatus]]
+    # _id_updated_callback: Optional[UpdatedCallback[str]]
 
     def __repr__(self) -> str:
         return class_repr(self, keys=[
@@ -56,15 +64,12 @@ class Order:
     def __init__(
         self,
         ticket: OrderTicket,
-        position: Optional[AssetPosition],
-
-        # The quantity of which asset has been locked,
-        # could be either base asset or quote asset
-        # locked_asset: str,
-        # locked quantity
-        # locked_quantity: Decimal
+        position: Optional[AssetPosition]
     ) -> None:
+        super().__init__()
+
         self._status_updated_callback = None
+        self._id_updated_callback = None
 
         self.ticket = ticket
         self.position = position
@@ -75,16 +80,6 @@ class Order:
         self.filled_quantity = DECIMAL_ZERO
         self.created_at = None
 
-    def when_status_updated(
-        self,
-        callback: StatusUpdatedCallback
-    ) -> None:
-        self._status_updated_callback = callback
-
-    def _trigger_status_updated(self, status: OrderStatus) -> None:
-        if self._status_updated_callback is not None:
-            self._status_updated_callback(self, status)
-
     @property
     def status(self) -> OrderStatus:
         return self._status
@@ -92,15 +87,26 @@ class Order:
     @status.setter
     def status(self, status: OrderStatus) -> None:
         self._status = status
-        self._trigger_status_updated(status)
+        self.emit(OrderUpdatedType.STATUS_UPDATED, self,status)
 
         if (
             status is OrderStatus.CANCELLED
             or status is OrderStatus.FILLED
         ):
             # Clean the callback to avoid memory leak
-            self._status_updated_callback = None
+            self.off()
 
+    @property
+    def id(self) -> Optional[str]:
+        return self._id
+
+    @id.setter
+    def id(self, value: str) -> None:
+        if self._id is not None:
+            raise ValueError(f'id for {self} is already set')
+
+        self._id = value
+        self.emit(OrderUpdatedType.ID_UPDATED, self, value)
 
 def _compare_order(
     order: Order,
@@ -131,8 +137,23 @@ class OrderHistory:
     def __len__(self) -> int:
         return len(self._history)
 
-    def __iter__(self) -> Iterator[Order]:
-        return iter(self._history)
+    def iterator(self, descending: bool) -> Iterator[Order]:
+        """
+        Returns an iterator over the history orders.
+
+        Args:
+            descending (bool): Whether to iterate the history in descending order, ie. the most recent orders first
+
+        Usage::
+
+            for order in history.iterator(descending=True):
+                print(order)
+        """
+        return (
+            reversed(self._orders)
+            if descending
+            else iter(self._orders)
+        )
 
     def _check_size(self) -> None:
         if len(self._history) > self._max_size:
@@ -147,33 +168,183 @@ class OrderHistory:
 
     def query(
         self,
+        descending: bool,
+        limit: Optional[int],
+        **criteria
+    ) -> List[Order]:
+        matched = []
+        count = 0
+
+        for order in self._history.iterator(descending):
+            if all(
+                _compare_order(order, key, expected)
+                for key, expected in criteria.items()
+            ):
+                matched.append(order)
+                count += 1
+
+                if limit is not None and count >= limit:
+                    break
+
+        return matched
+
+
+class OrderManager:
+    _open_orders: Set[Order]
+    _id_orders: Dict[str, Order]
+
+    _orders_to_cancel: Set[Order]
+
+    # Only allow one order for a single symbol
+    _symbol_orders: Dict[Symbol, Order]
+    _base_asset_orders: DictSet[Order]
+    _quote_asset_orders: DictSet[Order]
+
+    _history: OrderHistory
+
+    def __init__(
+        self,
+        max_order_history_size: int
+    ) -> None:
+        self._open_orders = set[Order]()
+        self._id_orders = {}
+        self._orders_to_cancel = set[Order]()
+
+        self._symbol_orders = {}
+        self._base_asset_orders = DictSet[Order]()
+        self._quote_asset_orders = DictSet[Order]()
+        self._history = OrderHistory(max_order_history_size)
+
+    def _on_order_status_updated(
+        self,
+        order: Order,
+        status: OrderStatus
+    ) -> None:
+        match status:
+            case OrderStatus.CREATED:
+                self._open_orders.add(order)
+
+            case OrderStatus.FILLED:
+                position = order.position
+
+                if position is not None:
+                    position.reached = True
+
+                self._purge_order(order)
+
+            case OrderStatus.ABOUT_TO_CANCEL:
+                # If the cancelation request to the server is failed,
+                # order.status should be set to ABOUT_TO_CANCEL again,
+                # so we should add the order to the cancelation list
+                self._orders_to_cancel.add(order)
+
+            case OrderStatus.CANCELLED:
+                # Redudant cancellation
+                self._purge_order(order)
+
+    def _on_order_id_updated(
+        self,
+        order: Order,
+        value: str
+    ) -> None:
+        self._id_orders[value] = order
+        self._history.append(order)
+
+    def get_order_by_id(self, value: str) -> Optional[Order]:
+        return self._id_orders.get(value)
+
+    def get_order_by_symbol(self, symbol: Symbol) -> Optional[Order]:
+        return self._symbol_orders.get(symbol)
+
+    def query(
+        self,
+        descending: bool = True,
+        limit: Optional[int] = None,
         **criteria
     ) -> List[Order]:
         """
         Query the history orders by the given criteria
 
+        Args:
+            descending (bool): Whether to query the history in descending order, ie. the most recent orders first
+            limit (Optional[int]): Maximum number of orders to return. `None` means no limit.
+            **criteria: Criteria to match the orders
+
         Usage::
 
-            results = history.query(
+            results = manager.query(
                 status=OrderStatus.FILLED,
                 created_at=lambda x: x.timestamp() > 1717171717,
             )
 
             print(results)
         """
+        return self._history.query(
+            descending=descending,
+            limit=limit,
+            **criteria
+        )
 
-        matched = []
+    def cancel(self, order: Order) -> None:
+        # This method might be called
+        # - from outside of the state
+        # - when user cancels the order on the exchange manually and
+        #   the order status is changed by the callback of the
+        #   `executionReport` of the exchange event
+        # so we should check the status
+        if order.status.lt(OrderStatus.ABOUT_TO_CANCEL):
+            order.status = OrderStatus.ABOUT_TO_CANCEL
 
-        for order in self._history:
-            if all(
-                _compare_order(order, key, expected)
-                for key, expected in criteria.items()
-            ):
-                matched.append(order)
+        self._purge_order(order)
 
-        return matched
+    def _purge_order(self, order: Order) -> None:
+        self._open_orders.discard(order)
 
+        symbol = order.ticket.symbol
+        del self._symbol_orders[symbol]
 
-class OrderManager:
-    _orders: Set[Order]
-    _symbol_orders: Dict[Symbol, Set[Order]]
+        asset = symbol.base_asset
+        quote_asset = symbol.quote_asset
+
+        self._base_asset_orders[asset].discard(order)
+        self._quote_asset_orders[quote_asset].discard(order)
+
+    def add(
+        self,
+        order: Order
+    ) -> None:
+        if order.status is not OrderStatus.INIT:
+            # The order is not in the initial state,
+            # so it should not be added to the open orders
+            return
+
+        self._open_orders.add(order)
+
+        order.on(
+            OrderUpdatedType.ID_UPDATED,
+            self._on_order_id_updated
+        )
+
+        order.on(
+            OrderUpdatedType.STATUS_UPDATED,
+            self._on_order_status_updated
+        )
+
+    def get_orders(self) -> Tuple[
+        Set[Order],
+        Set[Order]
+    ]:
+        orders_to_cancel = self._orders_to_cancel
+        self._orders_to_cancel = set[Order]()
+
+        for order in orders_to_cancel:
+            order.status = OrderStatus.CANCELLING
+
+        orders_to_create = set[Order]()
+
+        for order in self._open_orders:
+            if order.status is OrderStatus.INIT:
+                orders_to_create.add(order)
+                order.status = OrderStatus.SUBMITTING
+
+        return orders_to_create, orders_to_cancel

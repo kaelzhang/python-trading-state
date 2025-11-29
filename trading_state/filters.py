@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import (
     Optional,
     Tuple,
-    Callable
+    # Callable
 )
 
 from .order_ticket import OrderTicket

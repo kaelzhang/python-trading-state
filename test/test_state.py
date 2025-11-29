@@ -51,3 +51,19 @@ def test_trading_state():
     assert ticket.time_in_force == TimeInForce.GTC
 
 
+    print('========================================')
+
+    # Expect a new position
+    assert state.expect(
+        BTCUSDC,
+        position=0.3,
+        price=Decimal('10000'),
+        asap=False
+    ) is None
+
+    orders, orders_to_cancel = state.get_orders()
+
+    assert len(orders_to_cancel) == 1
+    assert len(orders) == 1
+
+
