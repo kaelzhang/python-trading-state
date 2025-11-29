@@ -264,14 +264,8 @@ class TradingState:
             ])
         """
 
-        balances = []
-
         for balance in new:
-            balances.append(
-                (balance.asset, balance)
-            )
-
-        self._balances.update(balances)
+            self._set_balance(balance)
 
     def get_price(
         self,
@@ -338,6 +332,10 @@ class TradingState:
         if current_position is order.position:
             # Clean the related expectation,
             # so that current position will be recalculated
+
+            # If we do not remove the expection,
+            # the trading state will try to create a new order
+            # for the position, which might cause unexpected behavior
 
             # It is allowed to cancel an order multiple times,
             # use pop to avoid unexpected raise
@@ -520,6 +518,38 @@ class TradingState:
 
         numeraire_symbol = self._get_numeraire_symbol_name(asset)
         return self.get_price(numeraire_symbol)
+
+    def _set_balance(self, balance: Balance) -> None:
+        """
+        Set the balance of an asset
+        """
+
+        asset = balance.asset
+        old_balance = self._balances.get(asset)
+
+        self._balances[balance.asset] = balance
+
+        position = self._expected.get(asset)
+
+        if old_balance is None:
+            return
+
+        if position is None or not position.reached:
+            # There is no expectation or
+            # the expectation is still being reached,
+            # we do not need to recalculate the position
+            return
+
+        if old_balance.free == balance.free:
+            return
+
+        calculated_position = self._get_asset_position(asset)
+        if calculated_position == position.value:
+            return
+
+        # We need to remove the expectation,
+        # so that self.get_position() will return the recalculated position
+        del self._expected[asset]
 
     def _get_asset_balance(self, asset: str) -> Decimal:
         """

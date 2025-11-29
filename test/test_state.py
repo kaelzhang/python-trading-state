@@ -13,7 +13,7 @@ from .fixtures import (
     BTCUSDC,
     BTCUSDT,
     BTC,
-    USDT
+    # USDT
 )
 
 
@@ -81,6 +81,7 @@ def test_trading_state():
     assert len(orders_to_cancel) == 1
     assert len(orders) == 1
 
+    # Just a market order
     order = next(iter(orders))
     assert order.status == OrderStatus.SUBMITTING
     assert order.id is None
@@ -94,15 +95,20 @@ def test_trading_state():
     assert not ticket.has('price')
     assert not ticket.has('time_in_force')
 
+    # The order that created for position 0.2 should be cancelled
     order_to_cancel = next(iter(orders_to_cancel))
     ticket = order_to_cancel.ticket
     assert order_to_cancel.status == OrderStatus.CANCELLING
     assert ticket.quantity == Decimal('1')
 
+    # If we get orders again, there will be no orders to perform
     orders, orders_to_cancel = state.get_orders()
     assert not orders
     assert not orders_to_cancel
 
+    # We set the order status to ABOUT_TO_CANCEL,
+    # which usually is triggered by the trader
+    # if the order is failed to be canceled from the exchange
     order_to_cancel.status = OrderStatus.ABOUT_TO_CANCEL
     orders, orders_to_cancel = state.get_orders()
 
@@ -110,6 +116,7 @@ def test_trading_state():
     assert next(iter(orders_to_cancel)) == order_to_cancel
 
     state.cancel_order(order)
+    # We could cancel an order which is already canceled
     state.cancel_order(order_to_cancel)
 
     orders, orders_to_cancel = state.get_orders()
