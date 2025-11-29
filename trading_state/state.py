@@ -1,5 +1,5 @@
 from typing import (
-    List,
+    Iterable,
     Dict,
     Tuple,
     Set,
@@ -252,7 +252,7 @@ class TradingState:
 
     def set_balances(
         self,
-        new: List[Balance]
+        new: Iterable[Balance]
     ) -> None:
         """
         Update user balances, including normal assets and quote assets

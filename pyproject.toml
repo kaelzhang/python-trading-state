@@ -43,7 +43,10 @@ version = {attr = "trading_state.__version__"}
 trading_state = ["py.typed"]
 
 [tool.setuptools.packages.find]
-include = ["trading_state"]
+include = [
+    "trading_state",
+    "trading_state.binance"
+]
 
 [tool.mypy]
 warn_return_any = true

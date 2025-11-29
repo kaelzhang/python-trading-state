@@ -215,7 +215,10 @@ class OrderManager:
     ) -> None:
         match status:
             case OrderStatus.CREATED:
-                self._open_orders.add(order)
+                # When an order has an id,
+                # it means it has been created by the exchange,
+                # so we should add it to the order history
+                self._history.append(order)
 
             case OrderStatus.FILLED:
                 position = order.position
@@ -243,11 +246,6 @@ class OrderManager:
         value: str
     ) -> None:
         self._id_orders[value] = order
-
-        # When an order has an id,
-        # it means it has been created by the exchange,
-        # so we should add it to the order history
-        self._history.append(order)
 
     def get_order_by_id(self, value: str) -> Optional[Order]:
         return self._id_orders.get(value)
