@@ -367,7 +367,10 @@ class NotionalFilter(BaseFilter):
         max_notional = self.max_notional
 
         if market_order:
-            price: Decimal = kwargs['get_avg_price'](self.avg_price_mins)
+            price: Decimal = kwargs['get_avg_price'](
+                ticket.symbol.name,
+                self.avg_price_mins
+            )
 
             if not self.apply_min_to_market:
                 min_notional = Decimal('0')

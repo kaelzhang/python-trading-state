@@ -87,14 +87,7 @@ class Order(EventEmitter[OrderUpdatedType]):
     @status.setter
     def status(self, status: OrderStatus) -> None:
         self._status = status
-        self.emit(OrderUpdatedType.STATUS_UPDATED, self,status)
-
-        if (
-            status is OrderStatus.CANCELLED
-            or status is OrderStatus.FILLED
-        ):
-            # Clean the callback to avoid memory leak
-            self.off()
+        self.emit(OrderUpdatedType.STATUS_UPDATED, self, status)
 
     @property
     def id(self) -> Optional[str]:
@@ -197,8 +190,8 @@ class OrderManager:
 
     # Only allow one order for a single symbol
     _symbol_orders: Dict[Symbol, Order]
-    _base_asset_orders: DictSet[Order]
-    _quote_asset_orders: DictSet[Order]
+    _base_asset_orders: DictSet[str, Order]
+    _quote_asset_orders: DictSet[str, Order]
 
     _history: OrderHistory
 
@@ -211,8 +204,8 @@ class OrderManager:
         self._orders_to_cancel = set[Order]()
 
         self._symbol_orders = {}
-        self._base_asset_orders = DictSet[Order]()
-        self._quote_asset_orders = DictSet[Order]()
+        self._base_asset_orders = DictSet[str, Order]()
+        self._quote_asset_orders = DictSet[str,Order]()
         self._history = OrderHistory(max_order_history_size)
 
     def _on_order_status_updated(
@@ -231,6 +224,7 @@ class OrderManager:
                     position.reached = True
 
                 self._purge_order(order)
+                order.off()
 
             case OrderStatus.ABOUT_TO_CANCEL:
                 # If the cancelation request to the server is failed,
@@ -241,6 +235,7 @@ class OrderManager:
             case OrderStatus.CANCELLED:
                 # Redudant cancellation
                 self._purge_order(order)
+                order.off()
 
     def _on_order_id_updated(
         self,
@@ -248,6 +243,10 @@ class OrderManager:
         value: str
     ) -> None:
         self._id_orders[value] = order
+
+        # When an order has an id,
+        # it means it has been created by the exchange,
+        # so we should add it to the order history
         self._history.append(order)
 
     def get_order_by_id(self, value: str) -> Optional[Order]:
@@ -255,6 +254,12 @@ class OrderManager:
 
     def get_order_by_symbol(self, symbol: Symbol) -> Optional[Order]:
         return self._symbol_orders.get(symbol)
+
+    def get_orders_by_base_asset(self, asset: str) -> Set[Order]:
+        return self._base_asset_orders[asset]
+
+    def get_orders_by_quote_asset(self, asset: str) -> Set[Order]:
+        return self._quote_asset_orders[asset]
 
     def query(
         self,
@@ -297,15 +302,25 @@ class OrderManager:
 
         self._purge_order(order)
 
+    def _register_order(self, order: Order) -> None:
+        self._open_orders.add(order)
+
+        symbol = order.ticket.symbol
+        asset = symbol.base_asset
+        quote_asset = symbol.quote_asset
+
+        self._symbol_orders[symbol] = order
+        self._base_asset_orders[asset].add(order)
+        self._quote_asset_orders[quote_asset].add(order)
+
     def _purge_order(self, order: Order) -> None:
         self._open_orders.discard(order)
 
         symbol = order.ticket.symbol
-        del self._symbol_orders[symbol]
-
         asset = symbol.base_asset
         quote_asset = symbol.quote_asset
 
+        self._symbol_orders.pop(symbol, None)
         self._base_asset_orders[asset].discard(order)
         self._quote_asset_orders[quote_asset].discard(order)
 
@@ -318,7 +333,7 @@ class OrderManager:
             # so it should not be added to the open orders
             return
 
-        self._open_orders.add(order)
+        self._register_order(order)
 
         order.on(
             OrderUpdatedType.ID_UPDATED,

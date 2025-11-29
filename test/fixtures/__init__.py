@@ -138,12 +138,19 @@ BTC = 'BTC'
 USDT = 'USDT'
 
 
+def mock_get_avg_price(symbol_name: str, mins: int) -> Decimal:
+    return Decimal('10000')
+
+
 def init_state() -> TradingState:
     symbols = get_symbols()
 
     state = TradingState(
         config=TradingConfig(
-            numeraire=USDT
+            numeraire=USDT,
+            context={
+                'get_avg_price': mock_get_avg_price
+            }
         )
     )
 
@@ -151,9 +158,13 @@ def init_state() -> TradingState:
         state.set_symbol(symbol)
 
     state.set_price(BTCUSDC, Decimal('10000'))
-    state.set_price(BTCUSDT, Decimal('10000'))
+    assert state.set_price(BTCUSDT, Decimal('10000'))
+
+    assert not state.set_price(BTCUSDT, Decimal('10000'))
 
     # 10 BTC
+    state.set_quota(BTC, Decimal('-1'))
+    state.set_quota(BTC, None)
     state.set_quota(BTC, Decimal('100000'))
 
     state.set_balances([

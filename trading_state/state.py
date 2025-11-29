@@ -5,9 +5,10 @@ from typing import (
     Set,
     Optional,
     Callable,
-    Union
+    Union,
+    Any
 )
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from decimal import Decimal
 
@@ -30,7 +31,6 @@ from .symbol import Symbol
 from .balance import Balance
 from .order import (
     Order,
-    OrderHistory,
     OrderUpdatedType,
     OrderManager
 )
@@ -100,6 +100,7 @@ class TradingConfig:
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
     numeraire: str
+    context: Dict[str, Any] = field(default_factory=dict)
     max_order_history_size: int = 10000
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
@@ -145,7 +146,6 @@ class TradingState:
 
     # asset -> position expectation
     _expected: Dict[str, AssetPosition]
-    _old_expected: Dict[str, AssetPosition]
 
     _orders: OrderManager
 
@@ -170,9 +170,6 @@ class TradingState:
         self._balances = {}
         self._expected = {}
 
-        # In the beginning, they are the same
-        self._old_expected = self._expected
-
         self._orders = OrderManager(config.max_order_history_size)
 
     # Public methods
@@ -196,7 +193,6 @@ class TradingState:
             return False
 
         self._symbol_prices[symbol_name] = price
-        self._reset_diff()
 
         return True
 
@@ -249,19 +245,10 @@ class TradingState:
         """
 
         if quota is not None and quota < DECIMAL_ZERO:
-            # Decimal('-1') means no limit
             quota = None
 
-        old_quota = self._quotas.get(asset)
-
-        if quota is None:
-            # Just remove the quota if no limit
-            del self._quotas[asset]
-        else:
-            self._quotas[asset] = quota
-
-        if old_quota != quota:
-            self._reset_diff()
+        # Just set the quota
+        self._quotas[asset] = quota
 
     def set_balances(
         self,
@@ -285,9 +272,6 @@ class TradingState:
             )
 
         self._balances.update(balances)
-
-        # This will trigger diffing again
-        self._reset_diff()
 
     def get_price(
         self,
@@ -314,7 +298,7 @@ class TradingState:
         asset: str
     ) -> ValueOrException[float]:
         """
-        Get the position of an asset
+        Get the current expected position or the calculated position of an asset
 
         Args:
             asset (str): the asset name to get the position for
@@ -354,7 +338,10 @@ class TradingState:
         if current_position is order.position:
             # Clean the related expectation,
             # so that current position will be recalculated
-            del self._expected[asset]
+
+            # It is allowed to cancel an order multiple times,
+            # use pop to avoid unexpected raise
+            self._expected.pop(asset, None)
 
     # Prerequisites:
     # - current price: $10
@@ -436,12 +423,6 @@ class TradingState:
             # We treat it as a success
             return
 
-        # TODO: whether we should use a new dict here?
-        # Create a new dict so that will be considered as changed
-        self._expected = {
-            **self._expected
-        }
-
         self._expected[asset] = AssetPosition(
             symbol=symbol,
             value=position,
@@ -510,6 +491,7 @@ class TradingState:
         if asset not in self._assets:
             return AssetNotDefinedError(asset)
 
+        # None quota also indicates the quota is set
         if asset not in self._quotas:
             return QuotaNotSetError(asset)
 
@@ -522,22 +504,6 @@ class TradingState:
             return BalanceNotReadyError(asset)
 
         self._checked_asset_names.add(asset)
-
-    def _get_base_asset_orders(self, asset: str) -> Set[Order]:
-        if asset in self._base_asset_orders:
-            return self._base_asset_orders[asset]
-
-        orders = set[Order]()
-        self._base_asset_orders[asset] = orders
-        return orders
-
-    def _get_quote_asset_orders(self, asset: str) -> Set[Order]:
-        if asset in self._quote_asset_orders:
-            return self._quote_asset_orders[asset]
-
-        orders = set[Order]()
-        self._quote_asset_orders[asset] = orders
-        return orders
 
     def _get_numeraire_symbol_name(self, asset: str) -> str:
         return self._config.get_symbol_name(
@@ -570,9 +536,9 @@ class TradingState:
         balance = self._balances.get(asset)
         free = balance.free
 
-        orders = self._get_base_asset_orders(asset)
+        orders = self._orders.get_orders_by_base_asset(asset)
         for order in orders:
-            if order.side is OrderSide.SELL:
+            if order.ticket.side is OrderSide.SELL:
                 free += order.ticket.quantity - order.filled_quantity
 
         return free
@@ -596,27 +562,10 @@ class TradingState:
     def _get_symbol(self, symbol_name: str) -> Optional[Symbol]:
         return self._symbols.get(symbol_name)
 
-    def _has_diff(self) -> bool:
-        """
-        Check whether the trading state has diff
-        """
-
-        return self._expected is self._old_expected
-
-    def _reset_diff(self):
-        self._old_expected = {}
-
     def _diff(self) -> None:
         """
         Diff the position expectations
         """
-
-        if self._has_diff():
-            # If there is no new expectation,
-            # so skip diffing
-            return
-
-        self._old_expected = self._expected
 
         for position in self._expected.values():
             self._create_order_from_position(position)
@@ -690,7 +639,11 @@ class TradingState:
             )
         )
 
-        exception, _ = symbol.apply_filters(ticket, validate_only=False)
+        exception, _ = symbol.apply_filters(
+            ticket,
+            validate_only=False,
+            **self._config.context
+        )
 
         if exception is not None:
             return
