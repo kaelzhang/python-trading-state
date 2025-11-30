@@ -20,7 +20,7 @@ PositionMetaData = Dict[str, Any]
 class AssetPosition:
     """An asset position is the position expectation of an asset via trading with a certain symbol.
 
-    The value of the position is based on the asset quota.
+    The value of the position is based on the asset's notional limit.
 
     Args:
         symbol (Symbol): the symbol to trade with to achieve the position
@@ -44,7 +44,7 @@ class AssetPosition:
             data={}
         )
 
-    If the quota of the BTC is 1000 USDT, the `position` means that the trader should buy or sell BTCBNB so that the valuation value of the BTC is 1000 USDT.
+    If the notional limit of the BTC is 1000 USDT, the `position` means that the trader should buy or sell BTCBNB so that the valuation value of the BTC is 1000 USDT.
     """
 
     __slots__ = (

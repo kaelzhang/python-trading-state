@@ -94,7 +94,7 @@ class TradingConfig:
     Args:
         numeraire (str): the valuation currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
         - calculate value of positions
-        - calculate value of quotas
+        - calculate value of notional limits
 
         max_order_history_size (int): the maximum size of the order history
 
@@ -394,7 +394,7 @@ class TradingState:
 
         Args:
             symbol_name (str): the name of the symbol to trade with
-            position (float): the position to expect, should be between `0.0` and `1.0`. The position refers to the current holding of the base asset as a proportion of its maximum allowed quota
+            position (float): the position to expect, should be between `0.0` and `1.0`. The position refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
             asap (bool = False): whether to execute the expectation immediately, that it will generate a market order
             price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the current price.
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
@@ -406,7 +406,7 @@ class TradingState:
 
         Usage::
 
-            # to all-in BTC within the quota
+            # to all-in BTC within the notional limit
             state.expect('BTCUSDT', 1., ...)
         """
 
@@ -483,7 +483,7 @@ class TradingState:
 
         Prerequisites:
         - the symbol is defined: for example: `BNBBTC`
-        - the quota of `BNB` is set
+        - the notional limit of `BNB` is set
         - the numeraire price of `BNB`, i.e the price of `BNBUSDT` is ready
         """
 
@@ -516,7 +516,6 @@ class TradingState:
         if asset not in self._assets:
             return AssetNotDefinedError(asset)
 
-        # None quota also indicates the quota is set
         if asset not in self._notional_limits:
             return NotionalLimitNotSetError(asset)
 
@@ -612,9 +611,9 @@ class TradingState:
 
         balance = self._get_asset_balance(asset)
         price = self._get_asset_numeraire_price(asset)
-        quota = self._notional_limits.get(asset)
+        limit = self._notional_limits.get(asset)
 
-        return float(balance * price / quota)
+        return float(balance * price / limit)
 
     def _get_symbol(self, symbol_name: str) -> Optional[Symbol]:
         return self._symbols.get(symbol_name)
@@ -661,8 +660,8 @@ class TradingState:
         numeraire_price = self._get_asset_numeraire_price(asset)
         value = balance * numeraire_price
 
-        quota = self._notional_limits.get(asset)
-        value_delta = Decimal(str(position.value)) * quota - value
+        limit = self._notional_limits.get(asset)
+        value_delta = Decimal(str(position.value)) * limit - value
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / numeraire_price
 
