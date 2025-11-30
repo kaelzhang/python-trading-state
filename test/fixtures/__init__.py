@@ -50,7 +50,7 @@ def init_state() -> TradingState:
 
     state = TradingState(
         config=TradingConfig(
-            numeraire=USDT,
+            valuation_currency=USDT,
             context={
                 'get_avg_price': mock_get_avg_price
             }

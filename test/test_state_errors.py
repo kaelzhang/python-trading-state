@@ -10,7 +10,7 @@ from trading_state import (
     NotionalLimitNotSetError,
     BalanceNotReadyError,
     ExpectWithoutPriceError,
-    NumerairePriceNotReadyError,
+    ValuationPriceNotReadyError,
     SymbolNotDefinedError
 )
 
@@ -32,7 +32,7 @@ def test_symbols() -> Symbols:
 def test_trading_state_errors(test_symbols: Symbols):
     state = TradingState(
         config=TradingConfig(
-            numeraire=USDT
+            valuation_currency=USDT
         )
     )
 
@@ -81,7 +81,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         asap=True
     )
 
-    assert isinstance(exception, NumerairePriceNotReadyError)
+    assert isinstance(exception, ValuationPriceNotReadyError)
 
     state.set_price(BTCUSDT, Decimal('10000'))
 

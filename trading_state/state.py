@@ -18,7 +18,7 @@ from .exceptions import (
     NotionalLimitNotSetError,
     AssetNotDefinedError,
     SymbolNotDefinedError,
-    NumerairePriceNotReadyError,
+    ValuationPriceNotReadyError,
     SymbolPriceNotReadyError,
     ExpectWithoutPriceError
 )
@@ -92,7 +92,7 @@ def DEFAULT_GET_SYMBOL_NAME(base_asset: str, quote_asset: str) -> str:
 class TradingConfig:
     """
     Args:
-        numeraire (str): the valuation currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
+        valuation_currency (str): the valuation currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
         - calculate value of positions
         - calculate value of notional limits
 
@@ -100,7 +100,7 @@ class TradingConfig:
 
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
-    numeraire: str
+    valuation_currency: str
     context: Dict[str, Any] = field(default_factory=dict)
     max_order_history_size: int = 10000
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
@@ -227,14 +227,14 @@ class TradingState:
         Set the notional limit for a certain asset. Pay attention that, by design, it is mandatory to set the notional limit for an asset before trading with the trading state.
 
         The notional limit of an asset limits:
-        - the maximum quantity of the **numeraire** asset the trader could **BUY** the asset,
+        - the maximum quantity of the **valuation_currency** asset the trader could **BUY** the asset,
         - no SELL.
         - the maximum quantity of the asset the trader could **SELL** the asset,
         - no BUY.
 
         Args:
             asset (str): the asset to set the notional limit for
-            limit (Decimal | None): the maximum quantity of the numeraire asset the trader could BUY the asset. `None` means no notional limit.
+            limit (Decimal | None): the maximum quantity of the valuation currency the trader could BUY the asset. `None` means no notional limit.
 
         For example, if::
 
@@ -484,7 +484,7 @@ class TradingState:
         Prerequisites:
         - the symbol is defined: for example: `BNBBTC`
         - the notional limit of `BNB` is set
-        - the numeraire price of `BNB`, i.e the price of `BNBUSDT` is ready
+        - the valuation price of `BNB`, i.e the price of `BNBUSDT` is ready
         """
 
         if symbol_name in self._checked_symbol_names:
@@ -519,31 +519,31 @@ class TradingState:
         if asset not in self._notional_limits:
             return NotionalLimitNotSetError(asset)
 
-        numeraire_symbol_name = self._get_numeraire_symbol_name(asset)
+        valuation_symbol_name = self._get_valuation_symbol_name(asset)
 
-        if numeraire_symbol_name not in self._symbol_prices:
-            return NumerairePriceNotReadyError(asset)
+        if valuation_symbol_name not in self._symbol_prices:
+            return ValuationPriceNotReadyError(asset)
 
         if asset not in self._balances:
             return BalanceNotReadyError(asset)
 
         self._checked_asset_names.add(asset)
 
-    def _get_numeraire_symbol_name(self, asset: str) -> str:
+    def _get_valuation_symbol_name(self, asset: str) -> str:
         return self._config.get_symbol_name(
             asset,
-            self._config.numeraire
+            self._config.valuation_currency
         )
 
-    def _get_asset_numeraire_price(self, asset: str) -> Decimal:
+    def _get_asset_valuation_price(self, asset: str) -> Decimal:
         """
-        Get the price of an asset in the numeraire
+        Get the price of an asset in the valuation currency
 
         Should only be called after `asset_ready`
         """
 
-        numeraire_symbol = self._get_numeraire_symbol_name(asset)
-        return self.get_price(numeraire_symbol)
+        valuation_symbol = self._get_valuation_symbol_name(asset)
+        return self.get_price(valuation_symbol)
 
     def _set_balance(self, balance: Balance) -> None:
         """
@@ -610,7 +610,7 @@ class TradingState:
         """
 
         balance = self._get_asset_balance(asset)
-        price = self._get_asset_numeraire_price(asset)
+        price = self._get_asset_valuation_price(asset)
         limit = self._notional_limits.get(asset)
 
         return float(balance * price / limit)
@@ -653,17 +653,17 @@ class TradingState:
 
             self.cancel_order(existing_order)
 
-        # Calculate the numeraire value of the asset
+        # Calculate the valuation value of the asset
         # --------------------------------------------------------
         asset = symbol.base_asset
         balance = self._get_asset_balance(asset)
-        numeraire_price = self._get_asset_numeraire_price(asset)
-        value = balance * numeraire_price
+        valuation_price = self._get_asset_valuation_price(asset)
+        value = balance * valuation_price
 
         limit = self._notional_limits.get(asset)
         value_delta = Decimal(str(position.value)) * limit - value
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
-        quantity = value_delta / numeraire_price
+        quantity = value_delta / valuation_price
 
         ticket = (
             MarketOrderTicket(

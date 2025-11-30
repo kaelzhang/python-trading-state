@@ -30,9 +30,9 @@ class AssetNotDefinedError(Exception):
         self.asset = asset
 
 
-class NumerairePriceNotReadyError(Exception):
+class ValuationPriceNotReadyError(Exception):
     def __init__(self, asset: str) -> None:
-        message = f'numeraire price for "{asset}" is not ready yet'
+        message = f'valuation price for "{asset}" is not ready yet'
         super().__init__(message)
 
         self.asset = asset

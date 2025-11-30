@@ -23,8 +23,8 @@ from .exceptions import (
     AssetNotDefinedError,
     SymbolNotDefinedError,
     SymbolPriceNotReadyError,
-    NumerairePriceNotReadyError,
     NotionalLimitNotSetError,
+    ValuationPriceNotReadyError,
     BalanceNotReadyError
 )
 
