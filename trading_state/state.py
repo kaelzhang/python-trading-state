@@ -386,7 +386,7 @@ class TradingState:
         symbol_name: str,
         position: float,
         price: Decimal | None,
-        asap: bool,
+        immediate: bool,
         data: PositionMetaData = {}
     ) -> ValueOrException[bool]:
         """
@@ -395,7 +395,7 @@ class TradingState:
         Args:
             symbol_name (str): the name of the symbol to trade with
             position (float): the position to expect, should be between `0.0` and `1.0`. The position refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
-            asap (bool = False): whether to execute the expectation immediately, that it will generate a market order
+            immediate (bool = False): whether to execute the expectation immediately, that it will generate a market order
             price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the current price.
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
 
@@ -418,7 +418,7 @@ class TradingState:
         symbol = self._get_symbol(symbol_name)
         asset = symbol.base_asset
 
-        if asap:
+        if immediate:
             price = None
         else:
             if price is None:
@@ -433,7 +433,7 @@ class TradingState:
             if (
                 open_position.value == position
                 and open_position.price == price
-                and open_position.asap == asap
+                and open_position.immediate == immediate
             ):
                 # If the position is the same, no need to update
                 # We treat it as a success
@@ -449,7 +449,7 @@ class TradingState:
         self._expected[asset] = AssetPosition(
             symbol=symbol,
             value=position,
-            asap=asap,
+            immediate=immediate,
             price=price,
             data=data
         )
@@ -560,9 +560,9 @@ class TradingState:
         if old_balance is None:
             return
 
-        if position is None or not position.reached:
+        if position is None or not position.fulfilled:
             # There is no expectation or
-            # the expectation is still being reached,
+            # the expectation is still being fulfilled,
             # we do not need to recalculate the position
             return
 
@@ -637,7 +637,7 @@ class TradingState:
         because of `self.expect(...)`
         """
 
-        if position.reached:
+        if position.fulfilled:
             return
 
         symbol = position.symbol
@@ -672,7 +672,7 @@ class TradingState:
                 quantity=quantity,
                 quantity_type=MarketQuantityType.BASE
             )
-            if position.asap
+            if position.immediate
             else LimitOrderTicket(
                 symbol=symbol,
                 side=side,

@@ -229,7 +229,7 @@ class OrderManager:
                 position = order.position
 
                 if position is not None:
-                    position.reached = True
+                    position.fulfilled = True
 
                 self._purge_order(order)
                 order.off()

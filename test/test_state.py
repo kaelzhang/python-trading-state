@@ -28,7 +28,7 @@ def test_trading_state():
         BTCUSDC,
         position=0.2,
         price=Decimal('10000'),
-        asap=False
+        immediate=False
     )
     assert exception is None
     assert updated
@@ -64,7 +64,7 @@ def test_trading_state():
         position=0.3,
         # Although the price is provided, it will be ignored
         price=Decimal('10000'),
-        asap=True
+        immediate=True
     )
     assert exception is None
     assert updated
@@ -78,7 +78,7 @@ def test_trading_state():
         BTCUSDT,
         position=0.3,
         price=Decimal('20000'),
-        asap=True
+        immediate=True
     )
     assert exception is None
     assert not updated
@@ -147,7 +147,7 @@ def test_order_filled():
         BTCUSDC,
         position=0.2,
         price=Decimal('10000'),
-        asap=False
+        immediate=False
     )
     assert exception is None
     assert updated
@@ -157,7 +157,7 @@ def test_order_filled():
         BTCUSDC,
         position=0.2,
         price=Decimal('10000'),
-        asap=False
+        immediate=False
     )
     assert exception is None
     assert not updated
@@ -176,10 +176,10 @@ def test_order_filled():
 
     order.status = OrderStatus.FILLED
 
-    # The order is filled, so the expectation should marked as reached,
+    # The order is filled, so the expectation should marked as fulfilled,
     # but the balance might not be updated yet,
     # we should keep tht expectation
-    assert state._expected[BTC].reached is True
+    assert state._expected[BTC].fulfilled is True
 
     assert state.position(BTC) == (None, 0.2)
 
@@ -200,7 +200,7 @@ def test_order_filled():
     # The balance is updated,
     # but the intrinsic position is equal to the expectation,
     # we keep the expectation to improve performance
-    assert state._expected[BTC].reached is True
+    assert state._expected[BTC].fulfilled is True
 
     assert state.position(BTC) == (None, 0.2)
 
@@ -210,7 +210,7 @@ def test_order_filled():
         BTCUSDC,
         position=0.2,
         price=Decimal('10000'),
-        asap=False
+        immediate=False
     )
     assert exception is None
     assert not updated
@@ -226,12 +226,12 @@ def test_order_filled():
 
     assert state.position(BTC) == (None, 0.3)
 
-    # The expectation is already reached based on calculation
+    # The expectation is already fulfilled based on calculation
     exception, updated = state.expect(
         BTCUSDC,
         position=0.3,
         price=Decimal('10000'),
-        asap=False
+        immediate=False
     )
     assert exception is None
     assert not updated

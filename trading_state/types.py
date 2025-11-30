@@ -25,7 +25,7 @@ class AssetPosition:
     Args:
         symbol (Symbol): the symbol to trade with to achieve the position
         value (float): should between 0 and 1
-        asap (bool): whether to trade asap (market order)
+        immediate (bool): whether to trade immediate (market order)
         price (Decimal | None): the price to trade at
         data (dict[str, Any]): the meta data of the position
 
@@ -39,7 +39,7 @@ class AssetPosition:
                 ...
             ),
             value=1.0,
-            asap=True,
+            immediate=True,
             price=None,
             data={}
         )
@@ -50,33 +50,33 @@ class AssetPosition:
     __slots__ = (
         'symbol',
         'value',
-        'asap',
+        'immediate',
         'price',
         'data',
-        'reached'
+        'fulfilled'
     )
 
     symbol: Symbol
     value: float
-    asap: bool
+    immediate: bool
     price: Decimal | None
     data: PositionMetaData
-    reached: bool
+    fulfilled: bool
 
     def __init__(
         self,
         symbol: Symbol,
         value: float,
-        asap: bool,
+        immediate: bool,
         price: Decimal | None,
         data: PositionMetaData
     ) -> None:
         self.symbol = symbol
         self.value = value
-        self.asap = asap
+        self.immediate = immediate
         self.price = price
         self.data = data
-        self.reached = False
+        self.fulfilled = False
 
     def __repr__(self) -> str:
         return class_repr(
@@ -84,7 +84,7 @@ class AssetPosition:
             main='symbol',
             keys=[
                 'value',
-                'asap',
+                'immediate',
                 'price'
             ]
         )
@@ -102,6 +102,6 @@ class AssetPosition:
         return (
             self.symbol == position.symbol
             and self.value == position.value
-            and self.asap == position.asap
+            and self.immediate == position.immediate
             and self.price == position.price
         )

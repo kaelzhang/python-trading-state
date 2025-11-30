@@ -1,6 +1,6 @@
 class ExpectWithoutPriceError(Exception):
     def __init__(self, asset: str) -> None:
-        message = f'refused to set expectation to asset "{asset}" without a symbol price if not asap'
+        message = f'refused to set expectation to asset "{asset}" without a symbol price if not immediate'
         super().__init__(message)
 
         self.asset = asset

@@ -41,7 +41,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         position=1,
         price=None,
-        asap=True
+        immediate=True
     )
 
     assert isinstance(exception, SymbolNotDefinedError)
@@ -56,7 +56,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         position=1,
         price=None,
-        asap=True
+        immediate=True
     )
 
     assert isinstance(exception, SymbolPriceNotReadyError)
@@ -67,7 +67,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         position=1,
         price=None,
-        asap=True
+        immediate=True
     )
 
     assert isinstance(exception, NotionalLimitNotSetError)
@@ -78,7 +78,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         position=1,
         price=None,
-        asap=True
+        immediate=True
     )
 
     assert isinstance(exception, ValuationPriceNotReadyError)
@@ -89,7 +89,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         position=1,
         price=None,
-        asap=True
+        immediate=True
     )
 
     assert isinstance(exception, BalanceNotReadyError)
@@ -102,7 +102,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         position=1,
         price=None,
-        asap=False
+        immediate=False
     )
 
     assert isinstance(exception, ExpectWithoutPriceError)
