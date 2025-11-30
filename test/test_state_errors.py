@@ -7,7 +7,7 @@ from trading_state import (
     Balance,
     SymbolPriceNotReadyError,
     AssetNotDefinedError,
-    QuotaNotSetError,
+    NotionalLimitNotSetError,
     BalanceNotReadyError,
     ExpectWithoutPriceError,
     NumerairePriceNotReadyError,
@@ -70,9 +70,9 @@ def test_trading_state_errors(test_symbols: Symbols):
         asap=True
     )
 
-    assert isinstance(exception, QuotaNotSetError)
+    assert isinstance(exception, NotionalLimitNotSetError)
 
-    state.set_quota(BTC, Decimal('10000'))
+    state.set_notional_limit(BTC, Decimal('10000'))
 
     exception, _ = state.expect(
         BTCUSDC,

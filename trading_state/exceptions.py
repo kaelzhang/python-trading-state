@@ -38,9 +38,9 @@ class NumerairePriceNotReadyError(Exception):
         self.asset = asset
 
 
-class QuotaNotSetError(Exception):
+class NotionalLimitNotSetError(Exception):
     def __init__(self, asset: str) -> None:
-        message = f'quota of asset "{asset}" is not set'
+        message = f'notional limit of asset "{asset}" is not set'
         super().__init__(message)
 
         self.asset = asset

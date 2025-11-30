@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from .exceptions import (
     BalanceNotReadyError,
-    QuotaNotSetError,
+    NotionalLimitNotSetError,
     AssetNotDefinedError,
     SymbolNotDefinedError,
     NumerairePriceNotReadyError,
@@ -142,8 +142,8 @@ class TradingState:
     # symbol name -> price
     _symbol_prices: Dict[str, Decimal]
 
-    # asset -> quota
-    _quotas: Dict[str, Decimal]
+    # asset -> notional limit
+    _notional_limits: Dict[str, Decimal]
 
     # asset -> position expectation
     _expected: Dict[str, AssetPosition]
@@ -166,7 +166,7 @@ class TradingState:
 
         self._symbol_prices = {}
 
-        self._quotas = {}
+        self._notional_limits = {}
 
         self._balances = {}
         self._expected = {}
@@ -218,25 +218,27 @@ class TradingState:
         self._base_asset_symbols[asset].add(symbol)
         self._quote_asset_symbols[quote_asset].add(symbol)
 
-    def set_quota(
+    def set_notional_limit(
         self,
         asset: str,
-        quota: Optional[Decimal]
+        limit: Optional[Decimal]
     ) -> None:
         """
-        Set the quota for a certain asset. Pay attention that, by design, it is mandatory to set the quota for an asset before trading with the trading state.
+        Set the notional limit for a certain asset. Pay attention that, by design, it is mandatory to set the notional limit for an asset before trading with the trading state.
 
-        The quota of an asset limits:
+        The notional limit of an asset limits:
         - the maximum quantity of the **numeraire** asset the trader could **BUY** the asset,
         - no SELL.
+        - the maximum quantity of the asset the trader could **SELL** the asset,
+        - no BUY.
 
         Args:
-            asset (str): the asset to set the quota for
-            quota (Decimal | None): the maximum quantity of the numeraire asset the trader could BUY the asset. `None` means no quota.
+            asset (str): the asset to set the notional limit for
+            limit (Decimal | None): the maximum quantity of the numeraire asset the trader could BUY the asset. `None` means no notional limit.
 
         For example, if::
 
-            state.set_quota('BTC', Decimal('35000'))
+            state.set_notional_limit('BTC', Decimal('35000'))
 
         - current BTC price: $7000
         - base asset balance (USDT): $70000
@@ -245,15 +247,15 @@ class TradingState:
         although the balance is enough to buy 10 BTC
         """
 
-        if quota is not None and quota < DECIMAL_ZERO:
-            quota = None
+        if limit is not None and limit < DECIMAL_ZERO:
+            limit = None
 
-        if quota is None:
-            self._quotas.pop(asset, None)
+        if limit is None:
+            self._notional_limits.pop(asset, None)
             return
 
-        # Just set the quota
-        self._quotas[asset] = quota
+        # Just set the notional limit
+        self._notional_limits[asset] = limit
 
     def set_balances(
         self,
@@ -264,7 +266,7 @@ class TradingState:
 
         Usage::
 
-            state.update_balances([
+            state.set_balances([
                 Balance('BTC', Decimal('8'), Decimal('0'))
             ])
         """
@@ -515,8 +517,8 @@ class TradingState:
             return AssetNotDefinedError(asset)
 
         # None quota also indicates the quota is set
-        if asset not in self._quotas:
-            return QuotaNotSetError(asset)
+        if asset not in self._notional_limits:
+            return NotionalLimitNotSetError(asset)
 
         numeraire_symbol_name = self._get_numeraire_symbol_name(asset)
 
@@ -610,7 +612,7 @@ class TradingState:
 
         balance = self._get_asset_balance(asset)
         price = self._get_asset_numeraire_price(asset)
-        quota = self._quotas.get(asset)
+        quota = self._notional_limits.get(asset)
 
         return float(balance * price / quota)
 
@@ -659,7 +661,7 @@ class TradingState:
         numeraire_price = self._get_asset_numeraire_price(asset)
         value = balance * numeraire_price
 
-        quota = self._quotas.get(asset)
+        quota = self._notional_limits.get(asset)
         value_delta = Decimal(str(position.value)) * quota - value
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / numeraire_price

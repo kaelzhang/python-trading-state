@@ -24,7 +24,7 @@ from .exceptions import (
     SymbolNotDefinedError,
     SymbolPriceNotReadyError,
     NumerairePriceNotReadyError,
-    QuotaNotSetError,
+    NotionalLimitNotSetError,
     BalanceNotReadyError
 )
 

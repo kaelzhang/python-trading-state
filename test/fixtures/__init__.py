@@ -66,9 +66,9 @@ def init_state() -> TradingState:
     assert not state.set_price(BTCUSDT, Decimal('10000'))
 
     # 10 BTC
-    state.set_quota(BTC, Decimal('-1'))
-    state.set_quota(BTC, None)
-    state.set_quota(BTC, Decimal('100000'))
+    state.set_notional_limit(BTC, Decimal('-1'))
+    state.set_notional_limit(BTC, None)
+    state.set_notional_limit(BTC, Decimal('100000'))
 
     state.set_balances([
         Balance(BTC, Decimal('1'), Decimal('0'))
