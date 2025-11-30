@@ -224,7 +224,7 @@ class TradingState:
         quota: Optional[Decimal]
     ) -> None:
         """
-        Set the quota for a certain asset.
+        Set the quota for a certain asset. Pay attention that, by design, it is mandatory to set the quota for an asset before trading with the trading state.
 
         The quota of an asset limits:
         - the maximum quantity of the **numeraire** asset the trader could **BUY** the asset,
@@ -247,6 +247,10 @@ class TradingState:
 
         if quota is not None and quota < DECIMAL_ZERO:
             quota = None
+
+        if quota is None:
+            self._quotas.pop(asset, None)
+            return
 
         # Just set the quota
         self._quotas[asset] = quota
