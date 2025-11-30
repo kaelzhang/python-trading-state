@@ -17,28 +17,28 @@ from .common import (
 PositionMetaData = Dict[str, Any]
 
 
-class AssetPosition:
-    """An asset position is the position expectation of an asset via trading with a certain symbol.
+class AssetPositionTarget:
+    """An asset position target is the position expectation of an asset via trading with a certain symbol.
 
     The value of the position is based on the asset's notional limit.
 
     Args:
         symbol (Symbol): the symbol to trade with to achieve the position
-        value (float): should between 0 and 1
+        utilization (float): should between 0 and 1
         immediate (bool): whether to trade immediate (market order)
         price (Decimal | None): the price to trade at
         data (dict[str, Any]): the meta data of the position
 
     For example::
 
-        position = AssetPosition(
+        position = AssetPositionTarget(
             symbol=Symbol(
                 name='BTCBNB',
                 base_asset='BTC',
                 quote_asset='BNB',
                 ...
             ),
-            value=1.0,
+            utilization=1.0,
             immediate=True,
             price=None,
             data={}
@@ -49,7 +49,7 @@ class AssetPosition:
 
     __slots__ = (
         'symbol',
-        'value',
+        'utilization',
         'immediate',
         'price',
         'data',
@@ -57,7 +57,7 @@ class AssetPosition:
     )
 
     symbol: Symbol
-    value: float
+    utilization: float
     immediate: bool
     price: Decimal | None
     data: PositionMetaData
@@ -66,13 +66,13 @@ class AssetPosition:
     def __init__(
         self,
         symbol: Symbol,
-        value: float,
+        utilization: float,
         immediate: bool,
         price: Decimal | None,
         data: PositionMetaData
     ) -> None:
         self.symbol = symbol
-        self.value = value
+        self.utilization = utilization
         self.immediate = immediate
         self.price = price
         self.data = data
@@ -83,7 +83,7 @@ class AssetPosition:
             self,
             main='symbol',
             keys=[
-                'value',
+                'utilization',
                 'immediate',
                 'price'
             ]
@@ -91,17 +91,17 @@ class AssetPosition:
 
     def __eq__(
         self,
-        position: Any
+        target: Any
     ) -> bool:
-        """To detect whether the given `AssetPosition` has the same goal of the current one
+        """To detect whether the given `AssetPositionTarget` has the same goal of the current one
         """
 
-        if not isinstance(position, AssetPosition):
+        if not isinstance(target, AssetPositionTarget):
             return False
 
         return (
-            self.symbol == position.symbol
-            and self.value == position.value
-            and self.immediate == position.immediate
-            and self.price == position.price
+            self.symbol == target.symbol
+            and self.utilization == target.utilization
+            and self.immediate == target.immediate
+            and self.price == target.price
         )

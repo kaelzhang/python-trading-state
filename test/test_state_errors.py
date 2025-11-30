@@ -39,14 +39,14 @@ def test_trading_state_errors(test_symbols: Symbols):
     # with pytest.raises(SymbolNotDefinedError):
     exception, _ = state.expect(
         BTCUSDC,
-        position=1,
+        utilization=1,
         price=None,
         immediate=True
     )
 
     assert isinstance(exception, SymbolNotDefinedError)
 
-    exception, _ = state.position(BTC)
+    exception, _ = state.utilization(BTC)
 
     assert isinstance(exception, AssetNotDefinedError)
 
@@ -54,7 +54,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        position=1,
+        utilization=1,
         price=None,
         immediate=True
     )
@@ -65,7 +65,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        position=1,
+        utilization=1,
         price=None,
         immediate=True
     )
@@ -76,7 +76,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        position=1,
+        utilization=1,
         price=None,
         immediate=True
     )
@@ -87,7 +87,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        position=1,
+        utilization=1,
         price=None,
         immediate=True
     )
@@ -100,7 +100,7 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        position=1,
+        utilization=1,
         price=None,
         immediate=False
     )

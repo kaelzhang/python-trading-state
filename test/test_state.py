@@ -22,18 +22,18 @@ def test_trading_state():
     state = init_state()
 
     assert state.support_symbol(BTCUSDC)
-    assert state.position(BTC) == (None, 0.1)
+    assert state.utilization(BTC) == (None, 0.1)
 
     exception, updated = state.expect(
         BTCUSDC,
-        position=0.2,
+        utilization=0.2,
         price=Decimal('10000'),
         immediate=False
     )
     assert exception is None
     assert updated
 
-    assert state.position(BTC) == (None, 0.2)
+    assert state.utilization(BTC) == (None, 0.2)
 
     orders, orders_to_cancel = state.get_orders()
 
@@ -61,7 +61,7 @@ def test_trading_state():
     # Expect a new position
     exception, updated = state.expect(
         BTCUSDC,
-        position=0.3,
+        utilization=0.3,
         # Although the price is provided, it will be ignored
         price=Decimal('10000'),
         immediate=True
@@ -69,14 +69,14 @@ def test_trading_state():
     assert exception is None
     assert updated
 
-    assert state.position(BTC) == (None, 0.3)
+    assert state.utilization(BTC) == (None, 0.3)
 
     # Even we set a new expectation with another symbol,
     # but the previous expectation is equivalent,
     # it will be skipped
     exception, updated = state.expect(
         BTCUSDT,
-        position=0.3,
+        utilization=0.3,
         price=Decimal('20000'),
         immediate=True
     )
@@ -145,7 +145,7 @@ def test_order_filled():
 
     exception, updated = state.expect(
         BTCUSDC,
-        position=0.2,
+        utilization=0.2,
         price=Decimal('10000'),
         immediate=False
     )
@@ -155,7 +155,7 @@ def test_order_filled():
     # Same expectation, no need to update
     exception, updated = state.expect(
         BTCUSDC,
-        position=0.2,
+        utilization=0.2,
         price=Decimal('10000'),
         immediate=False
     )
@@ -178,10 +178,10 @@ def test_order_filled():
 
     # The order is filled, so the expectation should marked as fulfilled,
     # but the balance might not be updated yet,
-    # we should keep tht expectation
+    # we should keep that expectation
     assert state._expected[BTC].fulfilled is True
 
-    assert state.position(BTC) == (None, 0.2)
+    assert state.utilization(BTC) == (None, 0.2)
 
     orders, orders_to_cancel = state.get_orders()
     assert not orders
@@ -202,13 +202,13 @@ def test_order_filled():
     # we keep the expectation to improve performance
     assert state._expected[BTC].fulfilled is True
 
-    assert state.position(BTC) == (None, 0.2)
+    assert state.utilization(BTC) == (None, 0.2)
 
     # The expectation is equivalent to the current position,
     # no need to update
     exception, updated = state.expect(
         BTCUSDC,
-        position=0.2,
+        utilization=0.2,
         price=Decimal('10000'),
         immediate=False
     )
@@ -224,12 +224,12 @@ def test_order_filled():
     # we should remove the expectation
     assert BTC not in state._expected
 
-    assert state.position(BTC) == (None, 0.3)
+    assert state.utilization(BTC) == (None, 0.3)
 
     # The expectation is already fulfilled based on calculation
     exception, updated = state.expect(
         BTCUSDC,
-        position=0.3,
+        utilization=0.3,
         price=Decimal('10000'),
         immediate=False
     )

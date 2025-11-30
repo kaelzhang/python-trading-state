@@ -40,7 +40,7 @@ from .order_ticket import (
     MarketOrderTicket
 )
 from .types import (
-    AssetPosition,
+    AssetPositionTarget,
     PositionMetaData
 )
 from .common import (
@@ -93,7 +93,7 @@ class TradingConfig:
     """
     Args:
         valuation_currency (str): the valuation currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
-        - calculate value of positions
+        - calculate value of limit utilizations
         - calculate value of notional limits
 
         max_order_history_size (int): the maximum size of the order history
@@ -109,7 +109,7 @@ class TradingConfig:
 class TradingState:
     """State Phase II
 
-    - support base asset position between 0 and 1
+    - support base asset limit utilization between 0 and 1
     - support multiple base assets
     - support multiple quote assets
 
@@ -146,7 +146,7 @@ class TradingState:
     _notional_limits: Dict[str, Decimal]
 
     # asset -> position expectation
-    _expected: Dict[str, AssetPosition]
+    _expected: Dict[str, AssetPositionTarget]
 
     _orders: OrderManager
 
@@ -294,31 +294,31 @@ class TradingState:
     # def summarize(self):
     #     ...
 
-    def position(
+    def utilization(
         self,
         asset: str
     ) -> ValueOrException[float]:
         """
-        Get the current expected position or the calculated position of an asset
+        Get the current expected limit utilization or the calculated limit utilization of an asset
 
         Args:
-            asset (str): the asset name to get the position for
+            asset (str): the asset name to get the limit utilization for
 
         Returns:
             - Tuple[Exception, None]: the exception if the asset is not ready
-            - Tuple[None, float]: the position of the asset
+            - Tuple[None, float]: the limit utilization of the asset
         """
 
         exception = self._check_asset_ready(asset)
         if exception is not None:
             return exception, None
 
-        position = self._expected.get(asset)
+        target = self._expected.get(asset)
 
-        if position is not None:
-            return None, position.value
+        if target is not None:
+            return None, target.utilization
 
-        return None, self._get_asset_position(asset)
+        return None, self._get_asset_utilization(asset)
 
     def cancel_order(self, order: Order) -> None:
         """
@@ -331,18 +331,18 @@ class TradingState:
 
         asset = order.ticket.symbol.base_asset
 
-        current_position = self._expected.get(asset)
+        current_target = self._expected.get(asset)
 
-        if current_position is None:
+        if current_target is None:
             return
 
-        if current_position is order.position:
+        if current_target is order.target:
             # Clean the related expectation,
-            # so that current position will be recalculated
+            # so that current target will be recalculated
 
             # If we do not remove the expection,
             # the trading state will try to create a new order
-            # for the position, which might cause unexpected behavior
+            # for the target, which might cause unexpected behavior
 
             # It is allowed to cancel an order multiple times,
             # use pop to avoid unexpected raise
@@ -384,7 +384,7 @@ class TradingState:
     def expect(
         self,
         symbol_name: str,
-        position: float,
+        utilization: float,
         price: Decimal | None,
         immediate: bool,
         data: PositionMetaData = {}
@@ -394,7 +394,7 @@ class TradingState:
 
         Args:
             symbol_name (str): the name of the symbol to trade with
-            position (float): the position to expect, should be between `0.0` and `1.0`. The position refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
+            utilization (float): the limit utilization to expect, should be between `0.0` and `1.0`. The utilization refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
             immediate (bool = False): whether to execute the expectation immediately, that it will generate a market order
             price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the current price.
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
@@ -424,31 +424,31 @@ class TradingState:
             if price is None:
                 return ExpectWithoutPriceError(asset), None
 
-        # Normalize the position to be between 0 and 1
-        position = max(FLOAT_ZERO, min(position, FLOAT_ONE))
+        # Normalize the utilization to be between 0 and 1
+        utilization = max(FLOAT_ZERO, min(utilization, FLOAT_ONE))
 
-        open_position = self._expected.get(asset)
+        open_target = self._expected.get(asset)
 
-        if open_position is not None:
+        if open_target is not None:
             if (
-                open_position.value == position
-                and open_position.price == price
-                and open_position.immediate == immediate
+                open_target.utilization == utilization
+                and open_target.price == price
+                and open_target.immediate == immediate
             ):
-                # If the position is the same, no need to update
+                # If the target is the same, no need to update
                 # We treat it as a success
                 return None, False
 
-        calculated_position = self._get_asset_position(asset)
+        calculated_utilization = self._get_asset_utilization(asset)
 
-        if calculated_position == position:
-            # If the position is the same, no need to update
+        if calculated_utilization == utilization:
+            # If the target is the same, no need to update
             # We treat it as a success
             return None, False
 
-        self._expected[asset] = AssetPosition(
+        self._expected[asset] = AssetPositionTarget(
             symbol=symbol,
-            value=position,
+            utilization=utilization,
             immediate=immediate,
             price=price,
             data=data
@@ -555,26 +555,26 @@ class TradingState:
 
         self._balances[balance.asset] = balance
 
-        position = self._expected.get(asset)
+        target = self._expected.get(asset)
 
         if old_balance is None:
             return
 
-        if position is None or not position.fulfilled:
+        if target is None or not target.fulfilled:
             # There is no expectation or
             # the expectation is still being fulfilled,
-            # we do not need to recalculate the position
+            # we do not need to recalculate the target
             return
 
         if old_balance.free == balance.free:
             return
 
-        calculated_position = self._get_asset_position(asset)
-        if calculated_position == position.value:
+        calculated_utilization = self._get_asset_utilization(asset)
+        if calculated_utilization == target.utilization:
             return
 
         # We need to remove the expectation,
-        # so that self.get_position() will return the recalculated position
+        # so that self.utilization() will return the recalculated utilization
         del self._expected[asset]
 
     def _get_asset_balance(self, asset: str) -> Decimal:
@@ -599,14 +599,14 @@ class TradingState:
 
         return free
 
-    def _get_asset_position(self, asset: str) -> float:
+    def _get_asset_utilization(self, asset: str) -> float:
         """
-        Get the calculated position of an asset
+        Get the calculated limit utilization of an asset
 
         Should only be called after `asset_ready`
 
         Returns:
-            float: the calculated position of the asset
+            float: the calculated limit utilization of the asset
         """
 
         balance = self._get_asset_balance(asset)
@@ -623,12 +623,12 @@ class TradingState:
         Diff the position expectations
         """
 
-        for position in self._expected.values():
-            self._create_order_from_position(position)
+        for target in self._expected.values():
+            self._create_order_from_position_target(target)
 
-    def _create_order_from_position(
+    def _create_order_from_position_target(
         self,
-        position: AssetPosition
+        target: AssetPositionTarget
     ) -> None:
         """
         Create a order from an asset position.
@@ -637,16 +637,16 @@ class TradingState:
         because of `self.expect(...)`
         """
 
-        if position.fulfilled:
+        if target.fulfilled:
             return
 
-        symbol = position.symbol
+        symbol = target.symbol
 
         existing_order = self._orders.get_order_by_symbol(symbol)
 
         # We only keep one order for a single symbol
         if existing_order is not None:
-            if existing_order.position == position:
+            if existing_order.target == target:
                 # already a valid order for the position,
                 # do not need to create a new order
                 return
@@ -661,7 +661,7 @@ class TradingState:
         value = balance * valuation_price
 
         limit = self._notional_limits.get(asset)
-        value_delta = Decimal(str(position.value)) * limit - value
+        value_delta = Decimal(str(target.utilization)) * limit - value
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / valuation_price
 
@@ -672,12 +672,12 @@ class TradingState:
                 quantity=quantity,
                 quantity_type=MarketQuantityType.BASE
             )
-            if position.immediate
+            if target.immediate
             else LimitOrderTicket(
                 symbol=symbol,
                 side=side,
                 quantity=quantity,
-                price=position.price,
+                price=target.price,
                 time_in_force=TimeInForce.GTC
             )
         )
@@ -694,7 +694,7 @@ class TradingState:
 
         order = Order(
             ticket=ticket,
-            position=position
+            target=target
         )
 
         order.on(

@@ -20,7 +20,7 @@ from .order_ticket import (
     OrderTicket
 )
 from .types import (
-    AssetPosition,
+    AssetPositionTarget,
 )
 from .common import (
     class_repr,
@@ -40,7 +40,7 @@ class OrderUpdatedType(Enum):
 
 class Order(EventEmitter[OrderUpdatedType]):
     ticket: OrderTicket
-    position: Optional[AssetPosition]
+    target: Optional[AssetPositionTarget]
 
     _status: OrderStatus
     _id: Optional[str] = None
@@ -58,13 +58,13 @@ class Order(EventEmitter[OrderUpdatedType]):
             'id',
             'ticket',
             'status',
-            'position',
+            'target',
         ])
 
     def __init__(
         self,
         ticket: OrderTicket,
-        position: Optional[AssetPosition]
+        target: Optional[AssetPositionTarget]
     ) -> None:
         super().__init__()
 
@@ -72,7 +72,7 @@ class Order(EventEmitter[OrderUpdatedType]):
         self._id_updated_callback = None
 
         self.ticket = ticket
-        self.position = position
+        self.target = target
         # self.locked_asset = locked_asset
         # self.locked_quantity = locked_quantity
 
@@ -226,10 +226,10 @@ class OrderManager:
                 self.history.append(order)
 
             case OrderStatus.FILLED:
-                position = order.position
+                target = order.target
 
-                if position is not None:
-                    position.fulfilled = True
+                if target is not None:
+                    target.fulfilled = True
 
                 self._purge_order(order)
                 order.off()
