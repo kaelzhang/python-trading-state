@@ -560,9 +560,9 @@ class TradingState:
         if old_balance is None:
             return
 
-        if target is None or not target.fulfilled:
+        if target is None or not target.achieved:
             # There is no expectation or
-            # the expectation is still being fulfilled,
+            # the expectation is still being achieved,
             # we do not need to recalculate the target
             return
 
@@ -637,7 +637,7 @@ class TradingState:
         because of `self.expect(...)`
         """
 
-        if target.fulfilled:
+        if target.achieved:
             return
 
         symbol = target.symbol

@@ -176,10 +176,10 @@ def test_order_filled():
 
     order.status = OrderStatus.FILLED
 
-    # The order is filled, so the expectation should marked as fulfilled,
+    # The order is filled, so the expectation should marked as achieved,
     # but the balance might not be updated yet,
     # we should keep that expectation
-    assert state._expected[BTC].fulfilled is True
+    assert state._expected[BTC].achieved is True
 
     assert state.exposure(BTC) == (None, 0.2)
 
@@ -200,7 +200,7 @@ def test_order_filled():
     # The balance is updated,
     # but the intrinsic position is equal to the expectation,
     # we keep the expectation to improve performance
-    assert state._expected[BTC].fulfilled is True
+    assert state._expected[BTC].achieved is True
 
     assert state.exposure(BTC) == (None, 0.2)
 
@@ -226,7 +226,7 @@ def test_order_filled():
 
     assert state.exposure(BTC) == (None, 0.3)
 
-    # The expectation is already fulfilled based on calculation
+    # The expectation is already achieved based on calculation
     exception, updated = state.expect(
         BTCUSDC,
         exposure=0.3,

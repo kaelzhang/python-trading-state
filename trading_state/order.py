@@ -229,7 +229,7 @@ class OrderManager:
                 target = order.target
 
                 if target is not None:
-                    target.fulfilled = True
+                    target.achieved = True
 
                 self._purge_order(order)
                 order.off()

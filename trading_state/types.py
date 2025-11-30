@@ -53,7 +53,7 @@ class PositionTarget:
         'use_market_order',
         'price',
         'data',
-        'fulfilled'
+        'achieved'
     )
 
     symbol: Symbol
@@ -61,7 +61,7 @@ class PositionTarget:
     use_market_order: bool
     price: Decimal | None
     data: PositionMetaData
-    fulfilled: bool
+    achieved: bool
 
     def __init__(
         self,
@@ -76,7 +76,7 @@ class PositionTarget:
         self.use_market_order = use_market_order
         self.price = price
         self.data = data
-        self.fulfilled = False
+        self.achieved = False
 
     def __repr__(self) -> str:
         return class_repr(
