@@ -17,7 +17,7 @@ from .common import (
 PositionMetaData = Dict[str, Any]
 
 
-class AssetPositionTarget:
+class PositionTarget:
     """An asset position target is the position expectation of an asset via trading with a certain symbol.
 
     The value of the position is based on the asset's notional limit.
@@ -31,7 +31,7 @@ class AssetPositionTarget:
 
     For example::
 
-        position = AssetPositionTarget(
+        position = PositionTarget(
             symbol=Symbol(
                 name='BTCBNB',
                 base_asset='BTC',
@@ -93,10 +93,10 @@ class AssetPositionTarget:
         self,
         target: Any
     ) -> bool:
-        """To detect whether the given `AssetPositionTarget` has the same goal of the current one
+        """To detect whether the given `PositionTarget` has the same goal of the current one
         """
 
-        if not isinstance(target, AssetPositionTarget):
+        if not isinstance(target, PositionTarget):
             return False
 
         return (

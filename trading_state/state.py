@@ -40,7 +40,7 @@ from .order_ticket import (
     MarketOrderTicket
 )
 from .types import (
-    AssetPositionTarget,
+    PositionTarget,
     PositionMetaData
 )
 from .common import (
@@ -92,7 +92,7 @@ def DEFAULT_GET_SYMBOL_NAME(base_asset: str, quote_asset: str) -> str:
 class TradingConfig:
     """
     Args:
-        valuation_currency (str): the valuation currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
+        account_currency (str): the account currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
         - calculate value of limit utilizations
         - calculate value of notional limits
 
@@ -100,7 +100,7 @@ class TradingConfig:
 
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
-    valuation_currency: str
+    account_currency: str
     context: Dict[str, Any] = field(default_factory=dict)
     max_order_history_size: int = 10000
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
@@ -146,7 +146,7 @@ class TradingState:
     _notional_limits: Dict[str, Decimal]
 
     # asset -> position expectation
-    _expected: Dict[str, AssetPositionTarget]
+    _expected: Dict[str, PositionTarget]
 
     _orders: OrderManager
 
@@ -227,14 +227,14 @@ class TradingState:
         Set the notional limit for a certain asset. Pay attention that, by design, it is mandatory to set the notional limit for an asset before trading with the trading state.
 
         The notional limit of an asset limits:
-        - the maximum quantity of the **valuation_currency** asset the trader could **BUY** the asset,
+        - the maximum quantity of the **account_currency** asset the trader could **BUY** the asset,
         - no SELL.
         - the maximum quantity of the asset the trader could **SELL** the asset,
         - no BUY.
 
         Args:
             asset (str): the asset to set the notional limit for
-            limit (Decimal | None): the maximum quantity of the valuation currency the trader could BUY the asset. `None` means no notional limit.
+            limit (Decimal | None): the maximum quantity of the account currency the trader could BUY the asset. `None` means no notional limit.
 
         For example, if::
 
@@ -446,7 +446,7 @@ class TradingState:
             # We treat it as a success
             return None, False
 
-        self._expected[asset] = AssetPositionTarget(
+        self._expected[asset] = PositionTarget(
             symbol=symbol,
             utilization=utilization,
             immediate=immediate,
@@ -532,12 +532,12 @@ class TradingState:
     def _get_valuation_symbol_name(self, asset: str) -> str:
         return self._config.get_symbol_name(
             asset,
-            self._config.valuation_currency
+            self._config.account_currency
         )
 
     def _get_asset_valuation_price(self, asset: str) -> Decimal:
         """
-        Get the price of an asset in the valuation currency
+        Get the price of an asset in the account currency
 
         Should only be called after `asset_ready`
         """
@@ -628,10 +628,10 @@ class TradingState:
 
     def _create_order_from_position_target(
         self,
-        target: AssetPositionTarget
+        target: PositionTarget
     ) -> None:
         """
-        Create a order from an asset position.
+        Create a order from an asset position target.
 
         Actually it is always called after `symbol_ready`
         because of `self.expect(...)`

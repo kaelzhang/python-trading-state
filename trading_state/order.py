@@ -20,7 +20,7 @@ from .order_ticket import (
     OrderTicket
 )
 from .types import (
-    AssetPositionTarget,
+    PositionTarget,
 )
 from .common import (
     class_repr,
@@ -40,7 +40,7 @@ class OrderUpdatedType(Enum):
 
 class Order(EventEmitter[OrderUpdatedType]):
     ticket: OrderTicket
-    target: Optional[AssetPositionTarget]
+    target: Optional[PositionTarget]
 
     _status: OrderStatus
     _id: Optional[str] = None
@@ -64,7 +64,7 @@ class Order(EventEmitter[OrderUpdatedType]):
     def __init__(
         self,
         ticket: OrderTicket,
-        target: Optional[AssetPositionTarget]
+        target: Optional[PositionTarget]
     ) -> None:
         super().__init__()
 

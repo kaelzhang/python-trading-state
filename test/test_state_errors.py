@@ -32,7 +32,7 @@ def test_symbols() -> Symbols:
 def test_trading_state_errors(test_symbols: Symbols):
     state = TradingState(
         config=TradingConfig(
-            valuation_currency=USDT
+            account_currency=USDT
         )
     )
 
