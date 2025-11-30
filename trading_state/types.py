@@ -24,8 +24,8 @@ class PositionTarget:
 
     Args:
         symbol (Symbol): the symbol to trade with to achieve the position
-        utilization (float): should between 0 and 1
-        immediate (bool): whether to trade immediate (market order)
+        exposure (float): should between 0 and 1
+        use_market_order (bool): whether to trade use_market_order (market order)
         price (Decimal | None): the price to trade at
         data (dict[str, Any]): the meta data of the position
 
@@ -38,8 +38,8 @@ class PositionTarget:
                 quote_asset='BNB',
                 ...
             ),
-            utilization=1.0,
-            immediate=True,
+            exposure=1.0,
+            use_market_order=True,
             price=None,
             data={}
         )
@@ -49,16 +49,16 @@ class PositionTarget:
 
     __slots__ = (
         'symbol',
-        'utilization',
-        'immediate',
+        'exposure',
+        'use_market_order',
         'price',
         'data',
         'fulfilled'
     )
 
     symbol: Symbol
-    utilization: float
-    immediate: bool
+    exposure: float
+    use_market_order: bool
     price: Decimal | None
     data: PositionMetaData
     fulfilled: bool
@@ -66,14 +66,14 @@ class PositionTarget:
     def __init__(
         self,
         symbol: Symbol,
-        utilization: float,
-        immediate: bool,
+        exposure: float,
+        use_market_order: bool,
         price: Decimal | None,
         data: PositionMetaData
     ) -> None:
         self.symbol = symbol
-        self.utilization = utilization
-        self.immediate = immediate
+        self.exposure = exposure
+        self.use_market_order = use_market_order
         self.price = price
         self.data = data
         self.fulfilled = False
@@ -83,8 +83,8 @@ class PositionTarget:
             self,
             main='symbol',
             keys=[
-                'utilization',
-                'immediate',
+                'exposure',
+                'use_market_order',
                 'price'
             ]
         )
@@ -101,7 +101,7 @@ class PositionTarget:
 
         return (
             self.symbol == target.symbol
-            and self.utilization == target.utilization
-            and self.immediate == target.immediate
+            and self.exposure == target.exposure
+            and self.use_market_order == target.use_market_order
             and self.price == target.price
         )

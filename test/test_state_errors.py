@@ -39,14 +39,14 @@ def test_trading_state_errors(test_symbols: Symbols):
     # with pytest.raises(SymbolNotDefinedError):
     exception, _ = state.expect(
         BTCUSDC,
-        utilization=1,
+        exposure=1,
         price=None,
-        immediate=True
+        use_market_order=True
     )
 
     assert isinstance(exception, SymbolNotDefinedError)
 
-    exception, _ = state.utilization(BTC)
+    exception, _ = state.exposure(BTC)
 
     assert isinstance(exception, AssetNotDefinedError)
 
@@ -54,9 +54,9 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        utilization=1,
+        exposure=1,
         price=None,
-        immediate=True
+        use_market_order=True
     )
 
     assert isinstance(exception, SymbolPriceNotReadyError)
@@ -65,9 +65,9 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        utilization=1,
+        exposure=1,
         price=None,
-        immediate=True
+        use_market_order=True
     )
 
     assert isinstance(exception, NotionalLimitNotSetError)
@@ -76,9 +76,9 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        utilization=1,
+        exposure=1,
         price=None,
-        immediate=True
+        use_market_order=True
     )
 
     assert isinstance(exception, ValuationPriceNotReadyError)
@@ -87,9 +87,9 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        utilization=1,
+        exposure=1,
         price=None,
-        immediate=True
+        use_market_order=True
     )
 
     assert isinstance(exception, BalanceNotReadyError)
@@ -100,9 +100,9 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     exception, _ = state.expect(
         BTCUSDC,
-        utilization=1,
+        exposure=1,
         price=None,
-        immediate=False
+        use_market_order=False
     )
 
     assert isinstance(exception, ExpectWithoutPriceError)

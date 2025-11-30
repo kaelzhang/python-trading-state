@@ -93,7 +93,7 @@ class TradingConfig:
     """
     Args:
         account_currency (str): the account currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
-        - calculate value of limit utilizations
+        - calculate value of limit exposures
         - calculate value of notional limits
 
         max_order_history_size (int): the maximum size of the order history
@@ -109,7 +109,7 @@ class TradingConfig:
 class TradingState:
     """State Phase II
 
-    - support base asset limit utilization between 0 and 1
+    - support base asset limit exposure between 0 and 1
     - support multiple base assets
     - support multiple quote assets
 
@@ -294,19 +294,19 @@ class TradingState:
     # def summarize(self):
     #     ...
 
-    def utilization(
+    def exposure(
         self,
         asset: str
     ) -> ValueOrException[float]:
         """
-        Get the current expected limit utilization or the calculated limit utilization of an asset
+        Get the current expected limit exposure or the calculated limit exposure of an asset
 
         Args:
-            asset (str): the asset name to get the limit utilization for
+            asset (str): the asset name to get the limit exposure for
 
         Returns:
             - Tuple[Exception, None]: the exception if the asset is not ready
-            - Tuple[None, float]: the limit utilization of the asset
+            - Tuple[None, float]: the limit exposure of the asset
         """
 
         exception = self._check_asset_ready(asset)
@@ -316,9 +316,9 @@ class TradingState:
         target = self._expected.get(asset)
 
         if target is not None:
-            return None, target.utilization
+            return None, target.exposure
 
-        return None, self._get_asset_utilization(asset)
+        return None, self._get_asset_exposure(asset)
 
     def cancel_order(self, order: Order) -> None:
         """
@@ -384,9 +384,9 @@ class TradingState:
     def expect(
         self,
         symbol_name: str,
-        utilization: float,
+        exposure: float,
         price: Decimal | None,
-        immediate: bool,
+        use_market_order: bool,
         data: PositionMetaData = {}
     ) -> ValueOrException[bool]:
         """
@@ -394,8 +394,8 @@ class TradingState:
 
         Args:
             symbol_name (str): the name of the symbol to trade with
-            utilization (float): the limit utilization to expect, should be between `0.0` and `1.0`. The utilization refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
-            immediate (bool = False): whether to execute the expectation immediately, that it will generate a market order
+            exposure (float): the limit exposure to expect, should be between `0.0` and `1.0`. The exposure refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
+            use_market_order (bool = False): whether to execute the expectation use_market_orderly, that it will generate a market order
             price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the current price.
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
 
@@ -418,38 +418,38 @@ class TradingState:
         symbol = self._get_symbol(symbol_name)
         asset = symbol.base_asset
 
-        if immediate:
+        if use_market_order:
             price = None
         else:
             if price is None:
                 return ExpectWithoutPriceError(asset), None
 
-        # Normalize the utilization to be between 0 and 1
-        utilization = max(FLOAT_ZERO, min(utilization, FLOAT_ONE))
+        # Normalize the exposure to be between 0 and 1
+        exposure = max(FLOAT_ZERO, min(exposure, FLOAT_ONE))
 
         open_target = self._expected.get(asset)
 
         if open_target is not None:
             if (
-                open_target.utilization == utilization
+                open_target.exposure == exposure
                 and open_target.price == price
-                and open_target.immediate == immediate
+                and open_target.use_market_order == use_market_order
             ):
                 # If the target is the same, no need to update
                 # We treat it as a success
                 return None, False
 
-        calculated_utilization = self._get_asset_utilization(asset)
+        calculated_exposure = self._get_asset_exposure(asset)
 
-        if calculated_utilization == utilization:
+        if calculated_exposure == exposure:
             # If the target is the same, no need to update
             # We treat it as a success
             return None, False
 
         self._expected[asset] = PositionTarget(
             symbol=symbol,
-            utilization=utilization,
-            immediate=immediate,
+            exposure=exposure,
+            use_market_order=use_market_order,
             price=price,
             data=data
         )
@@ -569,12 +569,12 @@ class TradingState:
         if old_balance.free == balance.free:
             return
 
-        calculated_utilization = self._get_asset_utilization(asset)
-        if calculated_utilization == target.utilization:
+        calculated_exposure = self._get_asset_exposure(asset)
+        if calculated_exposure == target.exposure:
             return
 
         # We need to remove the expectation,
-        # so that self.utilization() will return the recalculated utilization
+        # so that self.exposure() will return the recalculated exposure
         del self._expected[asset]
 
     def _get_asset_balance(self, asset: str) -> Decimal:
@@ -599,14 +599,14 @@ class TradingState:
 
         return free
 
-    def _get_asset_utilization(self, asset: str) -> float:
+    def _get_asset_exposure(self, asset: str) -> float:
         """
-        Get the calculated limit utilization of an asset
+        Get the calculated limit exposure of an asset
 
         Should only be called after `asset_ready`
 
         Returns:
-            float: the calculated limit utilization of the asset
+            float: the calculated limit exposure of the asset
         """
 
         balance = self._get_asset_balance(asset)
@@ -661,7 +661,7 @@ class TradingState:
         value = balance * valuation_price
 
         limit = self._notional_limits.get(asset)
-        value_delta = Decimal(str(target.utilization)) * limit - value
+        value_delta = Decimal(str(target.exposure)) * limit - value
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / valuation_price
 
@@ -672,7 +672,7 @@ class TradingState:
                 quantity=quantity,
                 quantity_type=MarketQuantityType.BASE
             )
-            if target.immediate
+            if target.use_market_order
             else LimitOrderTicket(
                 symbol=symbol,
                 side=side,
