@@ -45,7 +45,8 @@ from .types import (
 )
 from .common import (
     DECIMAL_ZERO,
-    DictSet
+    DictSet,
+    EventEmitter
 )
 
 
@@ -106,7 +107,7 @@ class TradingConfig:
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
 
-class TradingState:
+class TradingState(EventEmitter):
     """State Phase II
 
     - support base asset limit exposure between 0 and 1
@@ -711,3 +712,5 @@ class TradingState:
     ) -> None:
         if status is OrderStatus.CANCELLED:
             self.cancel_order(order)
+
+        self.emit(OrderUpdatedType.STATUS_UPDATED, order, status)
