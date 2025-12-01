@@ -27,6 +27,7 @@ from .enums import (
     OrderSide,
     TimeInForce,
     MarketQuantityType,
+    TradingStateEvent
 )
 from .symbol import Symbol
 from .balance import Balance
@@ -107,7 +108,7 @@ class TradingConfig:
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
 
-class TradingState(EventEmitter):
+class TradingState(EventEmitter[TradingStateEvent]):
     """State Phase II
 
     - support base asset limit exposure between 0 and 1
@@ -155,6 +156,8 @@ class TradingState(EventEmitter):
         self,
         config: TradingConfig
     ) -> None:
+        super().__init__()
+
         self._config = config
 
         self._symbols = {}
@@ -195,6 +198,8 @@ class TradingState(EventEmitter):
             return False
 
         self._symbol_prices[symbol_name] = price
+
+        self.emit(TradingStateEvent.PRICE_UPDATED, symbol_name, price)
 
         return True
 
@@ -713,4 +718,6 @@ class TradingState(EventEmitter):
         if status is OrderStatus.CANCELLED:
             self.cancel_order(order)
 
-        self.emit(OrderUpdatedType.STATUS_UPDATED, order, status)
+        # So that the caller of trading state
+        # can also listen to the changes of order status
+        self.emit(TradingStateEvent.ORDER_STATUS_UPDATED, order, status)

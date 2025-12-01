@@ -130,3 +130,8 @@ class FeatureType(StringEnum):
     ORDER_TYPE = 'ORDER_TYPE'
     STP_MODE = 'STP_MODE'
     POST_ONLY = 'POST_ONLY'
+
+
+class TradingStateEvent(Enum):
+    ORDER_STATUS_UPDATED = 'order_status_updated'
+    PRICE_UPDATED = 'price_updated'

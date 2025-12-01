@@ -87,8 +87,8 @@ def class_repr(
     return string
 
 
-K = TypeVar('K')
-V = TypeVar('V', bound=Hashable)
+K = TypeVar('K', bound=Hashable)
+V = TypeVar('V')
 
 class DictSet(Generic[K, V]):
     _data: Dict[K, MutableSet[V]]
@@ -109,6 +109,11 @@ class DictSet(Generic[K, V]):
 EventEmitterCallback = Callable[[...], None]
 
 class EventEmitter(Generic[K]):
+    """
+    An simple event emitter implementation which does
+    not ensure execution order of listeners
+    """
+
     _listeners: DictSet[K, EventEmitterCallback]
 
     def __init__(self):

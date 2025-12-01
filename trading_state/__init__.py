@@ -15,7 +15,8 @@ from .enums import (
     TimeInForce,
     STPMode,
     FeatureType,
-    MarketQuantityType
+    MarketQuantityType,
+    TradingStateEvent
 )
 
 from .exceptions import (
@@ -59,4 +60,8 @@ from .symbol import Symbol
 
 from .types import (
     PositionTarget
+)
+
+from .common import (
+    EventEmitter
 )
