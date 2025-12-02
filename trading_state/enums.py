@@ -133,5 +133,6 @@ class FeatureType(StringEnum):
 
 
 class TradingStateEvent(Enum):
-    ORDER_STATUS_UPDATED = 'order_status_updated'
-    PRICE_UPDATED = 'price_updated'
+    ORDER_STATUS_UPDATED = 'ORDER_STATUS_UPDATED'
+    PRICE_UPDATED = 'PRICE_UPDATED'
+    SYMBOL_ADDED = 'SYMBOL_ADDED'

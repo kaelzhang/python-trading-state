@@ -218,6 +218,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
             symbol (Symbol): the symbol to set
         """
 
+        if symbol.name in self._symbols:
+            return
+
         self._symbols[symbol.name] = symbol
 
         asset = symbol.base_asset
@@ -233,6 +236,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
             # it is the underlying asset of the account currency,
             # such as a stock asset
             self._underlying_assets.add(asset)
+
+        self.emit(TradingStateEvent.SYMBOL_ADDED, symbol)
 
     def set_notional_limit(
         self,
