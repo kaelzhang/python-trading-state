@@ -135,6 +135,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
     _checked_asset_names: Set[str]
 
     _assets: Set[str]
+    _underlying_assets: Set[str]
+
     # base asset -> symbol
     _base_asset_symbols: DictSet[str, Symbol]
 
@@ -165,6 +167,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._checked_asset_names = set[str]()
 
         self._assets = set[str]()
+        self._underlying_assets = set[str]()
+
         self._base_asset_symbols = DictSet[str, Symbol]()
         self._quote_asset_symbols = DictSet[str, Symbol]()
 
@@ -223,6 +227,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._assets.add(quote_asset)
         self._base_asset_symbols[asset].add(symbol)
         self._quote_asset_symbols[quote_asset].add(symbol)
+
+        if not quote_asset:
+            # If the symbol has no quote asset,
+            # it is the underlying asset of the account currency,
+            # such as a stock asset
+            self._underlying_assets.add(asset)
 
     def set_notional_limit(
         self,
@@ -536,6 +546,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._checked_asset_names.add(asset)
 
     def _get_valuation_symbol_name(self, asset: str) -> str:
+        if asset in self._underlying_assets:
+            # 'AAPL' -> 'AAPL'
+            return asset
+
+        # 'BTC' -> 'BTCUSDT'
         return self._config.get_symbol_name(
             asset,
             self._config.account_currency
