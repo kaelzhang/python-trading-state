@@ -213,13 +213,6 @@ class OrderHistory:
         return matched
 
 
-def full_order_id(
-    symbol_name: str,
-    order_id: str
-) -> str:
-    return f'{symbol_name}:{order_id}'
-
-
 class OrderManager:
     _open_orders: Set[Order]
     _id_orders: Dict[str, Order]
@@ -258,9 +251,7 @@ class OrderManager:
                 # it means it has been created by the exchange,
                 # so we should add it to the order history
                 self.history.append(order)
-                self._id_orders[
-                    full_order_id(order.ticket.symbol.name, order.id)
-                ] = order
+                self._id_orders[order.id] = order
 
             case OrderStatus.FILLED:
                 target = order.target
@@ -282,12 +273,8 @@ class OrderManager:
                 self._purge_order(order)
                 order.off()
 
-    def get_order_by_id(
-        self,
-        symbol_name: str,
-        order_id: str,
-    ) -> Optional[Order]:
-        return self._id_orders.get(full_order_id(symbol_name, order_id))
+    def get_order_by_id(self, order_id: str) -> Optional[Order]:
+        return self._id_orders.get(order_id)
 
     def get_order_by_symbol(self, symbol: Symbol) -> Optional[Order]:
         return self._symbol_orders.get(symbol)
