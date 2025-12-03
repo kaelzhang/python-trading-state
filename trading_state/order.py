@@ -35,7 +35,7 @@ type UpdatedCallback[T] = Callable[[T], None]
 
 class OrderUpdatedType(Enum):
     STATUS_UPDATED = 1
-    ID_UPDATED = 2
+    FILLED_QUANTITY_UPDATED = 2
 
 
 class Order(EventEmitter[OrderUpdatedType]):
@@ -46,12 +46,12 @@ class Order(EventEmitter[OrderUpdatedType]):
     _id: Optional[str] = None
 
     # Mutable properties
-    # Cumulative filled quantity
+    # Cumulative filled base quantity
     filled_quantity: Decimal
-    created_at: Optional[datetime]
 
-    # _status_updated_callback: Optional[UpdatedCallback[OrderStatus]]
-    # _id_updated_callback: Optional[UpdatedCallback[str]]
+    # Cumulative quote asset transacted quantity
+    quote_quantity: Decimal
+    created_at: Optional[datetime]
 
     def __repr__(self) -> str:
         return class_repr(self, keys=[
@@ -68,38 +68,65 @@ class Order(EventEmitter[OrderUpdatedType]):
     ) -> None:
         super().__init__()
 
-        self._status_updated_callback = None
-        self._id_updated_callback = None
-
         self.ticket = ticket
         self.target = target
-        # self.locked_asset = locked_asset
-        # self.locked_quantity = locked_quantity
 
         self._status = OrderStatus.INIT
         self.filled_quantity = DECIMAL_ZERO
+        self.quote_quantity = DECIMAL_ZERO
         self.created_at = None
+
+    def update(
+        self,
+        status: OrderStatus = None,
+        created_at: datetime = None,
+        filled_quantity: Decimal = None,
+        quote_quantity: Decimal = None,
+        order_id: str = None
+    ) -> None:
+        if quote_quantity is not None:
+            self.quote_quantity = quote_quantity
+
+        if filled_quantity is not None:
+            self.filled_quantity = filled_quantity
+
+            if status is None:
+                # Only emit the event if the status is not changed
+                self.emit(
+                    OrderUpdatedType.FILLED_QUANTITY_UPDATED,
+                    self,
+                    filled_quantity
+                )
+
+        if status is None:
+            return
+
+        if self._status == status:
+            # Status not changed
+            return
+
+        if status is OrderStatus.CREATED:
+            if order_id is None:
+                raise ValueError(
+                    'order_id is required when status is CREATED'
+                )
+
+            self._id = order_id
+
+            # Not setting created_at is not fatal
+            self.created_at = created_at
+
+        self._status = status
+        self.emit(OrderUpdatedType.STATUS_UPDATED, self, status)
 
     @property
     def status(self) -> OrderStatus:
         return self._status
 
-    @status.setter
-    def status(self, status: OrderStatus) -> None:
-        self._status = status
-        self.emit(OrderUpdatedType.STATUS_UPDATED, self, status)
-
     @property
     def id(self) -> Optional[str]:
         return self._id
 
-    @id.setter
-    def id(self, value: str) -> None:
-        if self._id is not None:
-            raise ValueError(f'id for {self} is already set')
-
-        self._id = value
-        self.emit(OrderUpdatedType.ID_UPDATED, self, value)
 
 def _compare_order(
     order: Order,
@@ -186,6 +213,13 @@ class OrderHistory:
         return matched
 
 
+def full_order_id(
+    symbol_name: str,
+    order_id: str
+) -> str:
+    return f'{symbol_name}:{order_id}'
+
+
 class OrderManager:
     _open_orders: Set[Order]
     _id_orders: Dict[str, Order]
@@ -224,6 +258,9 @@ class OrderManager:
                 # it means it has been created by the exchange,
                 # so we should add it to the order history
                 self.history.append(order)
+                self._id_orders[
+                    full_order_id(order.ticket.symbol.name, order.id)
+                ] = order
 
             case OrderStatus.FILLED:
                 target = order.target
@@ -245,15 +282,12 @@ class OrderManager:
                 self._purge_order(order)
                 order.off()
 
-    def _on_order_id_updated(
+    def get_order_by_id(
         self,
-        order: Order,
-        value: str
-    ) -> None:
-        self._id_orders[value] = order
-
-    def get_order_by_id(self, value: str) -> Optional[Order]:
-        return self._id_orders.get(value)
+        symbol_name: str,
+        order_id: str,
+    ) -> Optional[Order]:
+        return self._id_orders.get(full_order_id(symbol_name, order_id))
 
     def get_order_by_symbol(self, symbol: Symbol) -> Optional[Order]:
         return self._symbol_orders.get(symbol)
@@ -272,7 +306,9 @@ class OrderManager:
         #   `executionReport` of the exchange event
         # so we should check the status
         if order.status.lt(OrderStatus.ABOUT_TO_CANCEL):
-            order.status = OrderStatus.ABOUT_TO_CANCEL
+            order.update(
+                status = OrderStatus.ABOUT_TO_CANCEL
+            )
 
         self._purge_order(order)
 
@@ -313,11 +349,6 @@ class OrderManager:
         self._register_order(order)
 
         order.on(
-            OrderUpdatedType.ID_UPDATED,
-            self._on_order_id_updated
-        )
-
-        order.on(
             OrderUpdatedType.STATUS_UPDATED,
             self._on_order_status_updated
         )
@@ -330,13 +361,17 @@ class OrderManager:
         self._orders_to_cancel = set[Order]()
 
         for order in orders_to_cancel:
-            order.status = OrderStatus.CANCELLING
+            order.update(
+                status = OrderStatus.CANCELLING
+            )
 
         orders_to_create = set[Order]()
 
         for order in self._open_orders:
             if order.status is OrderStatus.INIT:
                 orders_to_create.add(order)
-                order.status = OrderStatus.SUBMITTING
+                order.update(
+                    status = OrderStatus.SUBMITTING
+                )
 
         return orders_to_create, orders_to_cancel

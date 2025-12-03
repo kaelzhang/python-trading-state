@@ -116,7 +116,9 @@ def test_trading_state():
     # We set the order status to ABOUT_TO_CANCEL,
     # which usually is triggered by the trader
     # if the order is failed to be canceled from the exchange
-    order_to_cancel.status = OrderStatus.ABOUT_TO_CANCEL
+    order_to_cancel.update(
+        status = OrderStatus.ABOUT_TO_CANCEL
+    )
     orders, orders_to_cancel = state.get_orders()
 
     assert len(orders_to_cancel) == 1
@@ -133,7 +135,9 @@ def test_trading_state():
     assert len(orders_to_cancel) == 1
     assert order is next(iter(orders_to_cancel))
 
-    order.status = OrderStatus.CANCELLED
+    order.update(
+        status = OrderStatus.CANCELLED
+    )
 
     # We should also remove the expectation for the asset
     # to avoid unexpected behavior
@@ -165,16 +169,21 @@ def test_order_filled():
     orders, _ = state.get_orders()
 
     order = next(iter(orders))
-    order.status = OrderStatus.CREATED
-    order.id = 'order-1'
-    order.filled_quantity = Decimal('0.5')
+    order.update(
+        status = OrderStatus.CREATED,
+        order_id = 'order-1',
+        filled_quantity = Decimal('0.5')
+    )
+
 
     # Imitate the balance is increased
     state.set_balances([
         Balance(BTC, Decimal('1.5'), Decimal('0'))
     ])
 
-    order.status = OrderStatus.FILLED
+    order.update(
+        status = OrderStatus.FILLED
+    )
 
     # The order is filled, so the expectation should marked as achieved,
     # but the balance might not be updated yet,
