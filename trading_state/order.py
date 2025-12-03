@@ -30,9 +30,6 @@ from .common import (
 )
 
 
-type UpdatedCallback[T] = Callable[[T], None]
-
-
 class OrderUpdatedType(Enum):
     STATUS_UPDATED = 1
     FILLED_QUANTITY_UPDATED = 2
@@ -84,6 +81,23 @@ class Order(EventEmitter[OrderUpdatedType]):
         quote_quantity: Decimal = None,
         order_id: str = None
     ) -> None:
+        """Update the order
+
+        Args:
+            status (OrderStatus = None): The new status of the order
+            created_at (datetime = None): The creation time of the order
+            filled_quantity (Decimal = None): The new filled quantity of the order
+            quote_quantity (Decimal = None): The new quote quantity of the order
+            order_id (str = None): The client order id
+
+        Usage::
+
+            order.update(
+                filled_quantity = Decimal('0.5'),
+                quote_quantity = Decimal('1000')
+            )
+        """
+
         if quote_quantity is not None:
             self.quote_quantity = quote_quantity
 
