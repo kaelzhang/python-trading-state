@@ -148,6 +148,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     # asset -> notional limit
     _notional_limits: Dict[str, Decimal]
+    _frozen: Dict[str, Decimal]
 
     # asset -> position expectation
     _expected: Dict[str, PositionTarget]
@@ -175,6 +176,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._symbol_prices = {}
 
         self._notional_limits = {}
+        self._frozen = {}
 
         self._balances = {}
         self._expected = {}
@@ -277,6 +279,24 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         # Just set the notional limit
         self._notional_limits[asset] = limit
+
+    def freeze(
+        self,
+        asset: str,
+        quantity: Optional[Decimal] = None
+    ) -> None:
+        """
+        Freeze a certain quantity of an asset. The frozen quantity will be excluded from the calculation of
+        - notional limit
+        - exposure
+        - balance
+        """
+
+        if quantity is None:
+            self._frozen.pop(asset, None)
+            return
+
+        self._frozen[asset] = quantity
 
     def set_balances(
         self,
@@ -623,7 +643,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             if order.ticket.side is OrderSide.SELL:
                 free += order.ticket.quantity - order.filled_quantity
 
-        return free
+        return max(free - self._frozen.get(asset, DECIMAL_ZERO), DECIMAL_ZERO)
 
     def _get_asset_exposure(self, asset: str) -> float:
         """
