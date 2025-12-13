@@ -236,7 +236,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if not quote_asset:
             # If the symbol has no quote asset,
             # it is the underlying asset of the account currency,
-            # such as a stock asset
+            # such as a stock asset, AAPL, etc.
             self._underlying_assets.add(asset)
 
         self.emit(TradingStateEvent.SYMBOL_ADDED, symbol)

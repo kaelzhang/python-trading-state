@@ -235,6 +235,14 @@ def test_order_filled():
 
     assert state.exposure(BTC) == (None, 0.3)
 
+    # If we freeze the asset, the exposure will be 0
+    state.freeze(BTC, Decimal('3'))
+    assert state.exposure(BTC) == (None, 0)
+
+    # If we unfreeze the asset, the exposure will be the expected value
+    state.freeze(BTC, None)
+    assert state.exposure(BTC) == (None, 0.3)
+
     # The expectation is already achieved based on calculation
     exception, updated = state.expect(
         BTCUSDC,

@@ -60,6 +60,9 @@ def init_state() -> TradingState:
     for symbol in symbols.values():
         state.set_symbol(symbol)
 
+        # It is ok to set the symbol multiple times
+        state.set_symbol(symbol)
+
     state.set_price(BTCUSDC, Decimal('10000'))
     assert state.set_price(BTCUSDT, Decimal('10000'))
 
