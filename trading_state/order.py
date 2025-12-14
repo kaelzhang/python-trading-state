@@ -19,7 +19,7 @@ from .enums import (
 from .order_ticket import (
     OrderTicket
 )
-from .types import (
+from .target import (
     PositionTarget,
 )
 from .common import (
@@ -36,8 +36,15 @@ class OrderUpdatedType(Enum):
 
 
 class Order(EventEmitter[OrderUpdatedType]):
+    """Order
+
+    Args:
+        ticket (OrderTicket): the ticket of the order
+        target (PositionTarget): the target which the order is trying to achieve
+    """
+
     ticket: OrderTicket
-    target: Optional[PositionTarget]
+    target: PositionTarget
 
     _status: OrderStatus
     _id: Optional[str] = None
@@ -61,7 +68,7 @@ class Order(EventEmitter[OrderUpdatedType]):
     def __init__(
         self,
         ticket: OrderTicket,
-        target: Optional[PositionTarget]
+        target: PositionTarget
     ) -> None:
         super().__init__()
 

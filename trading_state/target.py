@@ -14,7 +14,7 @@ from .common import (
 )
 
 
-PositionMetaData = Dict[str, Any]
+PositionTargetMetaData = Dict[str, Any]
 
 
 class PositionTarget:
@@ -60,7 +60,7 @@ class PositionTarget:
     exposure: float
     use_market_order: bool
     price: Decimal | None
-    data: PositionMetaData
+    data: PositionTargetMetaData
     achieved: bool
 
     def __init__(
@@ -69,7 +69,7 @@ class PositionTarget:
         exposure: float,
         use_market_order: bool,
         price: Decimal | None,
-        data: PositionMetaData
+        data: PositionTargetMetaData
     ) -> None:
         self.symbol = symbol
         self.exposure = exposure

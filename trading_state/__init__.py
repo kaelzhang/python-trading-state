@@ -58,7 +58,7 @@ from .order import (
 
 from .symbol import Symbol
 
-from .types import (
+from .target import (
     PositionTarget
 )
 

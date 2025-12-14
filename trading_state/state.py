@@ -40,9 +40,9 @@ from .order_ticket import (
     LimitOrderTicket,
     MarketOrderTicket
 )
-from .types import (
+from .target import (
     PositionTarget,
-    PositionMetaData
+    PositionTargetMetaData
 )
 from .common import (
     DECIMAL_ZERO,
@@ -433,7 +433,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         exposure: float,
         price: Decimal | None,
         use_market_order: bool,
-        data: PositionMetaData = {}
+        data: PositionTargetMetaData = {}
     ) -> ValueOrException[bool]:
         """
         Update expectation, returns whether it is successfully updated
