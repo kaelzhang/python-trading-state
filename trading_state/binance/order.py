@@ -31,6 +31,7 @@ def to_order_request(ticket: OrderTicket) -> dict:
                 kwargs['quoteOrderQty'] = ticket.quantity
         case _:
             # TODO:
+            # support other order ticket types
             raise ValueError(f'Unsupported order ticket: {ticket}')
 
     return kwargs

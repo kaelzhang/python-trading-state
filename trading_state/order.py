@@ -284,11 +284,7 @@ class OrderManager:
                 self._id_orders[order.id] = order
 
             case OrderStatus.FILLED:
-                target = order.target
-
-                if target is not None:
-                    target.achieved = True
-
+                order.target.achieved = True
                 self._purge_order(order)
                 order.off()
 
