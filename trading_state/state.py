@@ -300,10 +300,15 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_balances(
         self,
-        new: Iterable[Balance]
+        new: Iterable[Balance],
+        delta: bool = False
     ) -> None:
         """
         Update user balances, including normal assets and quote assets
+
+        Args:
+            new (Iterable[Balance]): the new balances to set
+            delta (bool = False): whether to update the balances as a delta, i.e. the new balances are relative to the current balances
 
         Usage::
 
@@ -313,7 +318,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         """
 
         for balance in new:
-            self._set_balance(balance)
+            self._set_balance(balance, delta)
 
     def get_price(
         self,
@@ -591,13 +596,21 @@ class TradingState(EventEmitter[TradingStateEvent]):
         valuation_symbol = self._get_valuation_symbol_name(asset)
         return self.get_price(valuation_symbol)
 
-    def _set_balance(self, balance: Balance) -> None:
+    def _set_balance(
+        self,
+        balance: Balance,
+        delta: bool = False
+    ) -> None:
         """
         Set the balance of an asset
         """
 
         asset = balance.asset
         old_balance = self._balances.get(asset)
+
+        if delta and old_balance is not None:
+            balance.free += old_balance.free
+            balance.locked += old_balance.locked
 
         self._balances[balance.asset] = balance
 
