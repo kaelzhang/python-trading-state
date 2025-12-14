@@ -1,12 +1,14 @@
 from decimal import Decimal
 from typing import (
     Callable, Optional,
-    List, Iterator,
+    List,
     Any,
     Set,
     Dict,
     Tuple,
+    Iterator
 )
+from itertools import islice
 from datetime import datetime
 from enum import Enum
 
@@ -183,24 +185,6 @@ class OrderHistory:
     def __len__(self) -> int:
         return len(self._history)
 
-    def iterator(self, descending: bool) -> Iterator[Order]:
-        """
-        Returns an iterator over the history orders.
-
-        Args:
-            descending (bool): Whether to iterate the history in descending order, ie. the most recent orders first
-
-        Usage::
-
-            for order in history.iterator(descending=True):
-                print(order)
-        """
-        return (
-            reversed(self._orders)
-            if descending
-            else iter(self._orders)
-        )
-
     def _check_size(self) -> None:
         if len(self._history) > self._max_size:
             self._history.pop(0)
@@ -217,26 +201,34 @@ class OrderHistory:
         descending: bool,
         limit: Optional[int],
         **criteria
-    ) -> List[Order]:
+    ) -> Iterator[Order]:
         """
         See state.query_orders()
         """
 
-        matched = []
-        count = 0
+        iterator = (
+            reversed(self._history)
+            if descending
+            else iter(self._history)
+        )
 
-        for order in self._history.iterator(descending):
+        if len(criteria) == 0:
+            if limit is None:
+                return iterator
+
+            return islice(iterator, limit)
+
+        if limit is None:
+            limit = len(self._history)
+
+        return islice((
+            order
+            for order in iterator
             if all(
                 _compare_order(order, key, expected)
                 for key, expected in criteria.items()
-            ):
-                matched.append(order)
-                count += 1
-
-                if limit is not None and count >= limit:
-                    break
-
-        return matched
+            )
+        ), limit)
 
 
 class OrderManager:

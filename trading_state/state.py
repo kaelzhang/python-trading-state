@@ -7,7 +7,7 @@ from typing import (
     Callable,
     Union,
     Any,
-    List
+    Iterator
 )
 from dataclasses import dataclass, field
 
@@ -399,7 +399,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         descending: bool = True,
         limit: Optional[int] = None,
         **criteria
-    ) -> List[Order]:
+    ) -> Iterator[Order]:
         """
         Query the history orders by the given criteria
 
@@ -407,6 +407,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
             descending (bool): Whether to query the history in descending order, ie. the most recent orders first
             limit (Optional[int]): Maximum number of orders to return. `None` means no limit.
             **criteria: Criteria to match the orders
+
+        Returns:
+            Iterator[Order]: the matched orders
 
         Usage::
 
