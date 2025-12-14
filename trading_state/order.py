@@ -96,8 +96,8 @@ class Order(EventEmitter[OrderUpdatedType]):
         Args:
             status (OrderStatus = None): The new status of the order
             created_at (datetime = None): The creation time of the order
-            filled_quantity (Decimal = None): The new filled quantity of the order
-            quote_quantity (Decimal = None): The new quote quantity of the order
+            filled_quantity (Decimal = None): The new filled base assert quantity of the order
+            quote_quantity (Decimal = None): The cumulative quote asset transacted quantity of the order
             order_id (str = None): The client order id
 
         Usage::

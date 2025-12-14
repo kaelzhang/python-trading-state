@@ -511,6 +511,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
             data=data
         )
 
+        self.emit(TradingStateEvent.POSITION_TARGET_UPDATED)
+
         return None, True
 
     def get_orders(self) -> Tuple[

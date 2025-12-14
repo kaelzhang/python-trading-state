@@ -169,12 +169,18 @@ def test_order_filled():
     orders, _ = state.get_orders()
 
     order = next(iter(orders))
+
+    order_str = repr(order)
+
+    assert 'side=BUY' in order_str
+    assert 'status=SUBMITTING' in order_str
+    assert 'quantity=1.00000000' in order_str
+
     order.update(
         status = OrderStatus.CREATED,
         order_id = 'order-1',
         filled_quantity = Decimal('0.5')
     )
-
 
     # Imitate the balance is increased
     state.set_balances([
