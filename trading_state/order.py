@@ -156,7 +156,13 @@ class Order(EventEmitter[OrderUpdatedType]):
         return self._id
 
 
-def _compare_order(
+ORDER_COMPARISON_KEYS = [
+    'ticket',
+    'target'
+]
+
+
+def _compare(
     order: Order,
     key: Any,
     expected: Any
@@ -168,6 +174,12 @@ def _compare_order(
 
     if isinstance(expected, Callable):
         return expected(value)
+
+    elif key in ORDER_COMPARISON_KEYS and isinstance(expected, dict):
+        return all(
+            _compare(value, k, v)
+            for k, v in expected.items()
+        )
 
     return value == expected
 
@@ -225,7 +237,7 @@ class OrderHistory:
             order
             for order in iterator
             if all(
-                _compare_order(order, key, expected)
+                _compare(order, key, expected)
                 for key, expected in criteria.items()
             )
         ), limit)

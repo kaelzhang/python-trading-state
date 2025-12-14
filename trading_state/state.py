@@ -396,7 +396,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def query_orders(
         self,
-        descending: bool = True,
+        descending: bool = False,
         limit: Optional[int] = None,
         **criteria
     ) -> Iterator[Order]:
@@ -404,7 +404,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Query the history orders by the given criteria
 
         Args:
-            descending (bool): Whether to query the history in descending order, ie. the most recent orders first
+            descending (bool = False): Whether to query the history in descending order, ie. the most recent orders first
             limit (Optional[int]): Maximum number of orders to return. `None` means no limit.
             **criteria: Criteria to match the orders
 
@@ -415,10 +415,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
             results = state.query_orders(
                 status=OrderStatus.FILLED,
+                # Callable matcher
                 created_at=lambda x: x.timestamp() > 1717171717,
             )
 
-            print(results)
+            results = state.query_orders(
+                descending=True,
+                limit=10,
+                # Dict matcher (for 'ticket' and 'target' only)
+                ticket={
+                    'side': OrderSide.BUY
+                }
+            )
         """
 
         return self._orders.history.query(
