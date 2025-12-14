@@ -77,6 +77,7 @@ class Order(EventEmitter[OrderUpdatedType]):
         self,
         status: OrderStatus = None,
         created_at: datetime = None,
+        updated_at: datetime = None,
         filled_quantity: Decimal = None,
         quote_quantity: Decimal = None,
         order_id: str = None
@@ -129,6 +130,10 @@ class Order(EventEmitter[OrderUpdatedType]):
 
             # Not setting created_at is not fatal
             self.created_at = created_at
+            self.updated_at = created_at
+        else:
+            if updated_at is not None:
+                self.updated_at = updated_at
 
         self._status = status
         self.emit(OrderUpdatedType.STATUS_UPDATED, self, status)
