@@ -113,8 +113,8 @@ class TradingConfig:
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
     def __post_init__(self) -> None:
-        if self.account_currency not in self.alter_account_currencies:
-            self.alter_account_currencies.append(self.account_currency)
+        if self.account_currency in self.alter_account_currencies:
+            self.alter_account_currencies.remove(self.account_currency)
 
 
 class TradingState(EventEmitter[TradingStateEvent]):
@@ -157,6 +157,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     # asset -> notional limit
     _notional_limits: Dict[str, Decimal]
+
+    # No allocations for account currencies by default
+    _alter_currency_weights: Optional[List[float]] = None
+
+    # asset -> frozen quantity
     _frozen: Dict[str, Decimal]
 
     # asset -> position expectation
@@ -185,10 +190,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._symbol_prices = {}
 
         self._notional_limits = {}
-        self._alter_currency_weights = [
-            1.0 if currency == config.account_currency else 0.0
-            for currency in config.alter_account_currencies
-        ]
         self._frozen = {}
 
         self._balances = {}
@@ -297,6 +298,22 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self,
         allocations: List[float]
     ) -> None:
+        """
+        Set the weights of the alternative account currencies to the account currency.
+
+        This system will use a simple approach to attempt to achieve a dynamic equilibrium.
+
+        Args:
+            allocations (List[float]): the weights of the alternative account currencies to the account currency according to the order of `config.alter_account_currencies`.
+
+        Usage::
+
+            state.set_alter_currency_weights([
+                0.5,
+                0.5
+            ])
+        """
+
         ...
 
     def freeze(
@@ -338,6 +355,20 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         for balance in new:
             self._set_balance(balance, delta)
+
+    def get_balance(self, asset: str) -> Balance:
+        """
+        Get the balance of an asset
+        """
+
+        return self._balances.get(asset)
+
+    def get_balances(self) -> Dict[str, Balance]:
+        """
+        Get all balances
+        """
+
+        return self._balances.copy()
 
     def get_price(
         self,
