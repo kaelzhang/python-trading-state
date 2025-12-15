@@ -7,7 +7,8 @@ from typing import (
     Callable,
     Union,
     Any,
-    Iterator
+    Iterator,
+    List
 )
 from dataclasses import dataclass, field
 
@@ -90,22 +91,30 @@ def DEFAULT_GET_SYMBOL_NAME(base_asset: str, quote_asset: str) -> str:
     return f"{base_asset}{quote_asset}"
 
 
-@dataclass
+@dataclass(frozen=True)
 class TradingConfig:
     """
     Args:
-        account_currency (str): the account currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
+        account_currency (str): the default account currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
         - calculate value of limit exposures
         - calculate value of notional limits
+
+        alter_account_currencies (Set[str]): the alternative account currencies to the account currency.
 
         max_order_history_size (int): the maximum size of the order history
 
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
     account_currency: str
+    alter_account_currencies: List[str] = field(default_factory=list)
+
     context: Dict[str, Any] = field(default_factory=dict)
     max_order_history_size: int = 10000
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
+
+    def __post_init__(self) -> None:
+        if self.account_currency not in self.alter_account_currencies:
+            self.alter_account_currencies.append(self.account_currency)
 
 
 class TradingState(EventEmitter[TradingStateEvent]):
@@ -176,6 +185,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._symbol_prices = {}
 
         self._notional_limits = {}
+        self._alter_currency_weights = [
+            1.0 if currency == config.account_currency else 0.0
+            for currency in config.alter_account_currencies
+        ]
         self._frozen = {}
 
         self._balances = {}
@@ -279,6 +292,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         # Just set the notional limit
         self._notional_limits[asset] = limit
+
+    def set_alter_currency_weights(
+        self,
+        allocations: List[float]
+    ) -> None:
+        ...
 
     def freeze(
         self,
