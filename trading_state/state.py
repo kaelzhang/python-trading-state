@@ -1,3 +1,5 @@
+import base64
+from shlex import quote
 from typing import (
     Iterable,
     Dict,
@@ -99,22 +101,27 @@ class TradingConfig:
         - calculate value of limit exposures
         - calculate value of notional limits
 
-        alter_account_currencies (Set[str]): the alternative account currencies to the account currency.
+        alt_account_currencies (Set[str]): the alternative account currencies to the account currency.
 
         max_order_history_size (int): the maximum size of the order history
 
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
     account_currency: str
-    alter_account_currencies: List[str] = field(default_factory=list)
+    alt_account_currencies: List[str] = field(default_factory=list)
+    # alt_currency_weight_tolerance: float = 0.1
 
     context: Dict[str, Any] = field(default_factory=dict)
     max_order_history_size: int = 10000
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
+    @property
+    def account_currencies(self) -> List[str]:
+        return [self.account_currency, *self.alt_account_currencies]
+
     def __post_init__(self) -> None:
-        if self.account_currency in self.alter_account_currencies:
-            self.alter_account_currencies.remove(self.account_currency)
+        if self.account_currency in self.alt_account_currencies:
+            self.alt_account_currencies.remove(self.account_currency)
 
 
 class TradingState(EventEmitter[TradingStateEvent]):
@@ -159,7 +166,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     _notional_limits: Dict[str, Decimal]
 
     # No allocations for account currencies by default
-    _alter_currency_weights: Optional[List[float]] = None
+    _alt_currency_weights: Optional[List[float]] = None
 
     # asset -> frozen quantity
     _frozen: Dict[str, Decimal]
@@ -294,7 +301,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # Just set the notional limit
         self._notional_limits[asset] = limit
 
-    def set_alter_currency_weights(
+    def set_alt_currency_weights(
         self,
         allocations: Optional[List[float]]
     ) -> None:
@@ -304,11 +311,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
         This system will use a simple approach to attempt to achieve a dynamic equilibrium.
 
         Args:
-            allocations (List[float]): the weights of the alternative account currencies to the account currency according to the order of `config.alter_account_currencies`.
+            allocations (List[float]): the weights of the alternative account currencies to the account currency according to the order of `config.alt_account_currencies`.
 
         Usage::
 
-            state.set_alter_currency_weights([
+            state.set_alt_currency_weights([
                 0.5,
                 0.5
             ])
@@ -316,12 +323,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         if (
             allocations is not None
-            and len(allocations) != len(self._config.alter_account_currencies)
+            and len(allocations) != len(self._config.alt_account_currencies)
         ):
             raise ValueError(
                 'The number of allocations must be equal to the number of alter account currencies')
 
-        self._alter_currency_weights = allocations
+        self._alt_currency_weights = allocations
 
     def freeze(
         self,
@@ -685,7 +692,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     def _is_account_asset(self, asset: str) -> bool:
         return (
             asset == self._config.account_currency
-            or asset in self._config.alter_account_currencies
+            or asset in self._config.alt_account_currencies
         )
 
     def _set_balance(
@@ -777,6 +784,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
         for target in self._expected.values():
             self._create_order_from_position_target(target)
 
+    # TODO:
+    # - fix BTCBNB
     def _create_order_from_position_target(
         self,
         target: PositionTarget
@@ -816,18 +825,41 @@ class TradingState(EventEmitter[TradingStateEvent]):
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / valuation_price
 
-        # Check quote quantity
-        price = self.get_price(symbol.name)
-        free_quote_balance = self.get_balance(symbol.quote_asset).free
+        self._balance_alt_currencies_and_create_orders(
+            asset,
+            self.get_price(symbol.name) * quantity,
+            target,
+            side
+        )
 
-        # Check if the quote quantity is enough
-        quantity = min(quantity, free_quote_balance / price)
+    def _balance_alt_currencies_and_create_orders(
+        self,
+        # The base asset to trade
+        asset: str,
+        # The quantity of the quote asset to trade
+        quantity: Decimal,
+        target: PositionTarget,
+        side: OrderSide
+    ) -> Dict[Symbol, Decimal]:
+        base_quote_balance = self.get_balance(self._config.account_currency)
+        alt_quote_balances = [
+            self.get_balance(asset)
+            for asset in self._config.alt_account_currencies
+        ]
 
-        if quantity <= FLOAT_ZERO:
-            # Insufficient quote quantity,
-            # no need to create an order
-            return
+        quote_assets = self._config.account_currencies
+        quote_weights = [1, *self._alt_currency_weights]
 
+
+        return {}
+
+    def _create_order(
+        self,
+        symbol: Symbol,
+        quantity: Decimal,
+        target: PositionTarget,
+        side: OrderSide
+    ) -> ValueOrException[Order]:
         ticket = (
             MarketOrderTicket(
                 symbol=symbol,
@@ -852,8 +884,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
         )
 
         if exception is not None:
-            # TODO: logging
-            return
+            self.emit(TradingStateEvent.ORDER_CREATE_FAILED, exception)
+            return exception, None
 
         order = Order(
             ticket=ticket,
@@ -871,6 +903,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         )
 
         self._orders.add(order)
+        return None, order
 
     def _on_order_status_updated(
         self,

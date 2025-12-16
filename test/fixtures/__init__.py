@@ -50,7 +50,7 @@ def create_state() -> TradingState:
     return TradingState(
         config=TradingConfig(
             account_currency=USDT,
-            alter_account_currencies=[USDC],
+            alt_account_currencies=[USDC],
             context={
                 'get_avg_price': mock_get_avg_price
             }

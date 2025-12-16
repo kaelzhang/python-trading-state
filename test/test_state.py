@@ -261,3 +261,7 @@ def test_order_filled():
     )
     assert exception is None
     assert not updated
+
+
+def test_alt_currencies():
+    ...

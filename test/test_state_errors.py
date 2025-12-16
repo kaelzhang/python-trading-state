@@ -35,12 +35,12 @@ def test_trading_state_errors(test_symbols: Symbols):
     state = TradingState(
         config=TradingConfig(
             account_currency=USDT,
-            alter_account_currencies=[USDC]
+            alt_account_currencies=[USDC]
         )
     )
 
     with pytest.raises(ValueError, match='must be equal to'):
-        state.set_alter_currency_weights([0.5, 0.2])
+        state.set_alt_currency_weights([0.5, 0.2])
 
     # with pytest.raises(SymbolNotDefinedError):
     exception, _ = state.expect(
