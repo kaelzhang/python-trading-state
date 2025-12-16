@@ -20,7 +20,8 @@ from .fixtures import (
     BTCUSDC,
     BTCUSDT,
     BTC,
-    USDT
+    USDT,
+    USDC
 )
 
 
@@ -32,7 +33,8 @@ def test_symbols() -> Symbols:
 def test_trading_state_errors(test_symbols: Symbols):
     state = TradingState(
         config=TradingConfig(
-            account_currency=USDT
+            account_currency=USDT,
+            alter_account_currencies=[USDC]
         )
     )
 
@@ -96,6 +98,19 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     state.set_balances([
         Balance(BTC, Decimal('1'), Decimal('0'))
+    ])
+
+    exception, _ = state.expect(
+        BTCUSDC,
+        exposure=1,
+        price=None,
+        use_market_order=False
+    )
+
+    assert isinstance(exception, BalanceNotReadyError)
+
+    state.set_balances([
+        Balance(USDC, Decimal('100000'), Decimal('0'))
     ])
 
     exception, _ = state.expect(

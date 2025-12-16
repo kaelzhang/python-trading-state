@@ -619,7 +619,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
             return SymbolPriceNotReadyError(symbol_name)
 
         exception = self._check_asset_ready(symbol.base_asset)
+        if exception is not None:
+            return exception
 
+        exception = self._check_asset_ready(symbol.quote_asset)
         if exception is not None:
             return exception
 
@@ -636,13 +639,14 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if asset not in self._assets:
             return AssetNotDefinedError(asset)
 
-        if asset not in self._notional_limits:
-            return NotionalLimitNotSetError(asset)
+        if not self._is_account_asset(asset):
+            if asset not in self._notional_limits:
+                return NotionalLimitNotSetError(asset)
 
-        valuation_symbol_name = self._get_valuation_symbol_name(asset)
+            valuation_symbol_name = self._get_valuation_symbol_name(asset)
 
-        if valuation_symbol_name not in self._symbol_prices:
-            return ValuationPriceNotReadyError(asset)
+            if valuation_symbol_name not in self._symbol_prices:
+                return ValuationPriceNotReadyError(asset)
 
         if asset not in self._balances:
             return BalanceNotReadyError(asset)
@@ -667,16 +671,19 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Should only be called after `asset_ready`
         """
 
-        if (
-            asset == self._config.account_currency
-            or asset in self._config.alter_account_currencies
-        ):
+        if self._is_account_asset(asset):
             # The asset is an account currency,
             # or an alternative account currency
             return Decimal(1.0)
 
         valuation_symbol = self._get_valuation_symbol_name(asset)
         return self.get_price(valuation_symbol)
+
+    def _is_account_asset(self, asset: str) -> bool:
+        return (
+            asset == self._config.account_currency
+            or asset in self._config.alter_account_currencies
+        )
 
     def _set_balance(
         self,
@@ -805,6 +812,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
         value_delta = Decimal(str(target.exposure)) * limit - value
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / valuation_price
+
+        # Check quote quantity
+        price = self.get_price(symbol.name)
+        free_quote_balance = self.get_balance(symbol.quote_asset).free
+
+        # Check if the quote quantity is enough
+        quantity = min(quantity, free_quote_balance / price)
+
+        if quantity <= FLOAT_ZERO:
+            # Insufficient quote quantity,
+            # no need to create an order
+            return
 
         ticket = (
             MarketOrderTicket(
