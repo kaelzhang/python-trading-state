@@ -21,6 +21,9 @@ from .fixtures import (
 def test_trading_state():
     state = init_state()
 
+    active_value = state.get_account_value()
+    assert active_value == Decimal('410000')
+
     assert state.support_symbol(BTCUSDC)
     assert state.exposure(BTC) == (None, 0.1)
 

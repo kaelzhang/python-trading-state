@@ -296,7 +296,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_alter_currency_weights(
         self,
-        allocations: List[float]
+        allocations: Optional[List[float]]
     ) -> None:
         """
         Set the weights of the alternative account currencies to the account currency.
@@ -314,8 +314,14 @@ class TradingState(EventEmitter[TradingStateEvent]):
             ])
         """
 
-        # TODO: implement this
-        ...
+        if (
+            allocations is not None
+            and len(allocations) != len(self._config.alter_account_currencies)
+        ):
+            raise ValueError(
+                'The number of allocations must be equal to the number of alter account currencies')
+
+        self._alter_currency_weights = allocations
 
     def freeze(
         self,
@@ -397,9 +403,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
         """
 
         return symbol_name in self._symbols
-
-    # def summarize(self):
-    #     ...
 
     def exposure(
         self,

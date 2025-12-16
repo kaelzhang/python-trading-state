@@ -1,5 +1,6 @@
 from pytest import fixture
 from decimal import Decimal
+import pytest
 
 from trading_state import (
     TradingState,
@@ -37,6 +38,9 @@ def test_trading_state_errors(test_symbols: Symbols):
             alter_account_currencies=[USDC]
         )
     )
+
+    with pytest.raises(ValueError, match='must be equal to'):
+        state.set_alter_currency_weights([0.5, 0.2])
 
     # with pytest.raises(SymbolNotDefinedError):
     exception, _ = state.expect(
