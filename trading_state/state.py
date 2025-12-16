@@ -94,7 +94,7 @@ Implementation Principles:
 
 
 def DEFAULT_GET_SYMBOL_NAME(base_asset: str, quote_asset: str) -> str:
-    return f"{base_asset}{quote_asset}"
+    return base_asset + quote_asset
 
 
 @dataclass(frozen=True)
@@ -124,7 +124,9 @@ class TradingConfig:
 
     def __post_init__(self) -> None:
         if self.account_currency in self.alt_account_currencies:
-            self.alt_account_currencies.remove(self.account_currency)
+            raise ValueError(
+                f'The default account currency "{self.account_currency}" must not be in the `alt_account_currencies`'
+            )
 
 
 class TradingState(EventEmitter[TradingStateEvent]):

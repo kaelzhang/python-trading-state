@@ -1,3 +1,10 @@
+"""
+Exceptions for the trading state, which are
+- not caused by input value errors of users
+- usually caused by improper dealing of the intialization process
+"""
+
+
 class ExpectWithoutPriceError(Exception):
     def __init__(self, asset: str) -> None:
         message = f'refused to set expectation to asset "{asset}" without a symbol price if not use_market_order'
