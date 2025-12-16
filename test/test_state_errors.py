@@ -40,7 +40,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     )
 
     with pytest.raises(ValueError, match='must be equal to'):
-        state.set_alt_currency_weights([0.5, 0.2])
+        state.set_alt_currency_weights([Decimal('0.5'), Decimal('0.2')])
 
     # with pytest.raises(SymbolNotDefinedError):
     exception, _ = state.expect(
