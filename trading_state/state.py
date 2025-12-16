@@ -1,5 +1,3 @@
-import base64
-from shlex import quote
 from typing import (
     Iterable,
     Dict,
@@ -47,8 +45,14 @@ from .target import (
     PositionTarget,
     PositionTargetMetaData
 )
+from .algo import (
+    AllocationResource,
+    buy_allocate,
+    sell_allocate
+)
 from .common import (
     DECIMAL_ZERO,
+    DECIMAL_ONE,
     DictSet,
     EventEmitter
 )
@@ -109,7 +113,6 @@ class TradingConfig:
     """
     account_currency: str
     alt_account_currencies: List[str] = field(default_factory=list)
-    # alt_currency_weight_tolerance: float = 0.1
 
     context: Dict[str, Any] = field(default_factory=dict)
     max_order_history_size: int = 10000
@@ -166,7 +169,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     _notional_limits: Dict[str, Decimal]
 
     # No allocations for account currencies by default
-    _alt_currency_weights: Optional[List[float]] = None
+    _alt_currency_weights: Optional[List[Decimal]] = None
 
     # asset -> frozen quantity
     _frozen: Dict[str, Decimal]
@@ -303,7 +306,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_alt_currency_weights(
         self,
-        allocations: Optional[List[float]]
+        allocations: Optional[List[Decimal]]
     ) -> None:
         """
         Set the weights of the alternative account currencies to the account currency.
@@ -311,7 +314,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         This system will use a simple approach to attempt to achieve a dynamic equilibrium.
 
         Args:
-            allocations (List[float]): the weights of the alternative account currencies to the account currency according to the order of `config.alt_account_currencies`.
+            allocations (List[Decimal]): the weights of the alternative account currencies to the account currency according to the order of `config.alt_account_currencies`, each of which should not less than 0.
 
         Usage::
 
@@ -321,12 +324,15 @@ class TradingState(EventEmitter[TradingStateEvent]):
             ])
         """
 
-        if (
-            allocations is not None
-            and len(allocations) != len(self._config.alt_account_currencies)
-        ):
-            raise ValueError(
-                'The number of allocations must be equal to the number of alter account currencies')
+        if allocations is not None:
+            for allocation in allocations:
+                if allocation < DECIMAL_ZERO:
+                    raise ValueError(
+                        'The allocation must not less than 0')
+
+            if len(allocations) != len(self._config.alt_account_currencies):
+                raise ValueError(
+                    'The number of allocations must be equal to the number of alternative account currencies')
 
         self._alt_currency_weights = allocations
 
@@ -414,7 +420,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     def exposure(
         self,
         asset: str
-    ) -> ValueOrException[float]:
+    ) -> ValueOrException[Decimal]:
         """
         Get the current expected limit exposure or the calculated limit exposure of an asset
 
@@ -423,7 +429,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         Returns:
             - Tuple[Exception, None]: the exception if the asset is not ready
-            - Tuple[None, float]: the limit exposure of the asset
+            - Tuple[None, Decimal]: the limit exposure of the asset
         """
 
         exception = self._check_asset_ready(asset)
@@ -512,7 +518,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     def expect(
         self,
         symbol_name: str,
-        exposure: float,
+        exposure: Decimal,
         price: Decimal | None,
         use_market_order: bool,
         data: PositionTargetMetaData = {}
@@ -522,7 +528,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         Args:
             symbol_name (str): the name of the symbol to trade with
-            exposure (float): the limit exposure to expect, should be between `0.0` and `1.0`. The exposure refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
+            exposure (Decimal): the limit exposure to expect, should be between `0.0` and `1.0`. The exposure refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
             use_market_order (bool = False): whether to execute the expectation use_market_orderly, that it will generate a market order
             price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the current price.
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
@@ -757,21 +763,21 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         return max(free - self._frozen.get(asset, DECIMAL_ZERO), DECIMAL_ZERO)
 
-    def _get_asset_exposure(self, asset: str) -> float:
+    def _get_asset_exposure(self, asset: str) -> Decimal:
         """
         Get the calculated limit exposure of an asset
 
         Should only be called after `asset_ready`
 
         Returns:
-            float: the calculated limit exposure of the asset
+            Decimal: the calculated limit exposure of the asset
         """
 
         balance = self._get_asset_balance(asset)
         price = self._get_asset_valuation_price(asset)
         limit = self._notional_limits.get(asset)
 
-        return float(balance * price / limit)
+        return balance * price / limit
 
     def _get_symbol(self, symbol_name: str) -> Optional[Symbol]:
         return self._symbols.get(symbol_name)
@@ -825,53 +831,128 @@ class TradingState(EventEmitter[TradingStateEvent]):
         side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / valuation_price
 
-        self._balance_alt_currencies_and_create_orders(
+        if (
+            # No allocation weights
+            self._alt_currency_weights is None
+            # No alternative account currencies
+            or not self._config.alt_account_currencies
+            # Not an account currency, we do not need to do allocation,
+            # Example: BTCBNB
+            or symbol.quote_asset not in self._config.account_currencies
+        ):
+            self._check_balance_and_create_order(
+                symbol, quantity, target, side
+            )
+            return
+
+        self._balance_account_currencies_and_create_orders(
             asset,
             self.get_price(symbol.name) * quantity,
+            [DECIMAL_ONE, *self._alt_currency_weights],
             target,
             side
         )
 
-    def _balance_alt_currencies_and_create_orders(
+    def _balance_account_currencies_and_create_orders(
         self,
         # The base asset to trade
         asset: str,
         # The quantity of the quote asset to trade
         quantity: Decimal,
+        weights: List[Decimal],
         target: PositionTarget,
         side: OrderSide
-    ) -> Dict[Symbol, Decimal]:
-        base_quote_balance = self.get_balance(self._config.account_currency)
-        alt_quote_balances = [
-            self.get_balance(asset)
-            for asset in self._config.alt_account_currencies
-        ]
+    ) -> None:
+        resources = list[AllocationResource](
+            AllocationResource(symbol, balance, weights[i])
+            for i, quote_asset in enumerate(
+                self._config.account_currencies
+            )
+            if (
+                (
+                    symbol := self._get_symbol(
+                        self._config.get_symbol_name(asset, quote_asset)
+                    )
+                ) is not None
+                and (
+                    (
+                        balance := (
+                            self.get_balance(quote_asset)
+                            or Balance(quote_asset, DECIMAL_ZERO, DECIMAL_ZERO)
+                        )
+                    ).total > DECIMAL_ZERO
+                    or side is OrderSide.SELL
+                )
+            )
+        )
 
-        quote_assets = self._config.account_currencies
-        quote_weights = [1, *self._alt_currency_weights]
+        if not resources:
+            # No available account currencies
+            return
 
+        if len(resources) == 1:
+            # Only one account currency available,
+            # we do not need to do allocation
+            self._check_balance_and_create_order(
+                resources[0].symbol, quantity, target, side
+            )
+            return
 
-        return {}
+        if side is OrderSide.BUY:
+            buy_allocate(
+                resources,
+                quantity,
+                target,
+                pour=self._create_order
+            )
+        else:
+            sell_allocate(
+                resources,
+                quantity,
+                target,
+                pour=self._create_order
+            )
 
-    def _create_order(
+    def _check_balance_and_create_order(
         self,
         symbol: Symbol,
         quantity: Decimal,
         target: PositionTarget,
         side: OrderSide
-    ) -> ValueOrException[Order]:
+    ) -> None:
+        if side is OrderSide.BUY and not target.use_market_order:
+            quantity = min(
+                quantity,
+                # We need to check the available balance of the quote asset
+                self.get_balance(symbol.quote_asset).free / target.price
+            )
+
+        self._create_order(symbol, quantity, target, side)
+
+    def _create_order(
+        self,
+        symbol: Symbol,
+        target_quantity: Decimal,
+        target: PositionTarget,
+        side: OrderSide
+    ) -> Decimal:
+        """
+        Returns:
+            Decimal: the remaining quantity related to the target quantity
+        """
+
         ticket = (
             MarketOrderTicket(
                 symbol=symbol,
                 side=side,
-                quantity=quantity,
+                quantity=target_quantity,
                 quantity_type=MarketQuantityType.BASE
             )
             if target.use_market_order
             else LimitOrderTicket(
                 symbol=symbol,
                 side=side,
-                quantity=quantity,
+                quantity=target_quantity,
                 price=target.price,
                 time_in_force=TimeInForce.GTC
             )
@@ -885,7 +966,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         if exception is not None:
             self.emit(TradingStateEvent.ORDER_CREATE_FAILED, exception)
-            return exception, None
+            # The quantity consuming task is not finished
+            return target_quantity
 
         order = Order(
             ticket=ticket,
@@ -903,7 +985,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         )
 
         self._orders.add(order)
-        return None, order
+        return target_quantity - ticket.quantity
 
     def _on_order_status_updated(
         self,

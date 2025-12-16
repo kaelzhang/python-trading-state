@@ -14,6 +14,7 @@ from typing import (
 
 
 DECIMAL_ZERO = Decimal('0')
+DECIMAL_ONE = Decimal('1')
 
 
 def apply_precision(number: Decimal, precision: int) -> Decimal:
