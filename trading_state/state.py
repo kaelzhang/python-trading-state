@@ -965,7 +965,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         )
 
         if exception is not None:
-            self.emit(TradingStateEvent.ORDER_CREATE_FAILED, exception)
+            self.emit(TradingStateEvent.TICKET_CREATE_FAILED, exception)
             # The quantity consuming task is not finished
             return target_quantity
 

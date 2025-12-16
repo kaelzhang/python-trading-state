@@ -134,7 +134,15 @@ class FeatureType(StringEnum):
 
 class TradingStateEvent(Enum):
     POSITION_TARGET_UPDATED = 'POSITION_TARGET_UPDATED'
+
+    # Ticket creation failed, which indicates it fails to create an order #
+    #   ticket according to the position target
+    TICKET_CREATE_FAILED = 'TICKET_CREATE_FAILED'
+
+    # Order creation failed, which is different from TICKET_CREATE_FAILED,
+    # this is when the order is rejected by the exchange
     ORDER_CREATE_FAILED = 'ORDER_CREATE_FAILED'
+
     ORDER_STATUS_UPDATED = 'ORDER_STATUS_UPDATED'
     ORDER_FILLED_QUANTITY_UPDATED = 'ORDER_FILLED_QUANTITY_UPDATED'
     PRICE_UPDATED = 'PRICE_UPDATED'

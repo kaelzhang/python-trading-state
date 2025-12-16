@@ -25,10 +25,9 @@ class AllocationResource:
 
 def buy_allocate(
     resources: List[AllocationResource],
-    # weights: List[Decimal],
     take: Decimal,
     target: PositionTarget,
-    assign: Callable[..., Decimal],
+    assign: Callable[[Symbol, Decimal, PositionTarget, OrderSide], Decimal],
 ) -> None:
     n = len(resources)
 
@@ -64,16 +63,9 @@ def buy_allocate(
         # Pour all water from each bucket
         if remaining >= total_cap:
             for t in range(k, n):
-                pour = caps_sorted[t]
-                if pour <= 0:
-                    # Actually, it should only be 0,
-                    # but not less than 0,
-                    # however, we need to be defensive
-                    continue
-
                 assign(
                     resources[t].symbol,
-                    pour,
+                    caps_sorted[t],
                     target,
                     OrderSide.BUY
                 )
@@ -104,7 +96,7 @@ def buy_allocate(
         # then update remaining and remove them.
         for t in range(k, p):
             pour = caps_sorted[t]
-            # Remaining target update: V := V - req + ret
+            # Remaining target update: V := V - Vj + RVj
             remaining = remaining - pour + assign(
                 resources[t].symbol,
                 pour,
@@ -114,7 +106,7 @@ def buy_allocate(
 
             # Remove this bucket from future rounds
             # (each bucket is poured only once).
-            total_cap -= caps_sorted[t]
+            total_cap -= pour
             total_w -= w_sorted[t]
 
         # Advance the active window boundary.
