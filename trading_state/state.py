@@ -314,6 +314,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             ])
         """
 
+        # TODO: implement this
         ...
 
     def freeze(
@@ -369,6 +370,16 @@ class TradingState(EventEmitter[TradingStateEvent]):
         """
 
         return self._balances.copy()
+
+    def get_account_value(self) -> Decimal:
+        """
+        Get the value of the account in the account currency
+        """
+
+        return sum(
+            balance.total * self._get_asset_valuation_price(balance.asset)
+            for balance in self._balances.values()
+        )
 
     def get_price(
         self,
@@ -655,6 +666,14 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         Should only be called after `asset_ready`
         """
+
+        if (
+            asset == self._config.account_currency
+            or asset in self._config.alter_account_currencies
+        ):
+            # The asset is an account currency,
+            # or an alternative account currency
+            return Decimal(1.0)
 
         valuation_symbol = self._get_valuation_symbol_name(asset)
         return self.get_price(valuation_symbol)

@@ -26,6 +26,10 @@ class Balance:
         self.free = free
         self.locked = locked
 
+    @property
+    def total(self) -> Decimal:
+        return self.free + self.locked
+
     def __repr__(self) -> str:
         return class_repr(self, main='asset')
 
