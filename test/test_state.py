@@ -20,7 +20,6 @@ from .fixtures import (
 
 
 def test_trading_state():
-    return
     state = init_state()
 
     active_value = state.get_account_value()
@@ -242,7 +241,7 @@ def test_order_filled():
     # The balance is updated,
     # but the intrinsic position is not equal to the expectation,
     # we should remove the expectation
-    # assert BTC not in state._expected
+    assert BTC not in state._expected
 
     assert state.exposure(BTC) == (None, Decimal('0.3'))
 

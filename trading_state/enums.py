@@ -61,7 +61,7 @@ class OrderedEnum(Enum):
         Returns `True` if the current status is less than the given status
         """
 
-        return self.value[1] <= status.value[1]
+        return self.value[1] < status.value[1]
 
 
 class OrderStatus(OrderedEnum):
