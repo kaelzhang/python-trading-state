@@ -72,6 +72,8 @@ type ValueOrException[T] = Union[
     Tuple[Exception, None]
 ]
 
+AllocationWeights = Tuple[Decimal, ...]
+
 
 """
 Logical Principles:
@@ -209,6 +211,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         self._orders = OrderManager(config.max_order_history_size)
 
+    @property
+    def config(self) -> TradingConfig:
+        return self._config
+
     # Public methods
     # ------------------------------------------------------------------------
 
@@ -308,7 +314,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_alt_currency_weights(
         self,
-        allocations: Optional[List[Decimal]]
+        weights: Optional[
+            Tuple[AllocationWeights, AllocationWeights]
+        ]
     ) -> None:
         """
         Set the weights of the alternative account currencies to the account currency.
@@ -316,27 +324,21 @@ class TradingState(EventEmitter[TradingStateEvent]):
         This system will use a simple approach to attempt to achieve a dynamic equilibrium.
 
         Args:
-            allocations (List[Decimal]): the weights of the alternative account currencies to the account currency according to the order of `config.alt_account_currencies`, each of which should not less than 0.
+            weights (Tuple[AllocationWeights, AllocationWeights]): the weights of the alternative account currencies to the account currency according to the order of `config.alt_account_currencies` for BUY and SELL respectively, each of which should not less than 0.
 
         Usage::
 
-            state.set_alt_currency_weights([
-                0.5,
-                0.5
-            ])
+            state.set_alt_currency_weights((
+                (Decimal('0.5'), Decimal('0.5')),
+                (Decimal('0.5'), Decimal('0'))
+            ))
         """
 
-        if allocations is not None:
-            for allocation in allocations:
-                if allocation < DECIMAL_ZERO:
-                    raise ValueError(
-                        'The allocation must not less than 0')
+        if weights is not None:
+            self._check_allocation_weights(weights[0])
+            self._check_allocation_weights(weights[1])
 
-            if len(allocations) != len(self._config.alt_account_currencies):
-                raise ValueError(
-                    'The number of allocations must be equal to the number of alternative account currencies')
-
-        self._alt_currency_weights = allocations
+        self._alt_currency_weights = weights
 
     def freeze(
         self,
@@ -615,6 +617,16 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     # End of public methods ---------------------------------------------
 
+    def _check_allocation_weights(self, weights: AllocationWeights) -> None:
+        for weight in weights:
+            if weight < DECIMAL_ZERO:
+                raise ValueError(
+                    'The allocation weight must not less than 0')
+
+        if len(weights) != len(self._config.alt_account_currencies):
+            raise ValueError(
+                'The number of allocation weights must be equal to the number of alternative account currencies')
+
     def _check_symbol_ready(self, symbol_name: str) -> SuccessOrException:
         """
         Check whether the given symbol name is ready to trade
@@ -847,10 +859,14 @@ class TradingState(EventEmitter[TradingStateEvent]):
             )
             return
 
+        weights = self._alt_currency_weights[
+            0 if side is OrderSide.BUY else 1
+        ]
+
         self._balance_account_currencies_and_create_orders(
             asset,
             self.get_price(symbol.name) * quantity,
-            [DECIMAL_ONE, *self._alt_currency_weights],
+            (DECIMAL_ONE, *weights),
             target,
             side
         )
@@ -861,7 +877,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         asset: str,
         # The quantity of the quote asset to trade
         quantity: Decimal,
-        weights: List[Decimal],
+        weights: AllocationWeights,
         target: PositionTarget,
         side: OrderSide
     ) -> None:
