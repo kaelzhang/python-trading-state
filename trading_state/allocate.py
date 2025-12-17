@@ -9,6 +9,7 @@ from .balance import Balance
 from .symbol import Symbol
 from .target import PositionTarget
 from .enums import OrderSide
+from .common import DECIMAL_ZERO
 
 
 class AllocationResource:
@@ -25,6 +26,13 @@ class AllocationResource:
 
 Assigner = Callable[[Symbol, Decimal, PositionTarget, OrderSide], Decimal]
 
+
+# Terminology:
+# Sj => caps[j], the volume in each bucket
+# Wj => w[j], the weight of each bucket
+# V => remaining, the remaining target volume to allocate
+# Vj => pour, the volume to pour from each bucket
+# ret => RVj, the volume returned by the `assign` method
 
 def buy_allocate(
     resources: List[AllocationResource],
@@ -63,7 +71,9 @@ def buy_allocate(
     remaining = take  # Remaining target V (updates after each poured bucket)
 
     while k < n and remaining > 0:
-        # Pour all water from each bucket
+        # Pour all water from each bucket.
+        # Even `assign` method might return some water,
+        #   we still do not have extra water to compensate
         if remaining >= total_cap:
             for t in range(k, n):
                 assign(
@@ -73,7 +83,7 @@ def buy_allocate(
                     target,
                     OrderSide.BUY
                 )
-            break
+            break # End
 
         # Threshold T = V / Σ Wj. Buckets with (Sj / Wj) < T are not enough.
         T = remaining / total_w
@@ -84,30 +94,40 @@ def buy_allocate(
         p = bisect_left(ratio_sorted, T, lo=k, hi=n)
 
         if p == k:
+            compensate = DECIMAL_ZERO
             # Each bucket is enough,
             # then pour Vj for each active bucket, then stop.
             for t in range(k, n):
-                assign(
+                # `assign` might return some water to the previous bucket,
+                # so we need to compensate it with the current bucket
+                pour = min(
+                    compensate + (remaining * w_sorted[t]) / total_w,
+                    caps_sorted[t]
+                )
+
+                compensate = assign(
                     resources[t].symbol,
-                    (remaining * w_sorted[t]) / total_w,
+                    pour,
                     target,
                     OrderSide.BUY
                 )
 
-            break
+            break # End
 
         # Fully pour all not-enough buckets in [k, p),
         # then update remaining and remove them.
         for t in range(k, p):
             # For BUY, must be positive
             pour = caps_sorted[t]
-            # Remaining target update: V := V - Vj + RVj
-            remaining = remaining - pour + assign(
+            ret = assign(
                 resources[t].symbol,
                 pour,
                 target,
                 OrderSide.BUY
             )
+
+            # Remaining target update: V := V - (Vj - RVj)
+            remaining -= pour - ret
 
             # Remove this bucket from future rounds
             # (each bucket is poured only once).

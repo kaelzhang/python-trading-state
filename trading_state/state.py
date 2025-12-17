@@ -330,8 +330,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
             state.set_alt_currency_weights((
                 (Decimal('0.5'), Decimal('0.5')),
-                (Decimal('0.5'), Decimal('0'))
+                (Decimal('1'), Decimal('0'))
             ))
+            # We want to consume the 2nd alt account currency
         """
 
         if weights is not None:
@@ -902,14 +903,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
                     ).total > DECIMAL_ZERO
                     # For SELL, allow the balance of a quote asset to be 0
                     or side is OrderSide.SELL
-                ) and (
-                    # For BUY: weight must be positive,
-                    # or the quote asset will be skipped
-                    (weight := weights[i]) > DECIMAL_ZERO
 
-                    # For SELL: zero weight => more to sell
-                    or side is OrderSide.SELL
-                )
+                # For both BUY and SELL, the weight must be positive
+                ) and (weight := weights[i]) > DECIMAL_ZERO
             )
         )
 
