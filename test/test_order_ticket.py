@@ -53,7 +53,8 @@ RIGHT_CASES = [
         'symbol': symbol,
         'side': OrderSide.BUY,
         'quantity': Decimal('1'),
-        'quantity_type': MarketQuantityType.QUOTE
+        'quantity_type': MarketQuantityType.QUOTE,
+        'estimated_price': Decimal('10000'),
     }, []),
     ('stop-loss', StopLossOrderTicket, *stop_loss_case),
     ('stop-loss-limit', StopLossLimitOrderTicket, *stop_loss_limit_case),

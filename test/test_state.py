@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from trading_state import (
     OrderSide,
-    # MarketQuantityType,
+    MarketQuantityType,
     TimeInForce,
     OrderStatus,
     OrderType,
@@ -101,7 +101,9 @@ def test_trading_state():
     assert ticket.type == OrderType.MARKET
     assert ticket.symbol.name == BTCUSDC
     assert ticket.side == OrderSide.BUY
-    assert ticket.quantity == Decimal('2')
+    assert ticket.quantity == Decimal('20000')
+    assert ticket.estimated_price == Decimal('10000')
+    assert ticket.quantity_type == MarketQuantityType.QUOTE
     assert not ticket.has('price')
     assert not ticket.has('time_in_force')
 

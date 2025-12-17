@@ -980,7 +980,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
                 quantity=quote_quantity,
                 # Use quote quantity 'quoteOrderQty' for market order
                 #   to avoid -2010 error as much as possible
-                quantity_type=MarketQuantityType.QUOTE
+                quantity_type=MarketQuantityType.QUOTE,
+                estimated_price=price
             )
             if target.use_market_order
             else LimitOrderTicket(

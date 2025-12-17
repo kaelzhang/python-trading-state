@@ -140,9 +140,13 @@ class LimitOrderTicket(BaseOrderTicket):
 class MarketOrderTicket(BaseOrderTicket):
     type = OrderType.MARKET
 
-    ADDITIONAL_MANDOTORY_PARAMS = ['quantity_type']
+    ADDITIONAL_MANDOTORY_PARAMS = ['quantity_type', 'estimated_price']
 
     quantity_type: MarketQuantityType
+
+    # We introduced a special parameter for market order
+    # to estimate the quantity for MARKET_LOT_SIZE filter
+    estimated_price: Decimal
 
 
 def validate_stop_price_and_trailing_delta(self) -> None:

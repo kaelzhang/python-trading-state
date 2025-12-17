@@ -226,7 +226,7 @@ class QuantityFilter(BaseFilter):
         **kwargs
     ) -> FilterResult:
         exception, new_quantity = apply_range(
-            target=ticket.quantity,
+            target=self._get_quantity(ticket),
             min_value=self.min_quantity,
             max_value=self.max_quantity,
             tick_size=self.step_size,
@@ -240,6 +240,9 @@ class QuantityFilter(BaseFilter):
 
         return None, new_quantity != ticket.quantity
 
+    def _get_quantity(self, ticket: OrderTicket) -> Decimal:
+        return ticket.quantity
+
 
 class MarketQuantityFilter(QuantityFilter):
     def when(
@@ -247,6 +250,13 @@ class MarketQuantityFilter(QuantityFilter):
         ticket: OrderTicket
     ) -> bool:
         return ticket.type == OrderType.MARKET
+
+    def _get_quantity(self, ticket: OrderTicket) -> Decimal:
+        return (
+            ticket.quantity / ticket.estimated_price
+            if ticket.quantity_type == MarketQuantityType.QUOTE
+            else ticket.quantity
+        )
 
 
 PARAM_ICEBERG_QUANTITY = 'iceberg_quantity'
