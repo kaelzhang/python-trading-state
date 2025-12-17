@@ -6,12 +6,11 @@ from trading_state import (
     TradingState,
     TradingConfig,
     Balance,
-    SymbolPriceNotReadyError,
     AssetNotDefinedError,
     NotionalLimitNotSetError,
     BalanceNotReadyError,
-    ExpectWithoutPriceError,
     ValuationPriceNotReadyError,
+    SymbolPriceNotReadyError,
     SymbolNotDefinedError
 )
 
@@ -45,11 +44,13 @@ def test_trading_state_errors(test_symbols: Symbols):
             (Decimal('0.5'), Decimal('0'))
         ))
 
+    price = Decimal('10000')
+
     # with pytest.raises(SymbolNotDefinedError):
     exception, _ = state.expect(
         BTCUSDC,
         exposure=1,
-        price=None,
+        price=price,
         use_market_order=True
     )
 
@@ -64,7 +65,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     exception, _ = state.expect(
         BTCUSDC,
         exposure=1,
-        price=None,
+        price=price,
         use_market_order=True
     )
 
@@ -75,7 +76,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     exception, _ = state.expect(
         BTCUSDC,
         exposure=1,
-        price=None,
+        price=price,
         use_market_order=True
     )
 
@@ -86,7 +87,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     exception, _ = state.expect(
         BTCUSDC,
         exposure=1,
-        price=None,
+        price=price,
         use_market_order=True
     )
 
@@ -97,7 +98,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     exception, _ = state.expect(
         BTCUSDC,
         exposure=1,
-        price=None,
+        price=price,
         use_market_order=True
     )
 
@@ -110,7 +111,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     exception, _ = state.expect(
         BTCUSDC,
         exposure=1,
-        price=None,
+        price=price,
         use_market_order=False
     )
 
@@ -119,12 +120,3 @@ def test_trading_state_errors(test_symbols: Symbols):
     state.set_balances([
         Balance(USDC, Decimal('100000'), Decimal('0'))
     ])
-
-    exception, _ = state.expect(
-        BTCUSDC,
-        exposure=1,
-        price=None,
-        use_market_order=False
-    )
-
-    assert isinstance(exception, ExpectWithoutPriceError)

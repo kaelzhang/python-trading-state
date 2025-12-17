@@ -20,8 +20,7 @@ from .exceptions import (
     AssetNotDefinedError,
     SymbolNotDefinedError,
     ValuationPriceNotReadyError,
-    SymbolPriceNotReadyError,
-    ExpectWithoutPriceError
+    SymbolPriceNotReadyError
 )
 from .enums import (
     OrderStatus,
@@ -525,7 +524,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self,
         symbol_name: str,
         exposure: Decimal,
-        price: Decimal | None,
+        price: Decimal,
         use_market_order: bool,
         data: PositionTargetMetaData = {}
     ) -> ValueOrException[bool]:
@@ -536,7 +535,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             symbol_name (str): the name of the symbol to trade with
             exposure (Decimal): the limit exposure to expect, should be between `0.0` and `1.0`. The exposure refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
             use_market_order (bool = False): whether to execute the expectation use_market_orderly, that it will generate a market order
-            price (Decimal | None = None): the price to expect. If not provided, the price will be determined by the current price.
+            price (Decimal): the price to expect. For market order, it should be the estimated average price for the expected position target.
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
 
         Returns:
@@ -557,12 +556,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         symbol = self._get_symbol(symbol_name)
         asset = symbol.base_asset
-
-        if use_market_order:
-            price = None
-        else:
-            if price is None:
-                return ExpectWithoutPriceError(asset), None
 
         # Normalize the exposure to be between 0 and 1
         exposure = max(FLOAT_ZERO, min(exposure, FLOAT_ONE))
@@ -879,7 +872,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         self._balance_account_currencies_and_create_orders(
             asset,
-            self.get_price(symbol.name) * quantity,
+            quantity,
             (*weights, DECIMAL_ONE),
             target,
             side
@@ -889,7 +882,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self,
         # The base asset to trade
         asset: str,
-        # The quantity of the quote asset to trade
+        # The quantity of the base asset to trade
         quantity: Decimal,
         weights: AllocationWeights,
         target: PositionTarget,
@@ -956,7 +949,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         target: PositionTarget,
         side: OrderSide
     ) -> None:
-        if side is OrderSide.BUY and not target.use_market_order:
+        if side is OrderSide.BUY:
             quantity = min(
                 quantity,
                 # We need to check the available balance of the quote asset
@@ -974,22 +967,27 @@ class TradingState(EventEmitter[TradingStateEvent]):
     ) -> Decimal:
         """
         Returns:
-            Decimal: the remaining quantity relative to the target quantity
+            Decimal: the remaining quote quantity relative to the target quantity
         """
+
+        price = target.price
+        quote_quantity = target_quantity * price
 
         ticket = (
             MarketOrderTicket(
                 symbol=symbol,
                 side=side,
-                quantity=target_quantity,
-                quantity_type=MarketQuantityType.BASE
+                quantity=quote_quantity,
+                # Use quote quantity 'quoteOrderQty' for market order
+                #   to avoid -2010 error as much as possible
+                quantity_type=MarketQuantityType.QUOTE
             )
             if target.use_market_order
             else LimitOrderTicket(
                 symbol=symbol,
                 side=side,
                 quantity=target_quantity,
-                price=target.price,
+                price=price,
                 time_in_force=TimeInForce.GTC
             )
         )
@@ -1025,7 +1023,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # Track the order for the position target
         self._target_orders[target].add(order)
 
-        return target_quantity - ticket.quantity
+        return (
+            quote_quantity - ticket.quantity
+            if target.use_market_order
+            else quote_quantity - ticket.quantity * price
+        )
 
     def _on_order_status_updated(
         self,

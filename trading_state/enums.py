@@ -97,6 +97,9 @@ class OrderStatus(OrderedEnum):
     # which means the order is no longer active
     FILLED = ('FILLED', 6)
 
+    # The order is rejected by the exchange
+    REJECTED = ('REJECTED', 7)
+
 
 class PositionTargetStatus(OrderedEnum):
     INIT = ('INIT', 0)

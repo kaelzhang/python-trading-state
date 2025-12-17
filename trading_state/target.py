@@ -21,7 +21,7 @@ class PositionTarget:
         symbol (Symbol): the symbol to trade with to achieve the position
         exposure (float): should between 0 and 1
         use_market_order (bool): whether to trade use_market_order (market order)
-        price (Decimal | None): the price to trade at
+        price (Decimal): the price to trade at. For market order, it should be the estimated average price for
         data (dict[str, Any]): the meta data of the position
 
     For example::
@@ -54,7 +54,7 @@ class PositionTarget:
     symbol: Symbol
     exposure: Decimal
     use_market_order: bool
-    price: Decimal | None
+    price: Decimal
     data: PositionTargetMetaData
     status: PositionTargetStatus
 
@@ -63,7 +63,7 @@ class PositionTarget:
         symbol: Symbol,
         exposure: Decimal,
         use_market_order: bool,
-        price: Decimal | None,
+        price: Decimal,
         data: PositionTargetMetaData
     ) -> None:
         self.symbol = symbol

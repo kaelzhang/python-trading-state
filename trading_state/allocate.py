@@ -27,12 +27,17 @@ class AllocationResource:
 Assigner = Callable[[Symbol, Decimal, PositionTarget, OrderSide], Decimal]
 
 
-# Terminology:
-# Sj => caps(_sorted)[j], the volume in each bucket
-# Wj => w(_sorted)[j], the weight of each bucket
-# V => remaining, the remaining target volume to allocate
-# Vj => pour, the volume to pour from each bucket
-# ret => RVj, the volume returned by the `assign` method
+"""
+Terminology:
+
+  Math | Variable         | Description
+ ----- | ---------------- | -------------------------------
+   Sj  | caps(_sorted)[j] | the volume in each bucket
+   Wj  | w(_sorted)[j]    | the weight of each bucket
+   V   | remaining        | the remaining target volume to allocate
+   Vj  | pour             | the volume to pour from each bucket
+   RVj | ret              | the volume returned by the `assign` method
+"""
 
 def buy_allocate(
     resources: List[AllocationResource],
@@ -68,7 +73,12 @@ def buy_allocate(
     total_cap = sum(caps_sorted)  # Σ Sj over active buckets
     total_w = sum(w_sorted)       # Σ Wj over active buckets
 
-    remaining = take  # Remaining target V (updates after each poured bucket)
+    price = target.price
+
+    # Remaining target V (updates after each poured bucket)
+
+    # `take` is for base quantity, so we need to convert it to quote quantity
+    remaining = take * price
 
     while k < n and remaining > 0:
         # Pour all water from each bucket.
@@ -79,7 +89,7 @@ def buy_allocate(
                 assign(
                     resources[t].symbol,
                     # For BUY, must be positive
-                    caps_sorted[t],
+                    caps_sorted[t] / price,
                     target,
                     OrderSide.BUY
                 )
@@ -107,7 +117,7 @@ def buy_allocate(
 
                 compensate = assign(
                     resources[t].symbol,
-                    pour,
+                    pour / price,
                     target,
                     OrderSide.BUY
                 )
@@ -123,7 +133,7 @@ def buy_allocate(
             # Remaining target update: V := V - (Vj - RVj)
             remaining -= pour - assign(
                 resources[t].symbol,
-                pour,
+                pour / price,
                 target,
                 OrderSide.BUY
             )

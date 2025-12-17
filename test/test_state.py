@@ -66,7 +66,6 @@ def test_trading_state():
     exception, updated = state.expect(
         BTCUSDC,
         exposure=Decimal('0.3'),
-        # Although the price is provided, it will be ignored
         price=Decimal('10000'),
         use_market_order=True
     )
@@ -81,7 +80,7 @@ def test_trading_state():
     exception, updated = state.expect(
         BTCUSDT,
         exposure=Decimal('0.3'),
-        price=Decimal('20000'),
+        price=Decimal('10000'),
         use_market_order=True
     )
     assert exception is None

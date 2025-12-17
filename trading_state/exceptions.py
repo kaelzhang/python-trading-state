@@ -6,14 +6,6 @@ Exceptions for the trading state, which are
 """
 
 
-class ExpectWithoutPriceError(Exception):
-    def __init__(self, asset: str) -> None:
-        message = f'refused to set expectation to asset "{asset}" without a symbol price if not use_market_order'
-        super().__init__(message)
-
-        self.asset = asset
-
-
 class SymbolNotDefinedError(Exception):
     def __init__(self, symbol_name: str) -> None:
         message = f'symbol "{symbol_name}" is not defined yet'

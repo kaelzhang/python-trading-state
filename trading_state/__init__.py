@@ -21,7 +21,6 @@ from .enums import (
 )
 
 from .exceptions import (
-    ExpectWithoutPriceError,
     AssetNotDefinedError,
     SymbolNotDefinedError,
     SymbolPriceNotReadyError,
