@@ -1,6 +1,7 @@
 """
 Exceptions for the trading state, which are
 - not caused by input value errors of users
+  - that should be raised directly
 - usually caused by improper dealing of the intialization process
 """
 

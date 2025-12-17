@@ -45,7 +45,7 @@ from .target import (
     PositionTarget,
     PositionTargetMetaData
 )
-from .algo import (
+from .allocate import (
     AllocationResource,
     buy_allocate,
     sell_allocate
@@ -112,7 +112,7 @@ class TradingConfig:
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
     """
     account_currency: str
-    alt_account_currencies: List[str] = field(default_factory=list)
+    alt_account_currencies: Tuple[str, ...] = field(default_factory=tuple)
 
     context: Dict[str, Any] = field(default_factory=dict)
     max_order_history_size: int = 10000
@@ -866,7 +866,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         side: OrderSide
     ) -> None:
         resources = list[AllocationResource](
-            AllocationResource(symbol, balance, weights[i])
+            AllocationResource(symbol, balance, weight)
             for i, quote_asset in enumerate(
                 self._config.account_currencies
             )
@@ -877,12 +877,21 @@ class TradingState(EventEmitter[TradingStateEvent]):
                     )
                 ) is not None
                 and (
+                    # For BUY: balance must be positive
                     (
                         balance := (
                             self.get_balance(quote_asset)
                             or Balance(quote_asset, DECIMAL_ZERO, DECIMAL_ZERO)
                         )
                     ).total > DECIMAL_ZERO
+                    # For SELL, allow the balance of a quote asset to be 0
+                    or side is OrderSide.SELL
+                ) and (
+                    # For BUY: weight must be positive,
+                    # or the quote asset will be skipped
+                    (weight := weights[i]) > DECIMAL_ZERO
+
+                    # For SELL: zero weight => more to sell
                     or side is OrderSide.SELL
                 )
             )

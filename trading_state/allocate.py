@@ -23,11 +23,14 @@ class AllocationResource:
         self.weight = weight
 
 
+Assigner = Callable[[Symbol, Decimal, PositionTarget, OrderSide], Decimal]
+
+
 def buy_allocate(
     resources: List[AllocationResource],
     take: Decimal,
     target: PositionTarget,
-    assign: Callable[[Symbol, Decimal, PositionTarget, OrderSide], Decimal],
+    assign: Assigner,
 ) -> None:
     n = len(resources)
 
@@ -42,9 +45,9 @@ def buy_allocate(
         key=lambda i: (resources[i].balance.free / resources[i].weight)
     )
 
-    caps_sorted: List[Decimal] = [resources[i].balance.free for i in order]
-    w_sorted: List[Decimal] = [resources[i].weight for i in order]
-    ratio_sorted: List[Decimal] = [
+    caps_sorted = [resources[i].balance.free for i in order]
+    w_sorted = [resources[i].weight for i in order]
+    ratio_sorted = [
         caps_sorted[i] / w_sorted[i]
         for i in range(n)
     ]
@@ -65,6 +68,7 @@ def buy_allocate(
             for t in range(k, n):
                 assign(
                     resources[t].symbol,
+                    # For BUY, must be positive
                     caps_sorted[t],
                     target,
                     OrderSide.BUY
@@ -95,6 +99,7 @@ def buy_allocate(
         # Fully pour all not-enough buckets in [k, p),
         # then update remaining and remove them.
         for t in range(k, p):
+            # For BUY, must be positive
             pour = caps_sorted[t]
             # Remaining target update: V := V - Vj + RVj
             remaining = remaining - pour + assign(
@@ -114,9 +119,9 @@ def buy_allocate(
 
 
 def sell_allocate(
-    resource_volume: List[Decimal],
-    weights: List[Decimal],
+    resources: List[AllocationResource],
     take: Decimal,
-    pour: Callable[[Decimal], Decimal],
+    target: PositionTarget,
+    assign: Assigner,
 ) -> None:
     pass
