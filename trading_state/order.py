@@ -65,6 +65,7 @@ class Order(EventEmitter[OrderUpdatedType]):
             'ticket',
             'status',
             'target',
+            'filled_quantity',
         ])
 
     def __init__(
@@ -284,7 +285,6 @@ class OrderManager:
                 self._id_orders[order.id] = order
 
             case OrderStatus.FILLED:
-                order.target.achieved = True
                 self._purge_order(order)
                 order.off()
 

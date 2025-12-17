@@ -52,13 +52,22 @@ class OrderSide(StringEnum):
     SELL = 'SELL'
 
 
-class OrderStatus(Enum):
+class OrderedEnum(Enum):
+    def __str__(self):
+        return self.value[0]
+
+    def lt(self, status: 'OrderedEnum') -> bool:
+        """
+        Returns `True` if the current status is less than the given status
+        """
+
+        return self.value[1] <= status.value[1]
+
+
+class OrderStatus(OrderedEnum):
     """
     The status of an order
     """
-
-    def __str__(self):
-        return self.value[0]
 
     # The ticket is initialized but has not been submitted to the exchange,
     # or the ticket is failed to create order so back to the initial state
@@ -88,12 +97,11 @@ class OrderStatus(Enum):
     # which means the order is no longer active
     FILLED = ('FILLED', 6)
 
-    def lt(self, status: 'OrderStatus') -> bool:
-        """
-        Returns `True` if the current status is less than the given status
-        """
 
-        return self.value[1] <= status.value[1]
+class PositionTargetStatus(OrderedEnum):
+    INIT = ('INIT', 0)
+    ALLOCATED = ('ALLOCATED', 1)
+    ACHIEVED = ('ACHIEVED', 2)
 
 
 class TimeInForce(StringEnum):

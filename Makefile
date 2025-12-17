@@ -1,6 +1,6 @@
 files = trading_state test *.py
-test_files = *
-# test_files = state
+# test_files = *
+test_files = state
 
 # For local development
 test:

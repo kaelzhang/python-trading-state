@@ -16,7 +16,8 @@ from .enums import (
     STPMode,
     FeatureType,
     MarketQuantityType,
-    TradingStateEvent
+    TradingStateEvent,
+    PositionTargetStatus
 )
 
 from .exceptions import (

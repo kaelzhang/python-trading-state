@@ -100,9 +100,6 @@ class DictSet(Generic[K, V]):
     def __getitem__(self, key: K) -> MutableSet[V]:
         return self._data.setdefault(key, set[V]())
 
-    # def __contains__(self, key: K) -> bool:
-    #     return key in self._data
-
     def clear(self) -> None:
         self._data.clear()
 

@@ -2,16 +2,11 @@ from typing import (
     Dict,
     Any
 )
-
 from decimal import Decimal
 
 from .symbol import Symbol
-
-from .common import (
-    class_repr,
-    # float_to_str,
-    # datetime_now_str
-)
+from .common import class_repr
+from .enums import PositionTargetStatus
 
 
 PositionTargetMetaData = Dict[str, Any]
@@ -53,20 +48,20 @@ class PositionTarget:
         'use_market_order',
         'price',
         'data',
-        'achieved'
+        'status'
     )
 
     symbol: Symbol
-    exposure: float
+    exposure: Decimal
     use_market_order: bool
     price: Decimal | None
     data: PositionTargetMetaData
-    achieved: bool
+    status: PositionTargetStatus
 
     def __init__(
         self,
         symbol: Symbol,
-        exposure: float,
+        exposure: Decimal,
         use_market_order: bool,
         price: Decimal | None,
         data: PositionTargetMetaData
@@ -76,7 +71,7 @@ class PositionTarget:
         self.use_market_order = use_market_order
         self.price = price
         self.data = data
-        self.achieved = False
+        self.status = PositionTargetStatus.INIT
 
     def __repr__(self) -> str:
         return class_repr(
@@ -85,23 +80,7 @@ class PositionTarget:
             keys=[
                 'exposure',
                 'use_market_order',
-                'price'
+                'price',
+                'status'
             ]
-        )
-
-    def __eq__(
-        self,
-        target: Any
-    ) -> bool:
-        """To detect whether the given `PositionTarget` has the same goal of the current one
-        """
-
-        if not isinstance(target, PositionTarget):
-            return False
-
-        return (
-            self.symbol == target.symbol
-            and self.exposure == target.exposure
-            and self.use_market_order == target.use_market_order
-            and self.price == target.price
         )

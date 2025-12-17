@@ -28,7 +28,8 @@ from .enums import (
     OrderSide,
     TimeInForce,
     MarketQuantityType,
-    TradingStateEvent
+    TradingStateEvent,
+    PositionTargetStatus
 )
 from .symbol import Symbol
 from .balance import Balance
@@ -61,11 +62,6 @@ from .common import (
 FLOAT_ONE = 1.0
 FLOAT_ZERO = 0.0
 
-CreateOrderReturn = Tuple[
-    Set[Order], # orders to create
-    Set[Order]  # orders to cancel
-]
-
 SuccessOrException = Optional[Exception]
 type ValueOrException[T] = Union[
     Tuple[None, T],
@@ -90,7 +86,8 @@ Logical Principles:
 
 Implementation Principles:
 - be sync
-- no checking for unexpected param types, but should check unexpected values
+- no checking for unexpected param types (according to typings)
+  - but should check unexpected values
 - no default parameters for all methods to avoid unexpected behavior
 """
 
@@ -182,6 +179,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     # asset -> position expectation
     _expected: Dict[str, PositionTarget]
+    # position target -> order
+    _target_orders: DictSet[PositionTarget, Order]
 
     _orders: OrderManager
 
@@ -210,6 +209,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         self._balances = {}
         self._expected = {}
+        self._target_orders = DictSet[PositionTarget, Order]()
 
         self._orders = OrderManager(config.max_order_history_size)
 
@@ -467,16 +467,15 @@ class TradingState(EventEmitter[TradingStateEvent]):
             return
 
         if current_target is order.target:
-            # Clean the related expectation,
-            # so that current target will be recalculated
+            target_orders = self._target_orders[current_target]
+            target_orders.discard(order)
 
-            # If we do not remove the expection,
-            # the trading state will try to create a new order
-            # for the target, which might cause unexpected behavior
-
-            # It is allowed to cancel an order multiple times,
-            # use pop to avoid unexpected raise
-            self._expected.pop(asset, None)
+            if not target_orders:
+                # No more orders for the target,
+                # remove the target
+                self._expected.pop(asset, None)
+            else:
+                self._update_target_exposure(current_target)
 
     def query_orders(
         self,
@@ -741,44 +740,43 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if old_balance is None:
             return
 
-        if target is None or not target.achieved:
+        if target is None or target.status.lt(PositionTargetStatus.ACHIEVED):
             # There is no expectation or
             # the expectation is still being achieved,
             # we do not need to recalculate the target
             return
 
-        if old_balance.free == balance.free:
+        if old_balance.total == balance.total:
             return
 
         calculated_exposure = self._get_asset_exposure(asset)
         if calculated_exposure == target.exposure:
+            # The exposure is the same, no need to update
             return
 
         # We need to remove the expectation,
         # so that self.exposure() will return the recalculated exposure
-        del self._expected[asset]
+        self._expected.pop(asset, None)
 
-    def _get_asset_balance(self, asset: str) -> Decimal:
+    def _get_asset_total_balance(self, asset: str) -> Decimal:
         """
         Get the total balance of an asset, which includes
         - free balance
-        - balance locked by open (SELL) orders
-
-        Exclude:
-        - balance locked by the Earn wallet or others
+        - locked balance, including the balance locked by open (SELL) orders
+        - expected balance to increase (by open BUY orders)
 
         Should be called after `asset_ready`
         """
 
-        balance = self._balances.get(asset)
-        free = balance.free
-
+        total = self._balances.get(asset).total
         orders = self._orders.get_orders_by_base_asset(asset)
-        for order in orders:
-            if order.ticket.side is OrderSide.SELL:
-                free += order.ticket.quantity - order.filled_quantity
 
-        return max(free - self._frozen.get(asset, DECIMAL_ZERO), DECIMAL_ZERO)
+        for order in orders:
+            # For BUY orders, the balance will increase
+            if order.ticket.side is OrderSide.BUY:
+                total += order.ticket.quantity - order.filled_quantity
+
+        return max(total - self._frozen.get(asset, DECIMAL_ZERO), DECIMAL_ZERO)
 
     def _get_asset_exposure(self, asset: str) -> Decimal:
         """
@@ -790,7 +788,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             Decimal: the calculated limit exposure of the asset
         """
 
-        balance = self._get_asset_balance(asset)
+        balance = self._get_asset_total_balance(asset)
         price = self._get_asset_valuation_price(asset)
         limit = self._notional_limits.get(asset)
 
@@ -804,11 +802,29 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Diff the position expectations
         """
 
-        for target in self._expected.values():
+        for asset, target in list(self._expected.items()):
             self._create_order_from_position_target(target)
 
-    # TODO:
-    # - fix BTCBNB
+            if target.status is PositionTargetStatus.INIT:
+                # If there are orders created
+                if self._target_orders[target]:
+                    target.status = PositionTargetStatus.ALLOCATED
+
+                    # Update the exposure to the actual exposure
+                    self._update_target_exposure(target)
+                else:
+                    # We'd better remove the expectation to avoid
+                    # unexpected behavior later on, such as
+                    # - we can't meet the expectation, but after a long time,
+                    #   the balance suddenly updated, and trigger an unexpected
+                    #   new order creation
+                    self._expected.pop(asset, None)
+
+    def _update_target_exposure(self, target: PositionTarget) -> None:
+        target.exposure = self._get_asset_exposure(
+            target.symbol.base_asset
+        )
+
     def _create_order_from_position_target(
         self,
         target: PositionTarget
@@ -820,7 +836,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         because of `self.expect(...)`
         """
 
-        if target.achieved:
+        if target.status is not PositionTargetStatus.INIT:
             return
 
         symbol = target.symbol
@@ -829,17 +845,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         # We only keep one order for a single symbol
         if existing_order is not None:
-            if existing_order.target == target:
-                # already a valid order for the position,
-                # do not need to create a new order
-                return
-
             self.cancel_order(existing_order)
 
-        # Calculate the valuation value of the asset
+        # Calculate the eventual valuation value of the asset
         # --------------------------------------------------------
         asset = symbol.base_asset
-        balance = self._get_asset_balance(asset)
+        balance = self._get_asset_total_balance(asset)
         valuation_price = self._get_asset_valuation_price(asset)
         value = balance * valuation_price
 
@@ -963,7 +974,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     ) -> Decimal:
         """
         Returns:
-            Decimal: the remaining quantity related to the target quantity
+            Decimal: the remaining quantity relative to the target quantity
         """
 
         ticket = (
@@ -1010,6 +1021,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
         )
 
         self._orders.add(order)
+
+        # Track the order for the position target
+        self._target_orders[target].add(order)
+
         return target_quantity - ticket.quantity
 
     def _on_order_status_updated(
@@ -1019,6 +1034,17 @@ class TradingState(EventEmitter[TradingStateEvent]):
     ) -> None:
         if status is OrderStatus.CANCELLED:
             self.cancel_order(order)
+
+        if status is OrderStatus.FILLED:
+            target = order.target
+            target_orders = self._target_orders[target]
+
+            # All orders are filled
+            if all(
+                order.status is OrderStatus.FILLED
+                for order in target_orders
+            ):
+                target.status = PositionTargetStatus.ACHIEVED
 
         # So that the caller of trading state
         # can also listen to the changes of order status
