@@ -121,8 +121,10 @@ class TradingConfig:
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
     @property
-    def account_currencies(self) -> List[str]:
-        return [self.account_currency, *self.alt_account_currencies]
+    def account_currencies(self) -> Tuple[str, ...]:
+        # Put the account currency at the end, so that
+        # Most usually we will deal it at last
+        return (*self.alt_account_currencies, self.account_currency)
 
     def __post_init__(self) -> None:
         if self.account_currency in self.alt_account_currencies:
@@ -867,7 +869,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._balance_account_currencies_and_create_orders(
             asset,
             self.get_price(symbol.name) * quantity,
-            (DECIMAL_ONE, *weights),
+            (*weights, DECIMAL_ONE),
             target,
             side
         )

@@ -28,8 +28,8 @@ Assigner = Callable[[Symbol, Decimal, PositionTarget, OrderSide], Decimal]
 
 
 # Terminology:
-# Sj => caps[j], the volume in each bucket
-# Wj => w[j], the weight of each bucket
+# Sj => caps(_sorted)[j], the volume in each bucket
+# Wj => w(_sorted)[j], the weight of each bucket
 # V => remaining, the remaining target volume to allocate
 # Vj => pour, the volume to pour from each bucket
 # ret => RVj, the volume returned by the `assign` method
@@ -44,7 +44,7 @@ def buy_allocate(
 
     # In each allocation round, we compute target for active buckets:
     #     Vj = V * Wj / sum_W
-    # A bucket would "overflow" its capacity if:
+    # A bucket would not afford its target volume if:
     #     Vj > Sj  <=>  V / sum_W > Sj / Wj
     # Therefore,
     # sorting Sj/Wj allows a fast split using a threshold T = V/sum_W.
@@ -119,15 +119,14 @@ def buy_allocate(
         for t in range(k, p):
             # For BUY, must be positive
             pour = caps_sorted[t]
-            ret = assign(
+
+            # Remaining target update: V := V - (Vj - RVj)
+            remaining -= pour - assign(
                 resources[t].symbol,
                 pour,
                 target,
                 OrderSide.BUY
             )
-
-            # Remaining target update: V := V - (Vj - RVj)
-            remaining -= pour - ret
 
             # Remove this bucket from future rounds
             # (each bucket is poured only once).
@@ -144,4 +143,16 @@ def sell_allocate(
     target: PositionTarget,
     assign: Assigner,
 ) -> None:
-    pass
+    total_w = sum(resource.weight for resource in resources)
+    compensate = DECIMAL_ZERO
+
+    # Sort resources by weight, so that in the worst case,
+    # we will allocate more to the heaviest-weighted resource (the last one)
+    for resource in sorted(resources, key=lambda resource: resource.weight):
+        compensate = assign(
+            resource.symbol,
+            # We do not need to check caps for SELL
+            compensate + (take * resource.weight) / total_w,
+            target,
+            OrderSide.SELL
+        )
