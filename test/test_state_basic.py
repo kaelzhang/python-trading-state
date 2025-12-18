@@ -3,7 +3,8 @@ from decimal import Decimal
 
 from trading_state import (
     TradingConfig,
-    Balance
+    Balance,
+    Symbol
 )
 
 from trading_state.common import (
@@ -47,3 +48,18 @@ def test_trading_state_basic():
     ], delta=True)
 
     assert state.get_balance(USDT).free == Decimal('300000')
+
+
+def test_underlying_assets():
+    state = init_state()
+
+    AAPL = 'AAPL'
+
+    state.set_symbol(Symbol(AAPL, AAPL, ''))
+    state.set_price(AAPL, Decimal('100'))
+    state.set_notional_limit(AAPL, Decimal('10000'))
+    state.set_balances([
+        Balance(AAPL, Decimal('10'), DECIMAL_ZERO)
+    ])
+
+    assert state.exposure(AAPL) == (None, Decimal('0.1'))

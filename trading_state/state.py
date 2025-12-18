@@ -733,13 +733,17 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if old_balance is None:
             return
 
+        if old_balance.total == balance.total:
+            return
+
         if target is None or target.status.lt(PositionTargetStatus.ACHIEVED):
             # There is no expectation or
             # the expectation is still being achieved,
             # we do not need to recalculate the target
-            return
 
-        if old_balance.total == balance.total:
+            # And we actually do not know, whether the balance change is
+            # caused by the position target or not,
+            # so we just keep it.
             return
 
         calculated_exposure = self._get_asset_exposure(asset)
@@ -849,8 +853,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         limit = self._notional_limits.get(asset)
         value_delta = Decimal(str(target.exposure)) * limit - value
-        side = OrderSide.BUY if value_delta > DECIMAL_ZERO else OrderSide.SELL
         quantity = value_delta / valuation_price
+
+        if quantity.is_zero():
+            # Usually, it won't be zero,
+            # but the balance might changed after `.expect()`
+            return
+
+        side = OrderSide.BUY
+
+        if quantity < DECIMAL_ZERO:
+            side = OrderSide.SELL
+            quantity = - quantity
 
         if (
             # No allocation weights
@@ -932,14 +946,14 @@ class TradingState(EventEmitter[TradingStateEvent]):
                 resources,
                 quantity,
                 target,
-                pour=self._create_order
+                self._create_order
             )
         else:
             sell_allocate(
                 resources,
                 quantity,
                 target,
-                pour=self._create_order
+                self._create_order
             )
 
     def _check_balance_and_create_order(

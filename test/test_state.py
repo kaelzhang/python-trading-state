@@ -7,7 +7,11 @@ from trading_state import (
     OrderStatus,
     OrderType,
     Balance,
-    PositionTargetStatus
+    PositionTargetStatus,
+    TradingStateEvent
+)
+from trading_state.common import (
+    DECIMAL_ZERO
 )
 
 from .fixtures import (
@@ -15,7 +19,7 @@ from .fixtures import (
     BTCUSDC,
     BTCUSDT,
     BTC,
-    # USDT
+    USDT
 )
 
 
@@ -183,7 +187,7 @@ def test_order_filled():
 
     order.update(
         status = OrderStatus.CREATED,
-        order_id = 'order-1',
+        id = 'order-1',
         filled_quantity = Decimal('0.5')
     )
 
@@ -265,5 +269,248 @@ def test_order_filled():
     assert not updated
 
 
+def test_no_same_exposure():
+    state = init_state()
+    state.expect(
+        symbol_name=BTCUSDT,
+        exposure=Decimal('0.2'),
+        price=Decimal('10000'),
+        use_market_order=False
+    )
+
+    state.set_balances([
+        Balance(BTC, Decimal('1'), DECIMAL_ZERO)
+    ], delta=True)
+
+    assert BTC in state._expected
+
+    orders, _ = state.get_orders()
+    assert not orders
+
+    assert BTC not in state._expected
+
+
 def test_alt_currencies():
-    ...
+    state = init_state()
+
+    # This will consume USDC and convert to USDT
+    state.set_alt_currency_weights(
+        (
+            (Decimal('1'),),
+            (Decimal('0'),)
+        )
+    )
+
+    # It will create 2 orders, allocated into BTCUSDT and BTCUSDC
+    state.expect(
+        symbol_name=BTCUSDT,
+        exposure=Decimal('0.3'),
+        price=Decimal('10000'),
+        use_market_order=False
+    )
+
+    orders, orders_to_cancel = state.get_orders()
+
+    assert not orders_to_cancel
+    order1, order2 = orders
+
+    order1.update(
+        status=OrderStatus.CREATED,
+        id='order-1'
+    )
+    order2.update(
+        status=OrderStatus.CREATED,
+        id='order-2'
+    )
+
+    for order in state.query_orders():
+        assert order.ticket.quantity == Decimal('1')
+
+    assert state.get_order_by_id('order-1') is order1
+
+    result = list(state.query_orders(
+        id='order-1'
+    ))
+    assert result[0] is order1
+
+    result = list(state.query_orders(
+        ticket={
+            'quantity': Decimal('1')
+        }
+    ))
+    assert len(result) == 2
+
+    assert state.exposure(BTC) == (None, Decimal('0.3'))
+
+    order2.update(
+        status = OrderStatus.CANCELLED
+    )
+    assert state.exposure(BTC) == (None, Decimal('0.2'))
+
+    order1.update(
+        status=OrderStatus.CANCELLED
+    )
+    assert state.exposure(BTC) == (None, Decimal('0.1'))
+
+    # Although the symbol name is BTCUSDC, it will still allocate
+    # into BTCUSDT and BTCUSDC
+    state.expect(
+        symbol_name=BTCUSDC,
+        exposure=Decimal('0.3'),
+        price=Decimal('10000'),
+        use_market_order=False
+    )
+
+    state.set_balances([
+        Balance(BTC, Decimal('1'), DECIMAL_ZERO)
+    ], delta=True)
+
+    assert state.exposure(BTC) == (None, Decimal('0.3'))
+
+    orders, _ = state.get_orders()
+    assert len(orders) == 2
+
+    count = 0
+
+    def handler(*args):
+        nonlocal count
+        count += 1
+
+    state.on(TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED, handler)
+
+    for order in orders:
+        order.update(
+            filled_quantity=order.ticket.quantity
+        )
+        order.update(
+            status=OrderStatus.FILLED
+        )
+        target = order.target
+
+    assert count == 2
+
+    assert target.status is PositionTargetStatus.ACHIEVED
+
+    state.set_balances([
+        Balance(BTC, Decimal('2'), DECIMAL_ZERO)
+    ], delta=True)
+
+    assert BTC not in state._expected
+
+    assert state.exposure(BTC) == (None, Decimal('0.4'))
+
+
+def test_allocate_sell():
+    state = init_state()
+
+    # This will consume USDC and convert to USDT
+    state.set_alt_currency_weights(
+        (
+            (Decimal('1'),),
+            (Decimal('0'),)
+        )
+    )
+
+    # Although the symbol name is BTCUSDC,
+    # but the weight of USDC is 0, we will only allocate to USDT
+    state.expect(
+        symbol_name=BTCUSDC,
+        exposure=Decimal('0'),
+        price=Decimal('10000'),
+        use_market_order=False
+    )
+
+    orders, _ = state.get_orders()
+    order = orders.pop()
+
+    assert order.ticket.symbol.quote_asset == USDT
+    assert order.ticket.quantity == Decimal('1')
+    assert order.ticket.side == OrderSide.SELL
+
+
+def test_alt_currencies_edge_cases():
+    state = init_state()
+
+    # This will consume USDC and convert to USDT
+    state.set_alt_currency_weights(
+        (
+            (Decimal('1'),),
+            (Decimal('1'),)
+        )
+    )
+
+    # The exposure delta is too small,
+    # it is not possible to allocate into two quote currencies,
+    # due to the limitation of NOTIONAL
+    state.expect(
+        symbol_name=BTCUSDC,
+        exposure=Decimal('0.10005'),
+        price=Decimal('10000'),
+        use_market_order=False
+    )
+
+    orders, _ = state.get_orders()
+    assert len(orders) == 1
+
+    order = orders.pop()
+
+    # Default account currency comes last, so it will allocate to USDT
+    assert order.ticket.symbol.quote_asset == USDT
+    order.update(
+        status=OrderStatus.CANCELLED
+    )
+
+
+    # The exposure delta is too small
+    # to create even a single order due to NOTIONAL
+    state.expect(
+        symbol_name=BTCUSDC,
+        exposure=Decimal('0.10004'),
+        price=Decimal('10000'),
+        use_market_order=False
+    )
+
+    orders, _ = state.get_orders()
+    assert not orders
+
+    # The target will also be removed
+    assert BTC not in state._expected
+
+    # Sell
+    state.expect(
+        symbol_name=BTCUSDC,
+        exposure=Decimal('0'),
+        price=Decimal('10000'),
+        use_market_order=False
+    )
+
+    orders, _ = state.get_orders()
+
+    for order in orders:
+        assert order.ticket.quantity == Decimal('0.5')
+
+
+def test_allocation_not_enough_balance():
+    state = init_state()
+
+    # This setting is to convert USDT into USDC
+    state.set_alt_currency_weights(
+        (
+            (Decimal('0'),),
+            (Decimal('1'),)
+        )
+    )
+
+    state.expect(
+        symbol_name=BTCUSDC,
+        exposure=Decimal('0.2'),
+        price=Decimal('10000'),
+        use_market_order=False
+    )
+
+    state.set_balances([
+        Balance(USDT, DECIMAL_ZERO, DECIMAL_ZERO)
+    ])
+
+    orders, _ = state.get_orders()
+    assert not orders

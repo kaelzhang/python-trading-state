@@ -90,7 +90,7 @@ class Order(EventEmitter[OrderUpdatedType]):
         updated_at: datetime = None,
         filled_quantity: Decimal = None,
         quote_quantity: Decimal = None,
-        order_id: str = None
+        id: str = None
     ) -> None:
         """Update the order
 
@@ -99,7 +99,7 @@ class Order(EventEmitter[OrderUpdatedType]):
             created_at (datetime = None): The creation time of the order
             filled_quantity (Decimal = None): The new filled base assert quantity of the order
             quote_quantity (Decimal = None): The cumulative quote asset transacted quantity of the order
-            order_id (str = None): The client order id
+            id (str = None): The client order id
 
         Usage::
 
@@ -131,12 +131,12 @@ class Order(EventEmitter[OrderUpdatedType]):
             return
 
         if status is OrderStatus.CREATED:
-            if order_id is None:
+            if id is None:
                 raise ValueError(
-                    'order_id is required when status is CREATED'
+                    'order id is required when status is CREATED'
                 )
 
-            self._id = order_id
+            self._id = id
 
             # Not setting created_at is not fatal
             self.created_at = created_at
