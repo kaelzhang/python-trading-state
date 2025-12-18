@@ -25,7 +25,6 @@ FDUSD = 'FDUSD'
 
 
 def test_allocate():
-    return
     symbol_BTCUSDT = Symbol(BTCUSDT, BTC, USDT)
     symbol_BTCUSDC = Symbol(BTCUSDC, BTC, USDC)
     symbol_BTCFDUSD = Symbol(BTC + FDUSD, BTC, FDUSD)
@@ -33,38 +32,64 @@ def test_allocate():
     resources = [
         AllocationResource(
             symbol_BTCUSDT,
-            balance=Balance(USDT, free=Decimal('100'), locked=Decimal('0')),
-            weight=Decimal('0.5'),
+            balance=Balance(USDT, free=Decimal('10000'), locked=Decimal('0')),
+            weight=Decimal('1'),
         ),
         AllocationResource(
             symbol_BTCUSDC,
-            balance=Balance(USDC, free=Decimal('100'), locked=Decimal('0')),
-            weight=Decimal('0.5'),
+            balance=Balance(USDC, free=Decimal('10000'), locked=Decimal('0')),
+            weight=Decimal('1.5'),
         ),
         AllocationResource(
             symbol_BTCFDUSD,
-            balance=Balance(FDUSD, free=Decimal('100'), locked=Decimal('0')),
-            weight=Decimal('0.5'),
+            balance=Balance(FDUSD, free=Decimal('10000'), locked=Decimal('0')),
+            weight=Decimal('2.5'),
         ),
     ]
 
+    resources = sorted(resources, key=lambda r: r.symbol.name)
+
+    target = PositionTarget(
+        symbol=symbol_BTCUSDT,
+        # Arbitrary value, has nothing to do with the allocation
+        exposure=Decimal('0.1'),
+        use_market_order=False,
+        price=Decimal('10000'),
+        data={},
+    )
+
+
+
     results = []
-    side = OrderSide.BUY
 
     def assign(
         symbol: Symbol,
-        volume: Decimal,
+        quantity: Decimal,
         target: PositionTarget,
         side: OrderSide,
     ) -> Decimal:
-        assert side is OrderSide.BUY
+        ret = Decimal('0')
+        if quantity < Decimal('0.5'):
+            ret = Decimal('0.1')
 
-        results.append((symbol, volume, target, side))
-        return volume
+        quantity -= ret
 
+        results.append((symbol, quantity, ret, target, side))
+
+    # Buy 5 BTC, but quote balance is not enough
+    take = Decimal('5')
     buy_allocate(
         resources,
-        take=Decimal('100'),
-        target=PositionTarget(BTC, 100),
+        take=take,
+        target=target,
         assign=assign,
     )
+
+    for i, (s, q, r, t, d) in enumerate(
+        sorted(results, key=lambda r: r[0].name)
+    ):
+        assert s == resources[i].symbol, 'symbol'
+        assert q == Decimal('1'), 'quantity'
+        assert r == Decimal('0'), 'return'
+        assert t == target, 'target'
+        assert d == OrderSide.BUY, 'side'

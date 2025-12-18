@@ -1,6 +1,7 @@
 files = trading_state test *.py
-test_files = *
+# test_files = *
 # test_files = state
+test_files = allocate
 
 # For local development
 test:
