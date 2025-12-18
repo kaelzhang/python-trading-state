@@ -32,10 +32,3 @@ class Balance:
 
     def __repr__(self) -> str:
         return class_repr(self, main='asset')
-
-    # def exists(self) -> bool:
-    #     """
-    #     If the total balance is 0, then the asset does not exist
-    #     """
-
-    #     return not (self.free + self.locked).is_zero()

@@ -44,6 +44,14 @@ def test_trading_state_errors(test_symbols: Symbols):
             (Decimal('0.5'), Decimal('0'))
         ))
 
+    with pytest.raises(ValueError, match='less than 0'):
+        state.set_alt_currency_weights(
+            (
+                (Decimal('-1'),),
+                (Decimal('0'),)
+            )
+        )
+
     price = Decimal('10000')
 
     # with pytest.raises(SymbolNotDefinedError):

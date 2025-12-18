@@ -17,16 +17,8 @@ if TYPE_CHECKING:
 
 class Symbol:
     """
-    SymbolInfo is a class that contains the information of a symbol
+    Symbol is a class that contains the information of a symbol
     """
-
-    __slots__ = (
-        'name',
-        'base_asset',
-        'quote_asset',
-        '_filters',
-        '_allowed_features'
-    )
 
     name: str
     base_asset: str
