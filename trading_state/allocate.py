@@ -105,6 +105,7 @@ def buy_allocate(
 
         if p == k:
             compensate = DECIMAL_ZERO
+
             # Each bucket is enough,
             # then pour Vj for each active bucket, then stop.
             for t in range(k, n):
@@ -120,7 +121,7 @@ def buy_allocate(
                     pour / price,
                     target,
                     OrderSide.BUY
-                )
+                ) * price
 
             break # End
 
@@ -136,7 +137,7 @@ def buy_allocate(
                 pour / price,
                 target,
                 OrderSide.BUY
-            )
+            )  * price
 
             # Remove this bucket from future rounds
             # (each bucket is poured only once).

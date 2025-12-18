@@ -967,7 +967,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     ) -> Decimal:
         """
         Returns:
-            Decimal: the remaining quote quantity relative to the target quantity
+            Decimal: the remaining base quantity relative to the target quantity
         """
 
         price = target.price
@@ -1025,9 +1025,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._target_orders[target].add(order)
 
         return (
-            quote_quantity - ticket.quantity
+            target_quantity - ticket.quantity / price
             if target.use_market_order
-            else quote_quantity - ticket.quantity * price
+            else target_quantity - ticket.quantity
         )
 
     def _on_order_status_updated(
