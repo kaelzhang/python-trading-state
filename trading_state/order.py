@@ -112,24 +112,19 @@ class Order(EventEmitter[OrderUpdatedType]):
         if quote_quantity is not None:
             self.quote_quantity = quote_quantity
 
-        if filled_quantity is not None:
-            old_filled_quantity = self.filled_quantity
+        if (
+            filled_quantity is not None
+            and self.filled_quantity != filled_quantity
+        ):
             self.filled_quantity = filled_quantity
 
-            if status is None and old_filled_quantity != filled_quantity:
+            if status is None:
                 # Only emit the event if the status is not changed
                 self.emit(
                     OrderUpdatedType.FILLED_QUANTITY_UPDATED,
                     self,
                     filled_quantity
                 )
-
-        if status is None:
-            return
-
-        if self._status == status:
-            # Status not changed
-            return
 
         if status is OrderStatus.CREATED:
             if id is None:
@@ -146,8 +141,9 @@ class Order(EventEmitter[OrderUpdatedType]):
             if updated_at is not None:
                 self.updated_at = updated_at
 
-        self._status = status
-        self.emit(OrderUpdatedType.STATUS_UPDATED, self, status)
+        if status is not None and self._status != status:
+            self._status = status
+            self.emit(OrderUpdatedType.STATUS_UPDATED, self, status)
 
     @property
     def status(self) -> OrderStatus:
@@ -175,7 +171,9 @@ def _compare(
     value = getattr(order, key)
 
     if isinstance(expected, Callable):
-        return expected(value)
+        # Supports a `key` argument so that
+        # the matcher function could test multiple attributes
+        return expected(value, key)
 
     elif key in ORDER_COMPARISON_KEYS and isinstance(expected, dict):
         return all(

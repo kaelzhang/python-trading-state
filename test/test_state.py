@@ -1,6 +1,6 @@
 from decimal import Decimal
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from trading_state import (
     OrderSide,
@@ -10,7 +10,8 @@ from trading_state import (
     OrderType,
     Balance,
     PositionTargetStatus,
-    TradingStateEvent
+    TradingStateEvent,
+    Order
 )
 from trading_state.common import (
     DECIMAL_ZERO
@@ -338,13 +339,34 @@ def test_alt_currencies():
     assert order1.created_at == now
     assert order1.updated_at == now
 
+    now += timedelta(seconds=1)
+    order1.update(
+        updated_at=now
+    )
+    assert order1.updated_at == now
+
     for order in state.query_orders():
         assert order.ticket.quantity == Decimal('1')
 
     assert state.get_order_by_id('order-1') is order1
 
     result = list(state.query_orders(
+        not_exists=True
+    ))
+
+    assert len(result) == 0
+
+    result = list(state.query_orders(
         id='order-1'
+    ))
+    assert result[0] is order1
+
+    def is_order_1(order_id: str, key: str) -> bool:
+        assert key == 'id'
+        return order_id == 'order-1'
+
+    result = list(state.query_orders(
+        id=is_order_1
     ))
     assert result[0] is order1
 
