@@ -1,4 +1,6 @@
 from decimal import Decimal
+import pytest
+from datetime import datetime
 
 from trading_state import (
     OrderSide,
@@ -314,14 +316,27 @@ def test_alt_currencies():
     assert not orders_to_cancel
     order1, order2 = orders
 
+    with pytest.raises(ValueError, match='order id is required'):
+        order1.update(
+            status=OrderStatus.CREATED
+        )
+
+    now = datetime.now()
+
     order1.update(
         status=OrderStatus.CREATED,
-        id='order-1'
+        id='order-1',
+        created_at=now
     )
+
     order2.update(
         status=OrderStatus.CREATED,
-        id='order-2'
+        id='order-2',
+        created_at=now
     )
+
+    assert order1.created_at == now
+    assert order1.updated_at == now
 
     for order in state.query_orders():
         assert order.ticket.quantity == Decimal('1')
@@ -370,24 +385,44 @@ def test_alt_currencies():
     orders, _ = state.get_orders()
     assert len(orders) == 2
 
-    count = 0
+    quantity_updated_count = 0
+    status_updated_count = 0
 
     def handler(*args):
-        nonlocal count
-        count += 1
+        nonlocal quantity_updated_count
+        quantity_updated_count += 1
+
+    def status_updated_handler(*args):
+        nonlocal status_updated_count
+        status_updated_count += 1
 
     state.on(TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED, handler)
+    state.on(TradingStateEvent.ORDER_STATUS_UPDATED, status_updated_handler)
+
+    for order in orders:
+        target = order.target
+        order.update(
+            filled_quantity=order.ticket.quantity,
+            quote_quantity=order.ticket.quantity * target.price
+        )
+        # It will not trigger quantity updated event, coz no change
+        order.update(
+            filled_quantity=order.ticket.quantity,
+            quote_quantity=order.ticket.quantity * target.price
+        )
 
     for order in orders:
         order.update(
-            filled_quantity=order.ticket.quantity
+            status=OrderStatus.FILLED
         )
+        # It will not trigger status updated event
         order.update(
             status=OrderStatus.FILLED
         )
         target = order.target
 
-    assert count == 2
+    assert quantity_updated_count == 2
+    assert status_updated_count == 2
 
     assert target.status is PositionTargetStatus.ACHIEVED
 

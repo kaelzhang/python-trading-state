@@ -113,9 +113,10 @@ class Order(EventEmitter[OrderUpdatedType]):
             self.quote_quantity = quote_quantity
 
         if filled_quantity is not None:
+            old_filled_quantity = self.filled_quantity
             self.filled_quantity = filled_quantity
 
-            if status is None:
+            if status is None and old_filled_quantity != filled_quantity:
                 # Only emit the event if the status is not changed
                 self.emit(
                     OrderUpdatedType.FILLED_QUANTITY_UPDATED,
