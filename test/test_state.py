@@ -11,7 +11,6 @@ from trading_state import (
     Balance,
     PositionTargetStatus,
     TradingStateEvent,
-    Order
 )
 from trading_state.common import (
     DECIMAL_ZERO
@@ -347,6 +346,8 @@ def test_alt_currencies():
 
     for order in state.query_orders():
         assert order.ticket.quantity == Decimal('1')
+
+    assert len(list(state.query_orders(limit=1))) == 1
 
     assert state.get_order_by_id('order-1') is order1
 

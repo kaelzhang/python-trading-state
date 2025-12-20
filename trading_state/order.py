@@ -185,6 +185,10 @@ def _compare(
 
 
 class OrderHistory:
+    """
+    OrderHistory is only for orders once created by the exchange.
+    """
+
     _history: List[Order]
 
     def __init__(
@@ -193,9 +197,6 @@ class OrderHistory:
     ) -> None:
         self._max_size = max_size
         self._history = []
-
-    def __len__(self) -> int:
-        return len(self._history)
 
     def _check_size(self) -> None:
         if len(self._history) > self._max_size:
@@ -252,7 +253,7 @@ class OrderManager:
     # Only allow one order for a single symbol
     _symbol_orders: Dict[Symbol, Order]
     _base_asset_orders: DictSet[str, Order]
-    _quote_asset_orders: DictSet[str, Order]
+    # _quote_asset_orders: DictSet[str, Order]
 
     # Just set it as a public property for convenience
     history: OrderHistory
@@ -267,7 +268,7 @@ class OrderManager:
 
         self._symbol_orders = {}
         self._base_asset_orders = DictSet[str, Order]()
-        self._quote_asset_orders = DictSet[str,Order]()
+        # self._quote_asset_orders = DictSet[str,Order]()
         self.history = OrderHistory(max_order_history_size)
 
     def _on_order_status_updated(
@@ -307,8 +308,8 @@ class OrderManager:
     def get_orders_by_base_asset(self, asset: str) -> Set[Order]:
         return self._base_asset_orders[asset]
 
-    def get_orders_by_quote_asset(self, asset: str) -> Set[Order]:
-        return self._quote_asset_orders[asset]
+    # def get_orders_by_quote_asset(self, asset: str) -> Set[Order]:
+    #     return self._quote_asset_orders[asset]
 
     def cancel(self, order: Order) -> None:
         # This method might be called
@@ -329,22 +330,20 @@ class OrderManager:
 
         symbol = order.ticket.symbol
         asset = symbol.base_asset
-        quote_asset = symbol.quote_asset
 
         self._symbol_orders[symbol] = order
         self._base_asset_orders[asset].add(order)
-        self._quote_asset_orders[quote_asset].add(order)
+        # self._quote_asset_orders[symbol.quote_asset].add(order)
 
     def _purge_order(self, order: Order) -> None:
         self._open_orders.discard(order)
 
         symbol = order.ticket.symbol
         asset = symbol.base_asset
-        quote_asset = symbol.quote_asset
 
         self._symbol_orders.pop(symbol, None)
         self._base_asset_orders[asset].discard(order)
-        self._quote_asset_orders[quote_asset].discard(order)
+        # self._quote_asset_orders[symbol.quote_asset].discard(order)
 
         if order.id is not None:
             self._id_orders.pop(order.id, None)
@@ -353,11 +352,6 @@ class OrderManager:
         self,
         order: Order
     ) -> None:
-        if order.status is not OrderStatus.INIT:
-            # The order is not in the initial state,
-            # so it should not be added to the open orders
-            return
-
         self._register_order(order)
 
         order.on(
