@@ -17,4 +17,5 @@ from .balance import (
 
 from .order import (
     to_order_request,
+    generate_order_updates
 )

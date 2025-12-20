@@ -6,6 +6,8 @@ from trading_state import Balance
 Balances = Set[Balance]
 
 
+# Ref
+# https://github.com/binance/binance-spot-api-docs/blob/master/user-data-stream.md#balance-update
 def generate_balances_from_account_update(payload: dict) -> Set[Balance]:
     """
     Generate balances from Binance account update, ie. the user stream event of `outboundAccountPosition`
