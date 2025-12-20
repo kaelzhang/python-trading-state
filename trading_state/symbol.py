@@ -83,10 +83,6 @@ class Symbol:
 
         allowed = self._allowed_features.get(feature, None)
 
-        if allowed is None:
-            # The feature is not specified, we treat it as not supported
-            return False
-
         if isinstance(allowed, list):
             if value is None:
                 raise ValueError(f'symbol.support {feature} requires a value for symbol {self}, but got None')
@@ -95,6 +91,10 @@ class Symbol:
 
         if value is not None:
             raise ValueError(f'symbol.support {feature} does not allow to test a value for symbol {self}, but got {value}')
+
+        if allowed is None:
+            # The feature is not specified, we treat it as not supported
+            return False
 
         return allowed
 

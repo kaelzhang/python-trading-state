@@ -64,51 +64,49 @@ def _get_symbol(symbol_info: dict) -> Symbol:
     )
 
     order_types = symbol_info['orderTypes']
-    allow_post_only = 'LIMIT_MAKER' in order_types
-    symbol.allow(FeatureType.POST_ONLY, allow_post_only)
-
-    if symbol_info['icebergAllowed']:
-        symbol.allow(FeatureType.ICEBERG)
-
-    if symbol_info['ocoAllowed']:
-        symbol.allow(FeatureType.OCO)
-
-    if symbol_info['otoAllowed']:
-        symbol.allow(FeatureType.OTO)
-
-    if symbol_info['quoteOrderQtyMarketAllowed']:
-        symbol.allow(FeatureType.QUOTE_ORDER_QUANTITY)
-
-    if symbol_info['allowTrailingStop']:
-        symbol.allow(FeatureType.TRAILING_STOP)
-
-    if symbol_info['cancelReplaceAllowed']:
-        symbol.allow(FeatureType.CANCEL_REPLACE)
-
-    if symbol_info['amendAllowed']:
-        symbol.allow(FeatureType.AMEND)
-
-    if symbol_info['pegInstructionsAllowed']:
-        symbol.allow(FeatureType.PEG_INSTRUCTIONS)
-
-    if symbol_info['isSpotTradingAllowed']:
-        symbol.allow(FeatureType.SPOT)
-
-    if symbol_info['isMarginTradingAllowed']:
-        symbol.allow(FeatureType.MARGIN)
-
-    if allow_post_only:
+    if 'LIMIT_MAKER' in order_types:
         order_types.remove('LIMIT_MAKER')
+        symbol.allow(FeatureType.POST_ONLY, True)
 
     symbol.allow(FeatureType.ORDER_TYPE, [
         ORDER_TYPE_MAP[order_type]
-        for order_type in symbol_info['orderTypes']
+        for order_type in order_types
     ])
 
     symbol.allow(FeatureType.STP_MODE, [
         STP_MODE_MAP[stp_mode]
         for stp_mode in symbol_info['allowedSelfTradePreventionModes']
     ])
+
+    if symbol_info['icebergAllowed']:
+        symbol.allow(FeatureType.ICEBERG, True)
+
+    if symbol_info['ocoAllowed']:
+        symbol.allow(FeatureType.OCO, True)
+
+    if symbol_info['otoAllowed']:
+        symbol.allow(FeatureType.OTO, True)
+
+    if symbol_info['quoteOrderQtyMarketAllowed']:
+        symbol.allow(FeatureType.QUOTE_ORDER_QUANTITY, True)
+
+    if symbol_info['allowTrailingStop']:
+        symbol.allow(FeatureType.TRAILING_STOP, True)
+
+    if symbol_info['cancelReplaceAllowed']:
+        symbol.allow(FeatureType.CANCEL_REPLACE, True)
+
+    if symbol_info['amendAllowed']:
+        symbol.allow(FeatureType.AMEND, True)
+
+    if symbol_info['pegInstructionsAllowed']:
+        symbol.allow(FeatureType.PEG_INSTRUCTIONS, True)
+
+    if symbol_info['isSpotTradingAllowed']:
+        symbol.allow(FeatureType.SPOT, True)
+
+    if symbol_info['isMarginTradingAllowed']:
+        symbol.allow(FeatureType.MARGIN, True)
 
     symbol.add_filter(PrecisionFilter(
         base_asset_precision=int(symbol_info['baseAssetPrecision']),

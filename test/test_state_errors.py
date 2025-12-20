@@ -5,16 +5,20 @@ import pytest
 from trading_state import (
     TradingState,
     TradingConfig,
+    TradingStateEvent,
     Balance,
     AssetNotDefinedError,
     NotionalLimitNotSetError,
     BalanceNotReadyError,
     ValuationPriceNotReadyError,
     SymbolPriceNotReadyError,
-    SymbolNotDefinedError
+    SymbolNotDefinedError,
+    FeatureNotAllowedError,
+    FeatureType
 )
 
 from .fixtures import (
+    init_state,
     get_symbols,
     Symbols,
     BTCUSDC,
@@ -128,3 +132,60 @@ def test_trading_state_errors(test_symbols: Symbols):
     state.set_balances([
         Balance(USDC, Decimal('100000'), Decimal('0'))
     ])
+
+
+def test_feature_not_allowed_error(test_symbols: Symbols):
+    state = init_state()
+
+    # The one that does not support quote order quantity
+    SYMBOL = 'BTCUPUSDT'
+    ASSET = 'BTCUP'
+
+    state.set_notional_limit(ASSET, Decimal('100000'))
+    state.set_price(SYMBOL, Decimal('10000'))
+    state.set_balances([
+        Balance(ASSET, Decimal('1'), Decimal('0'))
+    ])
+
+    exception, _ = state.expect(
+        SYMBOL,
+        exposure=0.2,
+        price=Decimal('10000'),
+        use_market_order=True
+    )
+
+    assert exception is None
+
+    error = False
+
+    def handler(exception: Exception):
+        nonlocal error
+        error = True
+
+        symbol = exception.symbol
+
+        assert isinstance(exception, FeatureNotAllowedError)
+        assert SYMBOL in str(exception)
+        assert symbol.name == SYMBOL
+        assert exception.feature == FeatureType.QUOTE_ORDER_QUANTITY
+
+        with pytest.raises(
+            ValueError,
+            match='but got None'
+        ):
+            symbol.support(FeatureType.ORDER_TYPE)
+
+        with pytest.raises(
+            ValueError,
+            match='but got 1'
+        ):
+            symbol.support(FeatureType.QUOTE_ORDER_QUANTITY, 1)
+
+        assert not symbol.support(FeatureType.QUOTE_ORDER_QUANTITY)
+
+    state.on(TradingStateEvent.TICKET_CREATE_FAILED, handler)
+
+    orders, _ = state.get_orders()
+    assert not orders
+
+    assert error

@@ -268,14 +268,15 @@ class MarketQuantityFilter(QuantityFilter):
     ) -> FilterResult:
         if (
             ticket.quantity_type == MarketQuantityType.QUOTE
-            and not ticket.symbol.support(
+            and not (symbol := ticket.symbol).support(
                 (feature := FeatureType.QUOTE_ORDER_QUANTITY)
             )
         ):
             return (
                 FeatureNotAllowedError(
+                    symbol,
                     feature,
-                    f'quote order quantity for "{ticket.symbol.name}" is not allowed'
+                    f'quote order quantity for "{symbol.name}" is not allowed'
                 ),
                 False
             )

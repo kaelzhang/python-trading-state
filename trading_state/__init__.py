@@ -26,7 +26,8 @@ from .exceptions import (
     SymbolPriceNotReadyError,
     NotionalLimitNotSetError,
     ValuationPriceNotReadyError,
-    BalanceNotReadyError
+    BalanceNotReadyError,
+    FeatureNotAllowedError
 )
 
 from .filters import (
