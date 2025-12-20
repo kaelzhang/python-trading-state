@@ -11,11 +11,14 @@ from typing import (
 )
 
 from .order_ticket import OrderTicket
-from .enums import OrderType, OrderSide, MarketQuantityType
+from .enums import (
+    OrderType, OrderSide, MarketQuantityType, FeatureType
+)
 from .common import (
     apply_precision,
     apply_tick_size
 )
+from .exceptions import FeatureNotAllowedError
 
 
 FilterResult = Tuple[Optional[Exception], bool]
@@ -257,6 +260,27 @@ class MarketQuantityFilter(QuantityFilter):
             if ticket.quantity_type == MarketQuantityType.QUOTE
             else ticket.quantity
         )
+
+    def apply(
+        self,
+        ticket: OrderTicket,
+        *args, **kwargs
+    ) -> FilterResult:
+        if (
+            ticket.quantity_type == MarketQuantityType.QUOTE
+            and not ticket.symbol.support(
+                (feature := FeatureType.QUOTE_ORDER_QUANTITY)
+            )
+        ):
+            return (
+                FeatureNotAllowedError(
+                    feature,
+                    f'quote order quantity for "{ticket.symbol.name}" is not allowed'
+                ),
+                False
+            )
+
+        return super().apply(ticket, *args, **kwargs)
 
 
 PARAM_ICEBERG_QUANTITY = 'iceberg_quantity'

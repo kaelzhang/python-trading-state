@@ -67,6 +67,36 @@ def _get_symbol(symbol_info: dict) -> Symbol:
     allow_post_only = 'LIMIT_MAKER' in order_types
     symbol.allow(FeatureType.POST_ONLY, allow_post_only)
 
+    if symbol_info['icebergAllowed']:
+        symbol.allow(FeatureType.ICEBERG)
+
+    if symbol_info['ocoAllowed']:
+        symbol.allow(FeatureType.OCO)
+
+    if symbol_info['otoAllowed']:
+        symbol.allow(FeatureType.OTO)
+
+    if symbol_info['quoteOrderQtyMarketAllowed']:
+        symbol.allow(FeatureType.QUOTE_ORDER_QUANTITY)
+
+    if symbol_info['allowTrailingStop']:
+        symbol.allow(FeatureType.TRAILING_STOP)
+
+    if symbol_info['cancelReplaceAllowed']:
+        symbol.allow(FeatureType.CANCEL_REPLACE)
+
+    if symbol_info['amendAllowed']:
+        symbol.allow(FeatureType.AMEND)
+
+    if symbol_info['pegInstructionsAllowed']:
+        symbol.allow(FeatureType.PEG_INSTRUCTIONS)
+
+    if symbol_info['isSpotTradingAllowed']:
+        symbol.allow(FeatureType.SPOT)
+
+    if symbol_info['isMarginTradingAllowed']:
+        symbol.allow(FeatureType.MARGIN)
+
     if allow_post_only:
         order_types.remove('LIMIT_MAKER')
 

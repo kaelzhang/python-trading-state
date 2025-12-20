@@ -5,6 +5,8 @@ Exceptions for the trading state, which are
 - usually caused by improper dealing of the intialization process
 """
 
+from .enums import FeatureType
+
 
 class SymbolNotDefinedError(Exception):
     def __init__(self, symbol_name: str) -> None:
@@ -52,3 +54,11 @@ class BalanceNotReadyError(Exception):
         super().__init__(message)
 
         self.asset = asset
+
+
+class FeatureNotAllowedError(Exception):
+    def __init__(
+        self, feature: FeatureType, message: str) -> None:
+        super().__init__(message)
+
+        self.feature = feature
