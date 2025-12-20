@@ -391,8 +391,6 @@ class NotionalFilter(BaseFilter):
         self,
         ticket: OrderTicket,
         validate_only: bool,
-        # TODO:
-        # get_avg_price: Callable[[int], Decimal],
         **kwargs
     ) -> FilterResult:
         # TODO: other market order types
