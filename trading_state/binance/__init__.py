@@ -1,21 +1,23 @@
 """
 Convention:
-- generate_xxx: means to generate an object from Binance API
-- to_xxx: means to convert an object to Binance API request format
+- decode_xxx_event: decode Binance websocket event message to the subjects used by trading state
+- decode_xxx_response: decode Binance API response to the subjects used by trading state
+- encode_xxx: means to convert an object to Binance API request format
 """
 
 from .exchange_info import (
-    generate_symbols_from_exchange_info,
+    decode_exchange_info_response,
     Symbols
 )
 
 from .balance import (
-    generate_balances_from_account_update,
-    generate_balances_from_account_info,
+    decode_account_update_event,
+    decode_balance_update_event,
+    decode_account_info_response,
     Balances
 )
 
 from .order import (
-    to_order_request,
-    generate_order_updates
+    encode_order_request,
+    decode_order_update_event
 )

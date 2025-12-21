@@ -6,7 +6,10 @@ from .state import (
     TradingState
 )
 
-from .balance import Balance
+from .balance import (
+    Balance,
+    BalanceUpdate
+)
 
 from .enums import (
     OrderType,

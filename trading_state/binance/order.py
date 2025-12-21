@@ -12,9 +12,12 @@ from trading_state import (
     MarketOrderTicket,
     MarketQuantityType
 )
+from trading_state.common import (
+    timestamp_to_datetime
+)
 
 
-def to_order_request(ticket: OrderTicket) -> dict:
+def encode_order_request(ticket: OrderTicket) -> dict:
     match ticket:
         case LimitOrderTicket():
             kwargs = dict(
@@ -46,7 +49,9 @@ def to_order_request(ticket: OrderTicket) -> dict:
 
 # Ref
 # https://github.com/binance/binance-spot-api-docs/blob/master/user-data-stream.md#order-update
-def generate_order_updates(payload: dict) -> Tuple[str, dict]:
+def decode_order_update_event(
+    payload: dict
+) -> Tuple[datetime, str, dict]:
     """Generate order updates dict from Binance order update payload
 
     Args:
@@ -63,17 +68,13 @@ def generate_order_updates(payload: dict) -> Tuple[str, dict]:
     client_order_id = payload['c']
     filled_quantity = Decimal(payload['z'])
     quote_quantity = Decimal(payload['Z'])
-    updated_at = datetime.fromtimestamp(payload['T'] / 1000)
-
-    # order = self._state.get_order_by_id(client_order_id)
-
-    # if order is None:
-    #     return
+    updated_at = timestamp_to_datetime(payload['T'])
+    event_time = timestamp_to_datetime(payload['E'])
 
     update_kwargs = {
         'filled_quantity': filled_quantity,
         'quote_quantity': quote_quantity,
-        'updated_at': updated_at
+        'time': updated_at
     }
 
     if order_status == 'CANCELED':
@@ -81,5 +82,4 @@ def generate_order_updates(payload: dict) -> Tuple[str, dict]:
     elif order_status == 'FILLED':
         update_kwargs['status'] = OrderStatus.FILLED
 
-    # order.update(**update_kwargs)
-    return client_order_id, update_kwargs
+    return event_time, client_order_id, update_kwargs

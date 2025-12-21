@@ -11,7 +11,7 @@ from trading_state import (
 )
 
 from trading_state.binance import (
-    generate_symbols_from_exchange_info
+    decode_exchange_info_response
 )
 
 def load_exchange_info() -> dict:
@@ -40,7 +40,7 @@ def get_symbols() -> Symbols:
         return symbols
 
     exchange_info = load_exchange_info()
-    for symbol in generate_symbols_from_exchange_info(exchange_info):
+    for symbol in decode_exchange_info_response(exchange_info):
         symbols[symbol.name] = symbol
 
     return symbols
