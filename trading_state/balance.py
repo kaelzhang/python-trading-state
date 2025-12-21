@@ -1,9 +1,20 @@
 # Balance Manager
 
+from typing import (
+    Iterable,
+    Dict,
+    Optional
+)
+
 from decimal import Decimal
 from datetime import datetime
 
-from .common import class_repr
+from .common import (
+    DECIMAL_ZERO,
+    class_repr
+)
+from .symbol import Symbols
+from .enums import OrderSide
 
 
 class Balance:
@@ -58,3 +69,79 @@ class BalanceUpdate:
 
     def __repr__(self) -> str:
         return class_repr(self, main='asset')
+
+
+class BalanceManager:
+    _balances: Dict[str, Balance]
+
+    # asset -> frozen quantity
+    _frozen: Dict[str, Decimal]
+
+    def __init__(
+        self,
+        symbols: Symbols
+    ) -> None:
+        self._balances = {}
+        self._frozen = {}
+
+    def freeze(
+        self,
+        asset: str,
+        quantity: Optional[Decimal] = None
+    ) -> None:
+        """
+        See state.freeze()
+        """
+
+        if quantity is None:
+            self._frozen.pop(asset, None)
+            return
+
+        self._frozen[asset] = quantity
+
+
+    def get_balance(self, asset: str) -> Balance:
+        return self._balances.get(asset)
+
+    def set_balance(
+        self,
+        new: Iterable[Balance],
+        delta: bool = False
+    ) -> None:
+        """
+        See state.set_balances()
+        """
+        ...
+
+    def update_balance() -> None:
+        ...
+
+    def get_account_value(self) -> Decimal:
+        """
+        See state.get_account_value()
+        """
+
+        return sum(
+            balance.total * self._symbols.valuation_price(balance.asset)
+            for balance in self._balances.values()
+        )
+
+    def get_asset_total_balance(self, asset: str) -> Decimal:
+        """
+        Get the total balance of an asset, which includes
+        - free balance
+        - locked balance, including the balance locked by open (SELL) orders
+        - expected balance to increase (by open BUY orders)
+
+        Should be called after `asset_ready`
+        """
+
+        total = self._balances.get(asset).total
+        orders = self._orders.get_orders_by_base_asset(asset)
+
+        for order in orders:
+            # For BUY orders, the balance will increase
+            if order.ticket.side is OrderSide.BUY:
+                total += order.ticket.quantity - order.filled_quantity
+
+        return max(total - self._frozen.get(asset, DECIMAL_ZERO), DECIMAL_ZERO)

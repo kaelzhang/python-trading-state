@@ -1,27 +1,13 @@
 from typing import (
-    Iterable,
     Dict,
     Tuple,
     Set,
     Optional,
-    Callable,
-    Union,
-    Any,
     Iterator,
     List
 )
-from dataclasses import dataclass, field
-
 from decimal import Decimal
 
-from .exceptions import (
-    BalanceNotReadyError,
-    NotionalLimitNotSetError,
-    AssetNotDefinedError,
-    SymbolNotDefinedError,
-    ValuationPriceNotReadyError,
-    SymbolPriceNotReadyError
-)
 from .enums import (
     OrderStatus,
     OrderSide,
@@ -30,8 +16,14 @@ from .enums import (
     TradingStateEvent,
     PositionTargetStatus
 )
-from .symbol import Symbol
-from .balance import Balance
+from .symbol import (
+    Symbol,
+    Symbols
+)
+from .balance import (
+    Balance,
+    BalanceManager
+)
 from .order import (
     Order,
     OrderUpdatedType,
@@ -53,19 +45,12 @@ from .allocate import (
 from .common import (
     DECIMAL_ZERO,
     DECIMAL_ONE,
+    ValueOrException,
     DictSet,
     EventEmitter
 )
+from .config import TradingConfig
 
-
-FLOAT_ONE = 1.0
-FLOAT_ZERO = 0.0
-
-SuccessOrException = Optional[Exception]
-type ValueOrException[T] = Union[
-    Tuple[None, T],
-    Tuple[Exception, None]
-]
 
 AllocationWeights = Tuple[Decimal, ...]
 
@@ -91,44 +76,6 @@ Implementation Principles:
 """
 
 
-def DEFAULT_GET_SYMBOL_NAME(base_asset: str, quote_asset: str) -> str:
-    return base_asset + quote_asset
-
-
-@dataclass(frozen=True)
-class TradingConfig:
-    """
-    Args:
-        account_currency (str): the default account currency (ref: https://en.wikipedia.org/wiki/Num%C3%A9raire) to use to:
-        - calculate value of limit exposures
-        - calculate value of notional limits
-
-        alt_account_currencies (Set[str]): the alternative account currencies to the account currency.
-
-        max_order_history_size (int): the maximum size of the order history
-
-        get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
-    """
-    account_currency: str
-    alt_account_currencies: Tuple[str, ...] = field(default_factory=tuple)
-
-    context: Dict[str, Any] = field(default_factory=dict)
-    max_order_history_size: int = 10000
-    get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
-
-    @property
-    def account_currencies(self) -> Tuple[str, ...]:
-        # Put the account currency at the end, so that
-        # Most usually we will deal it at last
-        return (*self.alt_account_currencies, self.account_currency)
-
-    def __post_init__(self) -> None:
-        if self.account_currency in self.alt_account_currencies:
-            raise ValueError(
-                f'The default account currency "{self.account_currency}" must not be in the `alt_account_currencies`'
-            )
-
-
 class TradingState(EventEmitter[TradingStateEvent]):
     """State Phase II
 
@@ -145,36 +92,16 @@ class TradingState(EventEmitter[TradingStateEvent]):
     """
 
     _config: TradingConfig
+    _symbols: Symbols
 
     # asset -> balance
-    _balances: Dict[str, Balance]
-
-    # symbol name -> symbol
-    _symbols: Dict[str, Symbol]
-
-    _checked_symbol_names: Set[str]
-    _checked_asset_names: Set[str]
-
-    _assets: Set[str]
-    _underlying_assets: Set[str]
-
-    # base asset -> symbol
-    _base_asset_symbols: DictSet[str, Symbol]
-
-    # quote asset -> symbol
-    _quote_asset_symbols: DictSet[str, Symbol]
-
-    # symbol name -> price
-    _symbol_prices: Dict[str, Decimal]
+    _balances: BalanceManager
 
     # asset -> notional limit
     _notional_limits: Dict[str, Decimal]
 
     # No allocations for account currencies by default
     _alt_currency_weights: Optional[List[Decimal]] = None
-
-    # asset -> frozen quantity
-    _frozen: Dict[str, Decimal]
 
     # asset -> position expectation
     _expected: Dict[str, PositionTarget]
@@ -190,18 +117,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         super().__init__()
 
         self._config = config
-
-        self._symbols = {}
-        self._checked_symbol_names = set[str]()
-        self._checked_asset_names = set[str]()
-
-        self._assets = set[str]()
-        self._underlying_assets = set[str]()
-
-        self._base_asset_symbols = DictSet[str, Symbol]()
-        self._quote_asset_symbols = DictSet[str, Symbol]()
-
-        self._symbol_prices = {}
+        self._symbols = Symbols(config)
 
         self._notional_limits = {}
         self._frozen = {}
@@ -230,17 +146,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Returns `True` if the price changes
         """
 
-        old_price = self._symbol_prices.get(symbol_name)
+        updated = self._symbols.set_price(symbol_name, price)
 
-        if price == old_price:
-            # If the price does not change, should not reset diff
-            return False
+        if updated:
+            self.emit(TradingStateEvent.PRICE_UPDATED, symbol_name, price)
 
-        self._symbol_prices[symbol_name] = price
-
-        self.emit(TradingStateEvent.PRICE_UPDATED, symbol_name, price)
-
-        return True
+        return updated
 
     def set_symbol(
         self,
@@ -253,26 +164,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
             symbol (Symbol): the symbol to set
         """
 
-        if symbol.name in self._symbols:
-            return
-
-        self._symbols[symbol.name] = symbol
-
-        asset = symbol.base_asset
-        quote_asset = symbol.quote_asset
-
-        self._assets.add(asset)
-        self._assets.add(quote_asset)
-        self._base_asset_symbols[asset].add(symbol)
-        self._quote_asset_symbols[quote_asset].add(symbol)
-
-        if not quote_asset:
-            # If the symbol has no quote asset,
-            # it is the underlying asset of the account currency,
-            # such as a stock asset, AAPL, etc.
-            self._underlying_assets.add(asset)
-
-        self.emit(TradingStateEvent.SYMBOL_ADDED, symbol)
+        if self._symbols.set_symbol(symbol):
+            self.emit(TradingStateEvent.SYMBOL_ADDED, symbol)
 
     def set_notional_limit(
         self,
@@ -342,11 +235,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         self._alt_currency_weights = weights
 
-    def freeze(
-        self,
-        asset: str,
-        quantity: Optional[Decimal] = None
-    ) -> None:
+    def freeze(self, *args, **kwargs) -> None:
         """
         Freeze a certain quantity of an asset. The frozen quantity will be excluded from the calculation of
         - notional limit
@@ -354,16 +243,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
         - balance
         """
 
-        if quantity is None:
-            self._frozen.pop(asset, None)
-            return
-
-        self._frozen[asset] = quantity
+        self._balances.freeze(*args, **kwargs)
 
     def set_balances(
         self,
-        new: Iterable[Balance],
-        delta: bool = False
+        *args, **kwargs
     ) -> None:
         """
         Update user balances, including normal assets and quote assets
@@ -379,32 +263,28 @@ class TradingState(EventEmitter[TradingStateEvent]):
             ])
         """
 
-        for balance in new:
-            self._set_balance(balance, delta)
+        self._balances.set_balances(*args, **kwargs)
 
-    def get_balance(self, asset: str) -> Balance:
-        """
-        Get the balance of an asset
-        """
+    # def get_balance(self, asset: str) -> Balance:
+    #     """
+    #     Get the balance of an asset
+    #     """
 
-        return self._balances.get(asset)
+    #     return self._balances.get_balance(asset)
 
-    def get_balances(self) -> Dict[str, Balance]:
-        """
-        Get all balances
-        """
+    # def get_balances(self) -> Dict[str, Balance]:
+    #     """
+    #     Get all balances
+    #     """
 
-        return self._balances.copy()
+    #     return self._balances.copy()
 
     def get_account_value(self) -> Decimal:
         """
         Get the value of the account in the account currency
         """
 
-        return sum(
-            balance.total * self._get_asset_valuation_price(balance.asset)
-            for balance in self._balances.values()
-        )
+        return self._balances.get_account_value()
 
     def get_price(
         self,
@@ -414,14 +294,14 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Get the price of a symbol
         """
 
-        return self._symbol_prices.get(symbol_name)
+        return self._symbols.get_price(symbol_name)
 
     def support_symbol(self, symbol_name: str) -> bool:
         """
         Check whether the symbol is supported
         """
 
-        return symbol_name in self._symbols
+        return self._symbols.has(symbol_name)
 
     def exposure(
         self,
@@ -438,7 +318,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             - Tuple[None, Decimal]: the limit exposure of the asset
         """
 
-        exception = self._check_asset_ready(asset)
+        exception = self._symbols.check_asset_ready(asset)
         if exception is not None:
             return exception, None
 
@@ -549,16 +429,16 @@ class TradingState(EventEmitter[TradingStateEvent]):
             state.expect('BTCUSDT', 1., ...)
         """
 
-        exception = self._check_symbol_ready(symbol_name)
+        exception = self._symbols.check_symbol_ready(symbol_name)
 
         if exception is not None:
             return exception, None
 
-        symbol = self._get_symbol(symbol_name)
+        symbol = self._symbols.get_symbol(symbol_name)
         asset = symbol.base_asset
 
         # Normalize the exposure to be between 0 and 1
-        exposure = max(FLOAT_ZERO, min(exposure, FLOAT_ONE))
+        exposure = max(DECIMAL_ZERO, min(exposure, DECIMAL_ONE))
 
         open_target = self._expected.get(asset)
 
@@ -622,87 +502,31 @@ class TradingState(EventEmitter[TradingStateEvent]):
             raise ValueError(
                 'The number of allocation weights must be equal to the number of alternative account currencies')
 
-    def _check_symbol_ready(self, symbol_name: str) -> SuccessOrException:
-        """
-        Check whether the given symbol name is ready to trade
+    # def _get_valuation_symbol_name(self, asset: str) -> str:
+    #     if asset in self._underlying_assets:
+    #         # 'AAPL' -> 'AAPL'
+    #         return asset
 
-        Prerequisites:
-        - the symbol is defined: for example: `BNBBTC`
-        - the notional limit of `BNB` is set
-        - the valuation price of `BNB`, i.e the price of `BNBUSDT` is ready
-        """
+    #     # 'BTC' -> 'BTCUSDT'
+    #     return self._config.get_symbol_name(
+    #         asset,
+    #         self._config.account_currency
+    #     )
 
-        if symbol_name in self._checked_symbol_names:
-            return
+    # def _get_asset_valuation_price(self, asset: str) -> Decimal:
+    #     """
+    #     Get the price of an asset in the account currency
 
-        symbol = self._symbols.get(symbol_name)
+    #     Should only be called after `asset_ready`
+    #     """
 
-        if symbol is None:
-            return SymbolNotDefinedError(symbol_name)
+    #     if self._is_account_asset(asset):
+    #         # The asset is an account currency,
+    #         # or an alternative account currency
+    #         return Decimal(1.0)
 
-        if symbol_name not in self._symbol_prices:
-            return SymbolPriceNotReadyError(symbol_name)
-
-        exception = self._check_asset_ready(symbol.base_asset)
-        if exception is not None:
-            return exception
-
-        exception = self._check_asset_ready(symbol.quote_asset)
-        if exception is not None:
-            return exception
-
-        self._checked_symbol_names.add(symbol_name)
-
-    def _check_asset_ready(self, asset: str) -> SuccessOrException:
-        """
-        Check whether the given asset is ready to trade
-        """
-
-        if asset in self._checked_asset_names:
-            return
-
-        if asset not in self._assets:
-            return AssetNotDefinedError(asset)
-
-        if not self._is_account_asset(asset):
-            if asset not in self._notional_limits:
-                return NotionalLimitNotSetError(asset)
-
-            valuation_symbol_name = self._get_valuation_symbol_name(asset)
-
-            if valuation_symbol_name not in self._symbol_prices:
-                return ValuationPriceNotReadyError(asset)
-
-        if asset not in self._balances:
-            return BalanceNotReadyError(asset)
-
-        self._checked_asset_names.add(asset)
-
-    def _get_valuation_symbol_name(self, asset: str) -> str:
-        if asset in self._underlying_assets:
-            # 'AAPL' -> 'AAPL'
-            return asset
-
-        # 'BTC' -> 'BTCUSDT'
-        return self._config.get_symbol_name(
-            asset,
-            self._config.account_currency
-        )
-
-    def _get_asset_valuation_price(self, asset: str) -> Decimal:
-        """
-        Get the price of an asset in the account currency
-
-        Should only be called after `asset_ready`
-        """
-
-        if self._is_account_asset(asset):
-            # The asset is an account currency,
-            # or an alternative account currency
-            return Decimal(1.0)
-
-        valuation_symbol = self._get_valuation_symbol_name(asset)
-        return self.get_price(valuation_symbol)
+    #     valuation_symbol = self._get_valuation_symbol_name(asset)
+    #     return self.get_price(valuation_symbol)
 
     def _is_account_asset(self, asset: str) -> bool:
         return (
@@ -755,26 +579,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # so that self.exposure() will return the recalculated exposure
         self._expected.pop(asset, None)
 
-    def _get_asset_total_balance(self, asset: str) -> Decimal:
-        """
-        Get the total balance of an asset, which includes
-        - free balance
-        - locked balance, including the balance locked by open (SELL) orders
-        - expected balance to increase (by open BUY orders)
-
-        Should be called after `asset_ready`
-        """
-
-        total = self._balances.get(asset).total
-        orders = self._orders.get_orders_by_base_asset(asset)
-
-        for order in orders:
-            # For BUY orders, the balance will increase
-            if order.ticket.side is OrderSide.BUY:
-                total += order.ticket.quantity - order.filled_quantity
-
-        return max(total - self._frozen.get(asset, DECIMAL_ZERO), DECIMAL_ZERO)
-
     def _get_asset_exposure(self, asset: str) -> Decimal:
         """
         Get the calculated limit exposure of an asset
@@ -785,14 +589,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
             Decimal: the calculated limit exposure of the asset
         """
 
-        balance = self._get_asset_total_balance(asset)
-        price = self._get_asset_valuation_price(asset)
+        balance = self._balances.get_asset_total_balance(asset)
+        price = self._symbols.valuation_price(asset)
         limit = self._notional_limits.get(asset)
 
         return balance * price / limit
-
-    def _get_symbol(self, symbol_name: str) -> Optional[Symbol]:
-        return self._symbols.get(symbol_name)
 
     def _diff(self) -> None:
         """
@@ -847,8 +648,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # Calculate the eventual valuation value of the asset
         # --------------------------------------------------------
         asset = symbol.base_asset
-        balance = self._get_asset_total_balance(asset)
-        valuation_price = self._get_asset_valuation_price(asset)
+        balance = self._balances.get_asset_total_balance(asset)
+        valuation_price = self._symbols.valuation_price(asset)
         value = balance * valuation_price
 
         limit = self._notional_limits.get(asset)
@@ -909,7 +710,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             )
             if (
                 (
-                    symbol := self._get_symbol(
+                    symbol := self._symbols.get_symbol(
                         self._config.get_symbol_name(asset, quote_asset)
                     )
                 ) is not None

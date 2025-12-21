@@ -2,14 +2,32 @@ from __future__ import annotations
 from typing import (
     List,
     Dict,
+    Set,
     Optional,
     overload,
     TYPE_CHECKING
 )
 from enum import Enum
+from decimal import Decimal
 
 from .filters import BaseFilter, FilterResult
-from .enums import FeatureType
+from .enums import (
+    FeatureType
+)
+from .exceptions import (
+    BalanceNotReadyError,
+    NotionalLimitNotSetError,
+    AssetNotDefinedError,
+    SymbolNotDefinedError,
+    ValuationPriceNotReadyError,
+    SymbolPriceNotReadyError
+)
+from .config import TradingConfig
+from .common import (
+    SuccessOrException,
+    DictSet,
+    # ValueOrException
+)
 
 if TYPE_CHECKING:
     from .order_ticket import OrderTicket
@@ -136,3 +154,164 @@ class Symbol:
                 return exception, modified
 
         return None, modified
+
+
+class Symbols:
+    # symbol name -> symbol
+    _symbols: Dict[str, Symbol]
+
+    _checked_symbol_names: Set[str]
+    _checked_asset_names: Set[str]
+
+    _assets: Set[str]
+    _underlying_assets: Set[str]
+
+    # base asset -> symbol
+    _base_asset_symbols: DictSet[str, Symbol]
+
+    # quote asset -> symbol
+    _quote_asset_symbols: DictSet[str, Symbol]
+
+    # symbol name -> price
+    _symbol_prices: Dict[str, Decimal]
+
+    def __init__(
+        self,
+        config: TradingConfig
+    ) -> None:
+        self._symbols = {}
+        self._checked_symbol_names = set[str]()
+        self._checked_asset_names = set[str]()
+
+        self._assets = set[str]()
+        self._underlying_assets = set[str]()
+
+        self._base_asset_symbols = DictSet[str, Symbol]()
+        self._quote_asset_symbols = DictSet[str, Symbol]()
+
+        self._symbol_prices = {}
+
+    def set_price(
+        self,
+        symbol_name: str,
+        price: Decimal
+    ) -> bool:
+        """
+        see state.set_price()
+        """
+
+        old_price = self._symbol_prices.get(symbol_name)
+
+        if price == old_price:
+            # If the price does not change, should not reset diff
+            return False
+
+        self._symbol_prices[symbol_name] = price
+
+        return True
+
+    def get_price(
+        self,
+        symbol_name: str
+    ) -> Decimal | None:
+        return self._symbol_prices.get(symbol_name)
+
+    def set_symbol(
+        self,
+        symbol: Symbol
+    ) -> bool:
+        """
+        see state.set_symbol()
+        """
+
+        if symbol.name in self._symbols:
+            return False
+
+        self._symbols[symbol.name] = symbol
+
+        asset = symbol.base_asset
+        quote_asset = symbol.quote_asset
+
+        self._assets.add(asset)
+        self._assets.add(quote_asset)
+        self._base_asset_symbols[asset].add(symbol)
+        self._quote_asset_symbols[quote_asset].add(symbol)
+
+        if not quote_asset:
+            # If the symbol has no quote asset,
+            # it is the underlying asset of the account currency,
+            # such as a stock asset, AAPL, etc.
+            self._underlying_assets.add(asset)
+
+        return True
+
+    def get_symbol(self, symbol_name: str) -> Optional[Symbol]:
+        return self._symbols.get(symbol_name)
+
+    def has(self, symbol_name: str) -> bool:
+        return symbol_name in self._symbols
+
+    def check_symbol_ready(self, symbol_name: str) -> SuccessOrException:
+        """
+        Check whether the given symbol name is ready to trade
+
+        Prerequisites:
+        - the symbol is defined: for example: `BNBBTC`
+        - the notional limit of `BNB` is set
+        - the valuation price of `BNB`, i.e the price of `BNBUSDT` is ready
+        """
+
+        if symbol_name in self._checked_symbol_names:
+            return
+
+        symbol = self._symbols.get(symbol_name)
+
+        if symbol is None:
+            return SymbolNotDefinedError(symbol_name)
+
+        if symbol_name not in self._symbol_prices:
+            return SymbolPriceNotReadyError(symbol_name)
+
+        exception = self.check_asset_ready(symbol.base_asset)
+        if exception is not None:
+            return exception
+
+        exception = self.check_asset_ready(symbol.quote_asset)
+        if exception is not None:
+            return exception
+
+        self._checked_symbol_names.add(symbol_name)
+
+    def check_asset_ready(self, asset: str) -> SuccessOrException:
+        """
+        Check whether the given asset is ready to trade
+        """
+
+        if asset in self._checked_asset_names:
+            return
+
+        if asset not in self._assets:
+            return AssetNotDefinedError(asset)
+
+        if not self._is_account_asset(asset):
+            if asset not in self._notional_limits:
+                return NotionalLimitNotSetError(asset)
+
+            valuation_symbol_name = self._get_valuation_symbol_name(asset)
+
+            if valuation_symbol_name not in self._symbol_prices:
+                return ValuationPriceNotReadyError(asset)
+
+        if asset not in self._balances:
+            return BalanceNotReadyError(asset)
+
+        self._checked_asset_names.add(asset)
+
+    def valuation_price(self, asset: str) -> Decimal:
+        """
+        Get the valuation price of an asset
+
+        Should be called after `symbol_ready`
+        """
+
+        return self._symbol_prices.get(self._get_valuation_symbol_name(asset))

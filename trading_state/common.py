@@ -10,12 +10,19 @@ from typing import (
     MutableSet,
     Callable,
     Any,
-    Hashable
+    Hashable,
+    Union
 )
 
 
 DECIMAL_ZERO = Decimal('0')
 DECIMAL_ONE = Decimal('1')
+
+SuccessOrException = Optional[Exception]
+type ValueOrException[T] = Union[
+    Tuple[None, T],
+    Tuple[Exception, None]
+]
 
 
 def apply_precision(number: Decimal, precision: int) -> Decimal:
