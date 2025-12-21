@@ -39,11 +39,12 @@ class AssetNotDefinedError(Exception):
 
 
 class ValuationPriceNotReadyError(Exception):
-    def __init__(self, asset: str) -> None:
-        message = f'valuation price for "{asset}" is not ready yet'
+    def __init__(self, asset: str, symbol: Symbol) -> None:
+        message = f'valuation price for "{asset}" through "{symbol.name}" is not ready yet'
         super().__init__(message)
 
         self.asset = asset
+        self.symbol = symbol
 
 
 class NotionalLimitNotSetError(Exception):

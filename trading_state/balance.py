@@ -14,7 +14,6 @@ from .common import (
     class_repr
 )
 from .symbol import Symbols
-from .enums import OrderSide
 
 
 class Balance:
@@ -99,7 +98,6 @@ class BalanceManager:
 
         self._frozen[asset] = quantity
 
-
     def get_balance(self, asset: str) -> Balance:
         return self._balances.get(asset)
 
@@ -128,20 +126,15 @@ class BalanceManager:
 
     def get_asset_total_balance(self, asset: str) -> Decimal:
         """
-        Get the total balance of an asset, which includes
-        - free balance
-        - locked balance, including the balance locked by open (SELL) orders
-        - expected balance to increase (by open BUY orders)
+        Get the total balance of an asset, which excludes
+        - frozen balance
 
         Should be called after `asset_ready`
         """
 
         total = self._balances.get(asset).total
-        orders = self._orders.get_orders_by_base_asset(asset)
 
-        for order in orders:
-            # For BUY orders, the balance will increase
-            if order.ticket.side is OrderSide.BUY:
-                total += order.ticket.quantity - order.filled_quantity
-
-        return max(total - self._frozen.get(asset, DECIMAL_ZERO), DECIMAL_ZERO)
+        return max(
+            total - self._frozen.get(asset, DECIMAL_ZERO),
+            DECIMAL_ZERO
+        )

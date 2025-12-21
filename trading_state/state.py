@@ -502,38 +502,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
             raise ValueError(
                 'The number of allocation weights must be equal to the number of alternative account currencies')
 
-    # def _get_valuation_symbol_name(self, asset: str) -> str:
-    #     if asset in self._underlying_assets:
-    #         # 'AAPL' -> 'AAPL'
-    #         return asset
-
-    #     # 'BTC' -> 'BTCUSDT'
-    #     return self._config.get_symbol_name(
-    #         asset,
-    #         self._config.account_currency
-    #     )
-
-    # def _get_asset_valuation_price(self, asset: str) -> Decimal:
-    #     """
-    #     Get the price of an asset in the account currency
-
-    #     Should only be called after `asset_ready`
-    #     """
-
-    #     if self._is_account_asset(asset):
-    #         # The asset is an account currency,
-    #         # or an alternative account currency
-    #         return Decimal(1.0)
-
-    #     valuation_symbol = self._get_valuation_symbol_name(asset)
-    #     return self.get_price(valuation_symbol)
-
-    def _is_account_asset(self, asset: str) -> bool:
-        return (
-            asset == self._config.account_currency
-            or asset in self._config.alt_account_currencies
-        )
-
     def _set_balance(
         self,
         balance: Balance,

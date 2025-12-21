@@ -3,12 +3,15 @@ from typing import (
     List,
     Dict,
     Set,
+    Tuple,
     Optional,
     overload,
     TYPE_CHECKING
 )
 from enum import Enum
 from decimal import Decimal
+from dataclasses import dataclass
+from collections import deque
 
 from .filters import BaseFilter, FilterResult
 from .enums import (
@@ -24,9 +27,9 @@ from .exceptions import (
 )
 from .config import TradingConfig
 from .common import (
+    DECIMAL_ONE,
     SuccessOrException,
     DictSet,
-    # ValueOrException
 )
 
 if TYPE_CHECKING:
@@ -156,6 +159,16 @@ class Symbol:
         return None, modified
 
 
+@dataclass(frozen=True, slots=True)
+class ValuationPathStep:
+    symbol: Symbol
+    forward: bool
+
+ValuationPath = List[ValuationPathStep]
+
+SearchState = Tuple[str, Optional[bool]]
+
+
 class Symbols:
     # symbol name -> symbol
     _symbols: Dict[str, Symbol]
@@ -174,6 +187,7 @@ class Symbols:
 
     # symbol name -> price
     _symbol_prices: Dict[str, Decimal]
+    _valuation_paths: Dict[str, ValuationPath]
 
     def __init__(
         self,
@@ -190,6 +204,8 @@ class Symbols:
         self._quote_asset_symbols = DictSet[str, Symbol]()
 
         self._symbol_prices = {}
+        self._valuation_paths = {}
+        self._account_assets = set(config.account_currencies)
 
     def set_price(
         self,
@@ -297,10 +313,9 @@ class Symbols:
             if asset not in self._notional_limits:
                 return NotionalLimitNotSetError(asset)
 
-            valuation_symbol_name = self._get_valuation_symbol_name(asset)
-
-            if valuation_symbol_name not in self._symbol_prices:
-                return ValuationPriceNotReadyError(asset)
+            for step in self._valuation_path(asset):
+                if step.symbol.name not in self._symbol_prices:
+                    return ValuationPriceNotReadyError(asset, step.symbol)
 
         if asset not in self._balances:
             return BalanceNotReadyError(asset)
@@ -314,4 +329,113 @@ class Symbols:
         Should be called after `symbol_ready`
         """
 
-        return self._symbol_prices.get(self._get_valuation_symbol_name(asset))
+        price = DECIMAL_ONE
+
+        for step in self._valuation_path(asset):
+            symbol_price = self.get_price(step.symbol.name)
+
+            if step.forward:
+                price *= symbol_price
+            else:
+                price /= symbol_price
+
+        return price
+
+    def _is_account_asset(self, asset: str) -> bool:
+        return asset in self._account_assets
+
+    def _valuation_path(
+        self, asset: str
+    ) -> Optional[ValuationPath]:
+        if asset in self._underlying_assets:
+            return [(self.get_symbol(asset), True)]
+
+        if self._is_account_asset(asset):
+            return []
+
+        if asset in self._valuation_paths:
+            return self._valuation_paths[asset]
+
+        path = self._shortest_valuation_path(asset)
+        self._valuation_paths[asset] = path
+
+        return path
+
+    def _shortest_valuation_path(
+        self, asset: str
+    ) -> Optional[ValuationPath]:
+        """
+        Returns the shortest List[Step] that starts from `asset` and ends at any asset in
+        `account_quote_assets` with the final Step.forward == True. Returns None if no path exists.
+
+        Graph interpretation (standard for tradable pairs):
+        - If Step.forward is True : input = symbol.base_asset,  output = symbol.quote_asset
+        - If Step.forward is False: input = symbol.quote_asset, output = symbol.base_asset
+        """
+
+        # State includes "how we arrived" so we don't discard an asset
+        #   reached with different last-step direction.
+        # last_forward is None only for the start state (no step taken yet).
+        start: SearchState = (asset, None)
+
+        queue = deque[SearchState]([start])
+        visited: Set[SearchState] = {start}
+
+        # parent[state] = (prev_state, step_used_to_reach_state)
+        prev_linker: Dict[
+            SearchState,
+            Tuple[SearchState, ValuationPathStep]
+        ] = {}
+
+        def search(
+            current_state: SearchState,
+            forward: bool
+        ):
+            current_asset, _ = current_state
+            symbols = (
+                self._base_asset_symbols
+                if forward
+                else self._quote_asset_symbols
+            )[current_asset]
+
+            for symbol in symbols:
+                next_state = (
+                    symbol.quote_asset if forward else symbol.base_asset,
+                    forward
+                )
+                if next_state not in visited:
+                    visited.add(next_state)
+                    prev_linker[next_state] = (
+                        current_state,
+                        ValuationPathStep(symbol, forward)
+                    )
+                    queue.append(next_state)
+
+        while queue:
+            current_state = queue.popleft()
+            current_asset, last_forward = current_state
+
+            # Valid terminal condition: last step must be forward,
+            #   and we must land in a target quote asset.
+            if last_forward is True and current_asset in self._account_assets:
+                path: List[ValuationPathStep] = []
+                while current_state != start:
+                    prev, step = prev_linker[current_state]
+                    path.append(step)
+                    current_state = prev
+                path.reverse()
+
+                return path
+
+            # Expand neighbors.
+            # Enforce "S0.symbol.base_asset is A" by restricting the
+            #   first expansion to forward steps
+            # from symbols whose base_asset is the starting asset.
+            if last_forward is None:
+                search(current_state, True)
+                continue
+
+            search(current_state, True)
+            search(current_state, False)
+
+        return None
