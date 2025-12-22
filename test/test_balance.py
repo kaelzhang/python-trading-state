@@ -10,5 +10,5 @@ def test_balance():
         locked=Decimal('0.0')
     )
 
-    assert repr(balance) == '<Balance BTC: free=1.0, locked=0.0>'
+    assert repr(balance) == 'Balance(BTC free=1.0, locked=0.0)'
 

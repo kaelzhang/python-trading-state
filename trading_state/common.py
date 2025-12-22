@@ -79,19 +79,20 @@ def class_repr(
 
     slots = Class.__slots__ if keys is None else keys
 
-    string = f'<{Class.__name__}'
+    string = f'{Class.__name__}('
 
     if main is not None:
-        string += f' {getattr(self, main)}'
+        string += f'{getattr(self, main)}'
 
-    string += ': '
-
-    string += ', '.join([
+    attrs = [
         f'{name}={getattr(self, name)}'
         for name in slots if name != main
-    ])
+    ]
 
-    string += '>'
+    if attrs:
+        string += ' ' + ', '.join(attrs)
+
+    string += ')'
 
     return string
 
