@@ -1,5 +1,6 @@
 files = trading_state test *.py
 test_files = *
+# test_files = symbol
 # test_files = state_errors
 # test_files = state*
 # test_files = allocate
