@@ -17,18 +17,9 @@ from .filters import BaseFilter, FilterResult
 from .enums import (
     FeatureType
 )
-from .exceptions import (
-    BalanceNotReadyError,
-    NotionalLimitNotSetError,
-    AssetNotDefinedError,
-    SymbolNotDefinedError,
-    ValuationPriceNotReadyError,
-    SymbolPriceNotReadyError
-)
 from .config import TradingConfig
 from .common import (
     DECIMAL_ONE,
-    SuccessOrException,
     DictSet,
 )
 
@@ -49,7 +40,7 @@ class Symbol:
     _allowed_features: Dict[FeatureType, bool | List[Enum]]
 
     def __repr__(self) -> str:
-        return f'<Symbol {self.base_asset} / {self.quote_asset}>'
+        return f'Symbol({self.base_asset}/{self.quote_asset})'
 
     def __init__(
         self,
@@ -161,8 +152,15 @@ class Symbol:
 
 @dataclass(frozen=True, slots=True)
 class ValuationPathStep:
+    """
+    Args:
+        symbol (Symbol)
+        forward (bool): True means the quote_asset of the current symbol is the account asset or the base asset of the next symbol
+    """
+
     symbol: Symbol
     forward: bool
+
 
 ValuationPath = List[ValuationPathStep]
 
@@ -172,9 +170,6 @@ SearchState = Tuple[str, Optional[bool]]
 class Symbols:
     # symbol name -> symbol
     _symbols: Dict[str, Symbol]
-
-    _checked_symbol_names: Set[str]
-    _checked_asset_names: Set[str]
 
     _assets: Set[str]
     _underlying_assets: Set[str]
@@ -193,9 +188,8 @@ class Symbols:
         self,
         config: TradingConfig
     ) -> None:
+        self._config = config
         self._symbols = {}
-        self._checked_symbol_names = set[str]()
-        self._checked_asset_names = set[str]()
 
         self._assets = set[str]()
         self._underlying_assets = set[str]()
@@ -238,6 +232,9 @@ class Symbols:
     ) -> bool:
         """
         see state.set_symbol()
+
+        Returns:
+            bool: whether the symbol has been added successfully
         """
 
         if symbol.name in self._symbols:
@@ -264,63 +261,11 @@ class Symbols:
     def get_symbol(self, symbol_name: str) -> Optional[Symbol]:
         return self._symbols.get(symbol_name)
 
-    def has(self, symbol_name: str) -> bool:
+    def has_symbol(self, symbol_name: str) -> bool:
         return symbol_name in self._symbols
 
-    def check_symbol_ready(self, symbol_name: str) -> SuccessOrException:
-        """
-        Check whether the given symbol name is ready to trade
-
-        Prerequisites:
-        - the symbol is defined: for example: `BNBBTC`
-        - the notional limit of `BNB` is set
-        - the valuation price of `BNB`, i.e the price of `BNBUSDT` is ready
-        """
-
-        if symbol_name in self._checked_symbol_names:
-            return
-
-        symbol = self._symbols.get(symbol_name)
-
-        if symbol is None:
-            return SymbolNotDefinedError(symbol_name)
-
-        if symbol_name not in self._symbol_prices:
-            return SymbolPriceNotReadyError(symbol_name)
-
-        exception = self.check_asset_ready(symbol.base_asset)
-        if exception is not None:
-            return exception
-
-        exception = self.check_asset_ready(symbol.quote_asset)
-        if exception is not None:
-            return exception
-
-        self._checked_symbol_names.add(symbol_name)
-
-    def check_asset_ready(self, asset: str) -> SuccessOrException:
-        """
-        Check whether the given asset is ready to trade
-        """
-
-        if asset in self._checked_asset_names:
-            return
-
-        if asset not in self._assets:
-            return AssetNotDefinedError(asset)
-
-        if not self._is_account_asset(asset):
-            if asset not in self._notional_limits:
-                return NotionalLimitNotSetError(asset)
-
-            for step in self._valuation_path(asset):
-                if step.symbol.name not in self._symbol_prices:
-                    return ValuationPriceNotReadyError(asset, step.symbol)
-
-        if asset not in self._balances:
-            return BalanceNotReadyError(asset)
-
-        self._checked_asset_names.add(asset)
+    def has_asset(self, asset: str) -> bool:
+        return asset in self._assets
 
     def valuation_price(self, asset: str) -> Decimal:
         """
@@ -331,7 +276,7 @@ class Symbols:
 
         price = DECIMAL_ONE
 
-        for step in self._valuation_path(asset):
+        for step in self.valuation_path(asset):
             symbol_price = self.get_price(step.symbol.name)
 
             if step.forward:
@@ -341,36 +286,56 @@ class Symbols:
 
         return price
 
-    def _is_account_asset(self, asset: str) -> bool:
+    def is_account_asset(self, asset: str) -> bool:
         return asset in self._account_assets
 
-    def _valuation_path(
+    def valuation_path(
         self, asset: str
     ) -> Optional[ValuationPath]:
         if asset in self._underlying_assets:
-            return [(self.get_symbol(asset), True)]
+            return [ValuationPathStep(self.get_symbol(asset), True)]
 
-        if self._is_account_asset(asset):
+        if self.is_account_asset(asset):
             return []
 
         if asset in self._valuation_paths:
             return self._valuation_paths[asset]
 
         path = self._shortest_valuation_path(asset)
+        if path is not None:
+            self._use_primary_account_currency(path)
+
         self._valuation_paths[asset] = path
 
         return path
 
+    def _use_primary_account_currency(self, path: ValuationPath) -> None:
+        """
+        Try to use primary account currency as much as possible
+        """
+
+        last = path[-1]
+        symbol = last.symbol
+
+        if symbol.quote_asset not in self._config.alt_account_currencies:
+            return
+
+        primary_symbol_name = self._config.get_symbol_name(
+            symbol.base_asset, self._config.account_currency
+        )
+
+        primary_symbol = self.get_symbol(primary_symbol_name)
+
+        if primary_symbol is None:
+            return
+
+        step = ValuationPathStep(primary_symbol, last.forward)
+        path[-1] = step
+
     def _shortest_valuation_path(
         self, asset: str
     ) -> Optional[ValuationPath]:
-        """
-        Returns the shortest List[Step] that starts from `asset` and ends at any asset in
-        `account_quote_assets` with the final Step.forward == True. Returns None if no path exists.
-
-        Graph interpretation (standard for tradable pairs):
-        - If Step.forward is True : input = symbol.base_asset,  output = symbol.quote_asset
-        - If Step.forward is False: input = symbol.quote_asset, output = symbol.base_asset
+        """Find the shortest path to get the valuation value of a certain asset.
         """
 
         # State includes "how we arrived" so we don't discard an asset

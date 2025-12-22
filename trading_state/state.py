@@ -1,5 +1,6 @@
 from typing import (
     Dict,
+    Iterable,
     Tuple,
     Set,
     Optional,
@@ -97,9 +98,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
     # asset -> balance
     _balances: BalanceManager
 
-    # asset -> notional limit
-    _notional_limits: Dict[str, Decimal]
-
     # No allocations for account currencies by default
     _alt_currency_weights: Optional[List[Decimal]] = None
 
@@ -118,11 +116,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         self._config = config
         self._symbols = Symbols(config)
+        self._balances = BalanceManager(self._symbols)
 
-        self._notional_limits = {}
-        self._frozen = {}
-
-        self._balances = {}
         self._expected = {}
         self._target_orders = DictSet[PositionTarget, Order]()
 
@@ -167,11 +162,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if self._symbols.set_symbol(symbol):
             self.emit(TradingStateEvent.SYMBOL_ADDED, symbol)
 
-    def set_notional_limit(
-        self,
-        asset: str,
-        limit: Optional[Decimal]
-    ) -> None:
+    def set_notional_limit(self, *args, **kwargs) -> None:
         """
         Set the notional limit for a certain asset. Pay attention that, by design, it is mandatory to set the notional limit for an asset before trading with the trading state.
 
@@ -196,15 +187,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         although the balance is enough to buy 10 BTC
         """
 
-        if limit is not None and limit < DECIMAL_ZERO:
-            limit = None
-
-        if limit is None:
-            self._notional_limits.pop(asset, None)
-            return
-
-        # Just set the notional limit
-        self._notional_limits[asset] = limit
+        self._balances.set_notional_limit(*args, **kwargs)
 
     def set_alt_currency_weights(
         self,
@@ -247,6 +230,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_balances(
         self,
+        new: Iterable[Balance],
         *args, **kwargs
     ) -> None:
         """
@@ -263,21 +247,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
             ])
         """
 
-        self._balances.set_balances(*args, **kwargs)
-
-    # def get_balance(self, asset: str) -> Balance:
-    #     """
-    #     Get the balance of an asset
-    #     """
-
-    #     return self._balances.get_balance(asset)
-
-    # def get_balances(self) -> Dict[str, Balance]:
-    #     """
-    #     Get all balances
-    #     """
-
-    #     return self._balances.copy()
+        for balance in new:
+            self._set_balance(balance, *args, **kwargs)
 
     def get_account_value(self) -> Decimal:
         """
@@ -301,7 +272,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Check whether the symbol is supported
         """
 
-        return self._symbols.has(symbol_name)
+        return self._symbols.has_symbol(symbol_name)
 
     def exposure(
         self,
@@ -318,7 +289,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             - Tuple[None, Decimal]: the limit exposure of the asset
         """
 
-        exception = self._symbols.check_asset_ready(asset)
+        exception = self._balances.check_asset_ready(asset)
         if exception is not None:
             return exception, None
 
@@ -327,7 +298,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if target is not None:
             return None, target.exposure
 
-        return None, self._get_asset_exposure(asset)
+        return None, self._balances.get_asset_exposure(asset)
 
     def cancel_order(self, order: Order) -> None:
         """
@@ -429,7 +400,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             state.expect('BTCUSDT', 1., ...)
         """
 
-        exception = self._symbols.check_symbol_ready(symbol_name)
+        exception = self._balances.check_symbol_ready(symbol_name)
 
         if exception is not None:
             return exception, None
@@ -452,7 +423,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
                 # We treat it as a success
                 return None, False
 
-        calculated_exposure = self._get_asset_exposure(asset)
+        calculated_exposure = self._balances.get_asset_exposure(asset)
 
         if calculated_exposure == exposure:
             # If the target is the same, no need to update
@@ -505,20 +476,17 @@ class TradingState(EventEmitter[TradingStateEvent]):
     def _set_balance(
         self,
         balance: Balance,
-        delta: bool = False
+        *args, **kwargs
     ) -> None:
         """
         Set the balance of an asset
         """
 
+        old_balance, balance = self._balances.set_balance(
+            balance, *args, **kwargs
+        )
+
         asset = balance.asset
-        old_balance = self._balances.get(asset)
-
-        if delta and old_balance is not None:
-            balance.free += old_balance.free
-            balance.locked += old_balance.locked
-
-        self._balances[balance.asset] = balance
 
         target = self._expected.get(asset)
 
@@ -538,7 +506,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             # so we just keep it.
             return
 
-        calculated_exposure = self._get_asset_exposure(asset)
+        calculated_exposure = self._balances.get_asset_exposure(asset)
         if calculated_exposure == target.exposure:
             # The exposure is the same, no need to update
             return
@@ -546,22 +514,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # We need to remove the expectation,
         # so that self.exposure() will return the recalculated exposure
         self._expected.pop(asset, None)
-
-    def _get_asset_exposure(self, asset: str) -> Decimal:
-        """
-        Get the calculated limit exposure of an asset
-
-        Should only be called after `asset_ready`
-
-        Returns:
-            Decimal: the calculated limit exposure of the asset
-        """
-
-        balance = self._balances.get_asset_total_balance(asset)
-        price = self._symbols.valuation_price(asset)
-        limit = self._notional_limits.get(asset)
-
-        return balance * price / limit
 
     def _diff(self) -> None:
         """
@@ -587,7 +539,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
                     self._expected.pop(asset, None)
 
     def _update_target_exposure(self, target: PositionTarget) -> None:
-        target.exposure = self._get_asset_exposure(
+        target.exposure = self._balances.get_asset_exposure(
             target.symbol.base_asset
         )
 
@@ -620,7 +572,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         valuation_price = self._symbols.valuation_price(asset)
         value = balance * valuation_price
 
-        limit = self._notional_limits.get(asset)
+        limit = self._balances.get_notional_limit(asset)
         value_delta = Decimal(str(target.exposure)) * limit - value
         quantity = value_delta / valuation_price
 
@@ -686,7 +638,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
                     # For BUY: balance must be positive
                     (
                         balance := (
-                            self.get_balance(quote_asset)
+                            self._balances.get_balance(quote_asset)
                             or Balance(quote_asset, DECIMAL_ZERO, DECIMAL_ZERO)
                         )
                     ).total > DECIMAL_ZERO
@@ -736,7 +688,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
             quantity = min(
                 quantity,
                 # We need to check the available balance of the quote asset
-                self.get_balance(symbol.quote_asset).free / target.price
+                self._balances.get_balance(
+                    symbol.quote_asset
+                ).free / target.price
             )
 
         self._create_order(symbol, quantity, target, side)

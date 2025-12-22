@@ -38,6 +38,14 @@ class AssetNotDefinedError(Exception):
         self.asset = asset
 
 
+class ValuationNotAvailableError(Exception):
+    def __init__(self, asset: str) -> None:
+        message = f'valuation path for asset "{asset}" is not available'
+        super().__init__(message)
+
+        self.asset = asset
+
+
 class ValuationPriceNotReadyError(Exception):
     def __init__(self, asset: str, symbol: Symbol) -> None:
         message = f'valuation price for "{asset}" through "{symbol.name}" is not ready yet'

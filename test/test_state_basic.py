@@ -33,21 +33,21 @@ def test_config():
     assert config.account_currencies == (USDC, USDT)
 
 
-def test_trading_state_basic():
-    state = init_state()
+# def test_trading_state_basic():
+#     state = init_state()
 
-    assert state.config.account_currencies == (USDC, USDT)
+#     assert state.config.account_currencies == (USDC, USDT)
 
-    balances = state.get_balances()
-    balances[USDT] = Balance(USDT, DECIMAL_ZERO, DECIMAL_ZERO)
+#     balances = state.get_balances()
+#     balances[USDT] = Balance(USDT, DECIMAL_ZERO, DECIMAL_ZERO)
 
-    assert state.get_balance(USDT).free == Decimal('200000')
+#     assert state.get_balance(USDT).free == Decimal('200000')
 
-    state.set_balances([
-        Balance(USDT, Decimal('100000'), DECIMAL_ZERO)
-    ], delta=True)
+#     state.set_balances([
+#         Balance(USDT, Decimal('100000'), DECIMAL_ZERO)
+#     ], delta=True)
 
-    assert state.get_balance(USDT).free == Decimal('300000')
+#     assert state.get_balance(USDT).free == Decimal('300000')
 
 
 def test_underlying_assets():

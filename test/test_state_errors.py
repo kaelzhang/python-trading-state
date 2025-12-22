@@ -58,7 +58,6 @@ def test_trading_state_errors(test_symbols: Symbols):
 
     price = Decimal('10000')
 
-    # with pytest.raises(SymbolNotDefinedError):
     exception, _ = state.expect(
         BTCUSDC,
         exposure=1,
@@ -73,6 +72,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     assert isinstance(exception, AssetNotDefinedError)
 
     state.set_symbol(test_symbols[BTCUSDC])
+    state.set_symbol(test_symbols[BTCUSDT])
 
     exception, _ = state.expect(
         BTCUSDC,
@@ -134,7 +134,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     ])
 
 
-def test_feature_not_allowed_error(test_symbols: Symbols):
+def test_feature_not_allowed_error(_):
     state = init_state()
 
     # The one that does not support quote order quantity
