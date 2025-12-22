@@ -298,7 +298,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if target is not None:
             return None, target.exposure
 
-        return None, self._balances.get_asset_exposure(asset)
+        return None, self._get_asset_exposure(asset)
 
     def cancel_order(self, order: Order) -> None:
         """
@@ -423,7 +423,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
                 # We treat it as a success
                 return None, False
 
-        calculated_exposure = self._balances.get_asset_exposure(asset)
+        calculated_exposure = self._get_asset_exposure(asset)
 
         if calculated_exposure == exposure:
             # If the target is the same, no need to update
@@ -506,7 +506,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             # so we just keep it.
             return
 
-        calculated_exposure = self._balances.get_asset_exposure(asset)
+        calculated_exposure = self._get_asset_exposure(asset)
         if calculated_exposure == target.exposure:
             # The exposure is the same, no need to update
             return
@@ -514,6 +514,32 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # We need to remove the expectation,
         # so that self.exposure() will return the recalculated exposure
         self._expected.pop(asset, None)
+
+    def _get_asset_exposure(self, asset: str) -> Decimal:
+        """
+        Get the calculated limit exposure of an asset
+
+        Should only be called after `asset_ready`
+
+        Returns:
+            Decimal: the calculated limit exposure of the asset
+        """
+
+        balance = self._get_asset_expected_balance(asset)
+        price = self._symbols.valuation_price(asset)
+        limit = self._balances.get_notional_limit(asset)
+
+        return balance * price / limit
+
+    def _get_asset_expected_balance(self, asset: str) -> Decimal:
+        extra = DECIMAL_ZERO
+
+        for order in self._orders.get_orders_by_base_asset(asset):
+            # For BUY orders, the balance will increase
+            if order.ticket.side is OrderSide.BUY:
+                extra += order.ticket.quantity - order.filled_quantity
+
+        return self._balances.get_asset_total_balance(asset, extra)
 
     def _diff(self) -> None:
         """
@@ -539,7 +565,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
                     self._expected.pop(asset, None)
 
     def _update_target_exposure(self, target: PositionTarget) -> None:
-        target.exposure = self._balances.get_asset_exposure(
+        target.exposure = self._get_asset_exposure(
             target.symbol.base_asset
         )
 
@@ -568,7 +594,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # Calculate the eventual valuation value of the asset
         # --------------------------------------------------------
         asset = symbol.base_asset
-        balance = self._balances.get_asset_total_balance(asset)
+        balance = self._get_asset_expected_balance(asset)
         valuation_price = self._symbols.valuation_price(asset)
         value = balance * valuation_price
 

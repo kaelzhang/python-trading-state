@@ -179,7 +179,7 @@ class BalanceManager:
             for balance in self._balances.values()
         )
 
-    def get_asset_total_balance(self, asset: str) -> Decimal:
+    def get_asset_total_balance(self, asset: str, extra: Decimal) -> Decimal:
         """
         Get the total balance of an asset, which excludes
         - frozen balance
@@ -187,28 +187,12 @@ class BalanceManager:
         Should be called after `asset_ready`
         """
 
-        total = self._balances.get(asset).total
+        total = self._balances.get(asset).total + extra
 
         return max(
             total - self._frozen.get(asset, DECIMAL_ZERO),
             DECIMAL_ZERO
         )
-
-    def get_asset_exposure(self, asset: str) -> Decimal:
-        """
-        Get the calculated limit exposure of an asset
-
-        Should only be called after `asset_ready`
-
-        Returns:
-            Decimal: the calculated limit exposure of the asset
-        """
-
-        balance = self.get_asset_total_balance(asset)
-        price = self._symbols.valuation_price(asset)
-        limit = self.get_notional_limit(asset)
-
-        return balance * price / limit
 
     def check_symbol_ready(self, symbol_name: str) -> SuccessOrException:
         """

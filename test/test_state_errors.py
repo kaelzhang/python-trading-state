@@ -134,7 +134,7 @@ def test_trading_state_errors(test_symbols: Symbols):
     ])
 
 
-def test_feature_not_allowed_error(_):
+def test_feature_not_allowed_error(test_symbols: Symbols):
     state = init_state()
 
     # The one that does not support quote order quantity

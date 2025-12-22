@@ -113,23 +113,21 @@ class DictSet(Generic[K, V]):
         self._data.clear()
 
 
-EventEmitterCallback = Callable[[...], None]
-
 class EventEmitter(Generic[K]):
     """
     An simple event emitter implementation which does
     not ensure execution order of listeners
     """
 
-    _listeners: DictSet[K, EventEmitterCallback]
+    _listeners: DictSet[K, Callable]
 
     def __init__(self):
-        self._listeners = DictSet[K, EventEmitterCallback]()
+        self._listeners = DictSet[K, Callable]()
 
     def on(
         self,
         event: str,
-        listener: EventEmitterCallback
+        listener: Callable
     ) -> None:
         self._listeners[event].add(listener)
 
