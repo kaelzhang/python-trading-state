@@ -8,7 +8,6 @@ from typing import (
 )
 
 from decimal import Decimal
-from datetime import datetime
 
 from .common import (
     DECIMAL_ZERO,
@@ -25,6 +24,7 @@ from .exceptions import (
     ValuationPriceNotReadyError,
     SymbolPriceNotReadyError
 )
+from .config import TradingConfig
 
 
 class Balance:
@@ -56,31 +56,6 @@ class Balance:
         return class_repr(self, main='asset')
 
 
-class BalanceUpdate:
-    __slots__ = (
-        'asset',
-        'update',
-        'time'
-    )
-
-    asset: str
-    update: Decimal
-    time: datetime
-
-    def __init__(
-        self,
-        asset: str,
-        update: Decimal,
-        time: datetime
-    ):
-        self.asset = asset
-        self.update = update
-        self.time = time
-
-    def __repr__(self) -> str:
-        return class_repr(self, main='asset')
-
-
 class BalanceManager:
     _balances: Dict[str, Balance]
 
@@ -95,8 +70,10 @@ class BalanceManager:
 
     def __init__(
         self,
+        config: TradingConfig,
         symbols: Symbols
     ) -> None:
+        self._config = config
         self._symbols = symbols
 
         self._balances = {}
@@ -165,9 +142,6 @@ class BalanceManager:
 
     def get_notional_limit(self, asset: str) -> Optional[Decimal]:
         return self._notional_limits.get(asset)
-
-    def update_balance() -> None:
-        ...
 
     def get_account_value(self) -> Decimal:
         """

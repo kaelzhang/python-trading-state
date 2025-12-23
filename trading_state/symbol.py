@@ -20,7 +20,7 @@ from .enums import (
 from .config import TradingConfig
 from .common import (
     DECIMAL_ONE,
-    DictSet,
+    FactoryDict,
 )
 
 if TYPE_CHECKING:
@@ -175,10 +175,10 @@ class Symbols:
     _underlying_assets: Set[str]
 
     # base asset -> symbol
-    _base_asset_symbols: DictSet[str, Symbol]
+    _base_asset_symbols: FactoryDict[str, Set[Symbol]]
 
     # quote asset -> symbol
-    _quote_asset_symbols: DictSet[str, Symbol]
+    _quote_asset_symbols: FactoryDict[str, Set[Symbol]]
 
     # symbol name -> price
     _symbol_prices: Dict[str, Decimal]
@@ -194,8 +194,8 @@ class Symbols:
         self._assets = set[str]()
         self._underlying_assets = set[str]()
 
-        self._base_asset_symbols = DictSet[str, Symbol]()
-        self._quote_asset_symbols = DictSet[str, Symbol]()
+        self._base_asset_symbols = FactoryDict[str, Set[Symbol]](set[Symbol])
+        self._quote_asset_symbols = FactoryDict[str, Set[Symbol]](set[Symbol])
 
         self._symbol_prices = {}
         self._valuation_paths = {}

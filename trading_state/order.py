@@ -27,7 +27,7 @@ from .target import (
 from .common import (
     class_repr,
     DECIMAL_ZERO,
-    DictSet,
+    FactoryDict,
     EventEmitter
 )
 
@@ -252,7 +252,7 @@ class OrderManager:
 
     # Only allow one order for a single symbol
     _symbol_orders: Dict[Symbol, Order]
-    _base_asset_orders: DictSet[str, Order]
+    _base_asset_orders: FactoryDict[str, Set[Order]]
     # _quote_asset_orders: DictSet[str, Order]
 
     # Just set it as a public property for convenience
@@ -267,7 +267,7 @@ class OrderManager:
         self._orders_to_cancel = set[Order]()
 
         self._symbol_orders = {}
-        self._base_asset_orders = DictSet[str, Order]()
+        self._base_asset_orders = FactoryDict[str, Set[Order]](set[Order])
         # self._quote_asset_orders = DictSet[str,Order]()
         self.history = OrderHistory(max_order_history_size)
 

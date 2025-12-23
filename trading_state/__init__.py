@@ -7,8 +7,7 @@ from .state import (
 )
 
 from .balance import (
-    Balance,
-    BalanceUpdate
+    Balance
 )
 
 from .enums import (
@@ -60,7 +59,11 @@ from .order import (
     OrderHistory
 )
 
-from .symbol import Symbol
+from .symbol import (
+    Symbol,
+    ValuationPathStep,
+    ValuationPath
+)
 
 from .target import (
     PositionTarget
@@ -68,4 +71,9 @@ from .target import (
 
 from .common import (
     EventEmitter
+)
+
+from .pnl import (
+    CashFlow,
+    PerformanceAnalyzer
 )

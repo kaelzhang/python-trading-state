@@ -7,7 +7,7 @@ from datetime import datetime
 
 from trading_state import (
     Balance,
-    BalanceUpdate
+    CashFlow
 )
 from trading_state.common import (
     timestamp_to_datetime
@@ -48,7 +48,7 @@ def decode_account_update_event(
 
 def decode_balance_update_event(
     payload: dict
-) -> Tuple[datetime, BalanceUpdate]:
+) -> Tuple[datetime, CashFlow]:
     """
     Generate balances from Binance balance update
 
@@ -64,7 +64,7 @@ def decode_balance_update_event(
     event_time = timestamp_to_datetime(payload['E'])
     clear_time = timestamp_to_datetime(payload['T'])
 
-    return event_time, BalanceUpdate(asset, update, clear_time)
+    return event_time, CashFlow(asset, update, clear_time)
 
 
 def decode_account_info_response(account_info: dict) -> Set[Balance]:

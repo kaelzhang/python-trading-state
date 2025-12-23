@@ -35,6 +35,8 @@ class TradingConfig:
     max_order_history_size: int = 10000
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
+    benchmark_assets: Tuple[str, ...] = field(default_factory=tuple)
+
     @property
     def account_currencies(self) -> Tuple[str, ...]:
         # Put the account currency at the end, so that

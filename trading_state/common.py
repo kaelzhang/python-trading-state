@@ -7,11 +7,11 @@ from typing import (
     TypeVar,
     Dict,
     Generic,
-    MutableSet,
     Callable,
     Any,
     Hashable,
-    Union
+    Union,
+    Set
 )
 
 
@@ -100,14 +100,21 @@ def class_repr(
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
 
-class DictSet(Generic[K, V]):
-    _data: Dict[K, MutableSet[V]]
 
-    def __init__(self):
-        self._data: Dict[K, MutableSet[V]] = {}
+class FactoryDict(Generic[K, V]):
+    def __init__(
+        self,
+        factory: Callable[[], V]
+    ):
+        self._data: Dict[K, V] = {}
+        self._factory = factory
 
-    def __getitem__(self, key: K) -> MutableSet[V]:
-        return self._data.setdefault(key, set[V]())
+    def __getitem__(self, key: K) -> V:
+        value = self._data.get(key)
+        if value is None:
+            value = self._factory()
+            self._data[key] = value
+        return value
 
     def clear(self) -> None:
         self._data.clear()
@@ -119,10 +126,10 @@ class EventEmitter(Generic[K]):
     not ensure execution order of listeners
     """
 
-    _listeners: DictSet[K, Callable]
+    _listeners: FactoryDict[K, Set[Callable]]
 
     def __init__(self):
-        self._listeners = DictSet[K, Callable]()
+        self._listeners = FactoryDict[K, Set[Callable]](set[Callable])
 
     def on(
         self,

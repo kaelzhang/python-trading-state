@@ -23,7 +23,11 @@ from .symbol import (
 )
 from .balance import (
     Balance,
-    BalanceManager
+    BalanceManager,
+)
+from .pnl import (
+    PerformanceAnalyzer,
+    CashFlow
 )
 from .order import (
     Order,
@@ -47,7 +51,7 @@ from .common import (
     DECIMAL_ZERO,
     DECIMAL_ONE,
     ValueOrException,
-    DictSet,
+    FactoryDict,
     EventEmitter
 )
 from .config import TradingConfig
@@ -104,7 +108,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     # asset -> position expectation
     _expected: Dict[str, PositionTarget]
     # position target -> order
-    _target_orders: DictSet[PositionTarget, Order]
+    _target_orders: FactoryDict[PositionTarget, Set[Order]]
 
     _orders: OrderManager
 
@@ -116,12 +120,20 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         self._config = config
         self._symbols = Symbols(config)
-        self._balances = BalanceManager(self._symbols)
+        self._balances = BalanceManager(config, self._symbols)
 
         self._expected = {}
-        self._target_orders = DictSet[PositionTarget, Order]()
+        self._target_orders = FactoryDict[
+            PositionTarget, Set[Order]
+        ](set[Order])
 
         self._orders = OrderManager(config.max_order_history_size)
+        self._perf = PerformanceAnalyzer(
+            config,
+            self._symbols,
+            self._balances,
+            self._orders
+        )
 
     @property
     def config(self) -> TradingConfig:
@@ -249,6 +261,15 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         for balance in new:
             self._set_balance(balance, *args, **kwargs)
+
+    def set_cash_flow(
+        self,
+        cash_flow: CashFlow
+    ) -> None:
+        """Handle external cashflow update
+        """
+
+        self._perf.set_cash_flow(cash_flow)
 
     def get_account_value(self) -> Decimal:
         """
