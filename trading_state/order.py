@@ -45,6 +45,7 @@ class Trade:
         commission_cost (Decimal): the cost of commission asset based on the account currency
     """
 
+
     base_quantity: Decimal
     base_price: Decimal
     quote_quantity: Decimal
@@ -173,14 +174,15 @@ class Order(EventEmitter[OrderUpdatedType]):
             old_commission_quantity
         )
 
-        if status is OrderStatus.CREATED:
+        if self._id is None:
             if id is None:
                 raise ValueError(
-                    'order id is required when status is CREATED'
+                    'order id is required on the first update'
                 )
 
             self._id = id
 
+        if self._status.lt(OrderStatus.CREATED):
             # Not setting created_at is not fatal
             self.created_at = created_at
             self.updated_at = created_at
@@ -206,7 +208,8 @@ class Order(EventEmitter[OrderUpdatedType]):
 
         base_quantity_delta = self.filled_quantity - old_filled_quantity
 
-        if base_quantity_delta.is_zero():
+        if base_quantity_delta <= 0:
+            # No new fills or the data is stale
             return
 
         quote_quantity_delta = self.quote_quantity - old_quote_quantity
