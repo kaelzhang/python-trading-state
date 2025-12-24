@@ -60,7 +60,7 @@ def decode_order_update_event(
     Returns:
         Tuple:
         - str: client order id
-        - dict: the order updates kwargs for order.update()
+        - dict: the order updates kwargs for state.update_order()
     """
 
     # Current order status

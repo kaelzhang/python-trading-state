@@ -127,7 +127,8 @@ def test_trading_state():
     # We set the order status to ABOUT_TO_CANCEL,
     # which usually is triggered by the trader
     # if the order is failed to be canceled from the exchange
-    order_to_cancel.update(
+    state.update_order(
+        order_to_cancel,
         status = OrderStatus.ABOUT_TO_CANCEL
     )
     orders, orders_to_cancel = state.get_orders()
@@ -146,9 +147,7 @@ def test_trading_state():
     assert len(orders_to_cancel) == 1
     assert order is next(iter(orders_to_cancel))
 
-    order.update(
-        status = OrderStatus.CANCELLED
-    )
+    state.update_order(order, status=OrderStatus.CANCELLED)
 
     # We should also remove the expectation for the asset
     # to avoid unexpected behavior
@@ -187,7 +186,8 @@ def test_order_filled():
     assert 'status=SUBMITTING' in order_str
     assert 'quantity=1.00000000' in order_str
 
-    order.update(
+    state.update_order(
+        order,
         status = OrderStatus.CREATED,
         id = 'order-1',
         filled_quantity = Decimal('0.5')
@@ -198,7 +198,8 @@ def test_order_filled():
         Balance(BTC, Decimal('1.5'), Decimal('0'))
     ])
 
-    order.update(
+    state.update_order(
+        order,
         status = OrderStatus.FILLED
     )
 
@@ -317,19 +318,19 @@ def test_alt_currencies():
     order1, order2 = orders
 
     with pytest.raises(ValueError, match='order id is required'):
-        order1.update(
-            status=OrderStatus.CREATED
-        )
+        state.update_order(order1, status=OrderStatus.CREATED)
 
     now = datetime.now()
 
-    order1.update(
+    state.update_order(
+        order1,
         status=OrderStatus.CREATED,
         id='order-1',
         created_at=now
     )
 
-    order2.update(
+    state.update_order(
+        order2,
         status=OrderStatus.CREATED,
         id='order-2',
         created_at=now
@@ -339,7 +340,8 @@ def test_alt_currencies():
     assert order1.updated_at == now
 
     now += timedelta(seconds=1)
-    order1.update(
+    state.update_order(
+        order1,
         updated_at=now
     )
     assert order1.updated_at == now
@@ -380,12 +382,14 @@ def test_alt_currencies():
 
     assert state.exposure(BTC) == (None, Decimal('0.3'))
 
-    order2.update(
+    state.update_order(
+        order2,
         status = OrderStatus.CANCELLED
     )
     assert state.exposure(BTC) == (None, Decimal('0.2'))
 
-    order1.update(
+    state.update_order(
+        order1,
         status=OrderStatus.CANCELLED
     )
     assert state.exposure(BTC) == (None, Decimal('0.1'))
@@ -424,22 +428,26 @@ def test_alt_currencies():
 
     for order in orders:
         target = order.target
-        order.update(
+        state.update_order(
+            order,
             filled_quantity=order.ticket.quantity,
             quote_quantity=order.ticket.quantity * target.price
         )
         # It will not trigger quantity updated event, coz no change
-        order.update(
+        state.update_order(
+            order,
             filled_quantity=order.ticket.quantity,
             quote_quantity=order.ticket.quantity * target.price
         )
 
     for order in orders:
-        order.update(
+        state.update_order(
+            order,
             status=OrderStatus.FILLED
         )
         # It will not trigger status updated event
-        order.update(
+        state.update_order(
+            order,
             status=OrderStatus.FILLED
         )
         target = order.target
@@ -514,10 +522,7 @@ def test_alt_currencies_edge_cases():
 
     # Default account currency comes last, so it will allocate to USDT
     assert order.ticket.symbol.quote_asset == USDT
-    order.update(
-        status=OrderStatus.CANCELLED
-    )
-
+    state.update_order(order, status=OrderStatus.CANCELLED)
 
     # The exposure delta is too small
     # to create even a single order due to NOTIONAL

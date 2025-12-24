@@ -124,7 +124,8 @@ class Order(EventEmitter[OrderUpdatedType]):
 
         Usage::
 
-            order.update(
+            state.update_order(
+                order,
                 filled_quantity = Decimal('0.5'),
                 quote_quantity = Decimal('1000')
             )
@@ -154,13 +155,12 @@ class Order(EventEmitter[OrderUpdatedType]):
         ):
             self.filled_quantity = filled_quantity
 
-            if status is None:
-                # Only emit the event if the status is not changed
-                self.emit(
-                    OrderUpdatedType.FILLED_QUANTITY_UPDATED,
-                    self,
-                    filled_quantity
-                )
+            # Only emit the event if the status is not changed
+            self.emit(
+                OrderUpdatedType.FILLED_QUANTITY_UPDATED,
+                self,
+                filled_quantity
+            )
 
         self._update_trades(
             symbols,
@@ -356,8 +356,11 @@ class OrderManager:
 
     def __init__(
         self,
-        max_order_history_size: int
+        max_order_history_size: int,
+        symbols: Symbols
     ) -> None:
+        self._symbols = Symbols
+
         self._open_orders = set[Order]()
         self._id_orders = {}
         self._orders_to_cancel = set[Order]()
@@ -416,6 +419,7 @@ class OrderManager:
         # so we should check the status
         if order.status.lt(OrderStatus.ABOUT_TO_CANCEL):
             order.update(
+                self._symbols,
                 status = OrderStatus.ABOUT_TO_CANCEL
             )
 
@@ -462,18 +466,10 @@ class OrderManager:
         orders_to_cancel = self._orders_to_cancel
         self._orders_to_cancel = set[Order]()
 
-        for order in orders_to_cancel:
-            order.update(
-                status = OrderStatus.CANCELLING
-            )
-
         orders_to_create = set[Order]()
 
         for order in self._open_orders:
             if order.status is OrderStatus.INIT:
                 orders_to_create.add(order)
-                order.update(
-                    status = OrderStatus.SUBMITTING
-                )
 
         return orders_to_create, orders_to_cancel

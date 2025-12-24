@@ -127,7 +127,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
             PositionTarget, Set[Order]
         ](set[Order])
 
-        self._orders = OrderManager(config.max_order_history_size)
+        self._orders = OrderManager(
+            config.max_order_history_size,
+            self._symbols
+        )
         self._perf = PerformanceAnalyzer(
             config,
             self._symbols,
@@ -480,7 +483,15 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         self._diff()
 
-        return self._orders.get_orders()
+        orders, orders_to_cancel = self._orders.get_orders()
+
+        for order in orders:
+            self.update_order(order, status=OrderStatus.SUBMITTING)
+
+        for order in orders_to_cancel:
+            self.update_order(order, status=OrderStatus.CANCELLING)
+
+        return orders, orders_to_cancel
 
     def update_order(self, order: Order, **kwargs) -> None:
         """
@@ -805,10 +816,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
             self._on_order_status_updated
         )
 
-        # order.on(
-        #     OrderUpdatedType.FILLED_QUANTITY_UPDATED,
-        #     self._on_order_filled_quantity_updated
-        # )
+        order.on(
+            OrderUpdatedType.FILLED_QUANTITY_UPDATED,
+            self._on_order_filled_quantity_updated
+        )
 
         self._orders.add(order)
 
@@ -847,13 +858,13 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # can also listen to the changes of order status
         self.emit(TradingStateEvent.ORDER_STATUS_UPDATED, order, status)
 
-    # def _on_order_filled_quantity_updated(
-    #     self,
-    #     order: Order,
-    #     filled_quantity: Decimal
-    # ) -> None:
-    #     self.emit(
-    #         TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED,
-    #         order,
-    #         filled_quantity
-    #     )
+    def _on_order_filled_quantity_updated(
+        self,
+        order: Order,
+        filled_quantity: Decimal
+    ) -> None:
+        self.emit(
+            TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED,
+            order,
+            filled_quantity
+        )
