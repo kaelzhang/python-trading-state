@@ -14,7 +14,7 @@ from .common import (
     class_repr,
     SuccessOrException,
 )
-from .symbol import Symbols
+from .symbol import SymbolManager
 from .exceptions import (
     BalanceNotReadyError,
     NotionalLimitNotSetError,
@@ -71,7 +71,7 @@ class BalanceManager:
     def __init__(
         self,
         config: TradingConfig,
-        symbols: Symbols
+        symbols: SymbolManager
     ) -> None:
         self._config = config
         self._symbols = symbols

@@ -5,7 +5,7 @@ from typing import (
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from .symbol import Symbols
+from .symbol import SymbolManager
 from .order import Order
 from .common import (
     DECIMAL_ZERO,
@@ -55,12 +55,12 @@ class PositionTracker:
     to calculate the cost basis and unrealized PnL of the account
     """
 
-    _symbols: Symbols
+    _symbols: SymbolManager
     _positions: FactoryDict[str, Position]
 
     def __init__(
         self,
-        symbols: Symbols
+        symbols: SymbolManager
     ):
         self._symbols = symbols
         self._positions = FactoryDict[str, Position](Position)

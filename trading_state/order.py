@@ -15,7 +15,7 @@ from enum import Enum
 
 from .symbol import (
     Symbol,
-    Symbols,
+    SymbolManager,
 )
 from .enums import OrderStatus
 from .order_ticket import OrderTicket
@@ -106,7 +106,7 @@ class Order(EventEmitter[OrderUpdatedType]):
 
     def update(
         self,
-        symbols: Symbols,
+        symbols: SymbolManager,
         status: Optional[OrderStatus] = None,
         created_at: Optional[datetime] = None,
         updated_at: Optional[datetime] = None,
@@ -198,7 +198,7 @@ class Order(EventEmitter[OrderUpdatedType]):
     # https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream#order-update
     def _update_trades(
         self,
-        symbols: Symbols,
+        symbols: SymbolManager,
         old_filled_quantity: Decimal,
         old_quote_quantity: Decimal,
         old_commission_quantity: Decimal
@@ -366,9 +366,9 @@ class OrderManager:
     def __init__(
         self,
         max_order_history_size: int,
-        symbols: Symbols
+        symbols: SymbolManager
     ) -> None:
-        self._symbols = Symbols
+        self._symbols = SymbolManager
 
         self._open_orders = set[Order]()
         self._id_orders = {}

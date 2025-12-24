@@ -8,11 +8,14 @@ from .common import (
 )
 
 from .config import TradingConfig
-from .symbol import Symbols
+from .symbol import SymbolManager
 from .balance import BalanceManager
 from .order import (
     OrderManager,
     Order
+)
+from .position import (
+    PositionTracker
 )
 
 
@@ -48,13 +51,15 @@ class PerformanceNode:
 class PerformanceAnalyzer:
     _cash_flows: List[CashFlow]
     _net_deposits: Decimal = DECIMAL_ZERO
+
     _inited: bool = False
     _initial_account_value: Decimal = DECIMAL_ZERO
+    _realized_pnl_total: Decimal = DECIMAL_ZERO
 
     def __init__(
         self,
         config: TradingConfig,
-        symbols: Symbols,
+        symbols: SymbolManager,
         balances: BalanceManager,
         orders: OrderManager
     ):
@@ -65,6 +70,8 @@ class PerformanceAnalyzer:
 
         self._cash_flows = []
         self._inited = False
+
+        self._position_tracker = PositionTracker(symbols)
 
     def init(self) -> None:
         if not self._inited:
@@ -86,7 +93,18 @@ class PerformanceAnalyzer:
         self._cash_flows.append(cash_flow)
         self.record()
 
-    def record(
+    def track_order(
+        self,
+        order: Order
+    ) -> None:
+        self._realized_pnl_total += self._position_tracker.track_order(order)
+
+        self._record()
+
+    def record(self, *args, **kwargs) -> PerformanceNode:
+        return self._record(*args, **kwargs)
+
+    def _record(
         self,
         tags: List[str] = None,
         time: datetime = datetime.now()
@@ -102,13 +120,4 @@ class PerformanceAnalyzer:
             PerformanceNode: The created performance snapshot
         """
 
-        # account_value = self._get_account_value()
-
-    def track_order(
-        self,
-        order: Order
-    ) -> None:
-        ...
-
-    def summary(self) -> None:
-        ...
+        account_value = self._get_account_value()

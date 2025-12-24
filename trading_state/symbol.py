@@ -167,7 +167,7 @@ ValuationPath = List[ValuationPathStep]
 SearchState = Tuple[str, Optional[bool]]
 
 
-class Symbols:
+class SymbolManager:
     # symbol name -> symbol
     _symbols: Dict[str, Symbol]
 

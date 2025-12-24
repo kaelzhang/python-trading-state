@@ -19,7 +19,7 @@ from .enums import (
 )
 from .symbol import (
     Symbol,
-    Symbols
+    SymbolManager
 )
 from .balance import (
     Balance,
@@ -97,7 +97,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     """
 
     _config: TradingConfig
-    _symbols: Symbols
+    _symbols: SymbolManager
 
     # asset -> balance
     _balances: BalanceManager
@@ -119,7 +119,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         super().__init__()
 
         self._config = config
-        self._symbols = Symbols(config)
+        self._symbols = SymbolManager(config)
         self._balances = BalanceManager(config, self._symbols)
 
         self._expected = {}
@@ -144,6 +144,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     # Public methods
     # ------------------------------------------------------------------------
+
+    def init(self) -> None:
+        """Tell the trading state that
+        """
 
     def set_price(
         self,
