@@ -83,6 +83,11 @@ class BalanceManager:
         self._checked_symbol_names = set[str]()
         self._checked_asset_names = set[str]()
 
+    def clean(self) -> None:
+        for asset in list(self._balances.keys()):
+            if not self._symbols.should_handle_asset(asset):
+                self._balances.pop(asset)
+
     def freeze(
         self,
         asset: str,

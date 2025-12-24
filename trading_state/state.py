@@ -8,6 +8,7 @@ from typing import (
     List
 )
 from decimal import Decimal
+import asyncio
 
 from .enums import (
     OrderStatus,
@@ -112,6 +113,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     _orders: OrderManager
 
+    # 0: not initialized
+    # 1: initializing
+    # 2: initialized
+    _init_status: int = 0
+
     def __init__(
         self,
         config: TradingConfig
@@ -138,6 +144,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
             self._orders
         )
 
+        self._init_future = asyncio.Future[None]()
+
     @property
     def config(self) -> TradingConfig:
         return self._config
@@ -145,9 +153,28 @@ class TradingState(EventEmitter[TradingStateEvent]):
     # Public methods
     # ------------------------------------------------------------------------
 
-    def init(self) -> None:
-        """Tell the trading state that
+    async def init(self) -> None:
         """
+        Tell the trading state to start initialization
+        which should be called after:
+        - setting up the symbols
+        - setting up the balances
+
+        It will
+        - wait for available prices for all required symbols to be set
+        - limit the balance updates to the supported assets
+        """
+
+        if self._init_status == 2:
+            return
+
+        if self._init_status == 1:
+            await self._symbols.init()
+
+            # To prevent self._after_init() being called multiple times
+            if self._init_status == 1:
+                self._init_status = 2
+                self._after_init()
 
     def set_price(
         self,
@@ -525,11 +552,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Set the balance of an asset
         """
 
+        asset = balance.asset
+
+        if (
+            self._init_status > 0
+            and not self._symbols.should_handle_asset(asset)
+        ):
+            # Do not handle the balance update for the asset
+            return
+
         old_balance, balance = self._balances.set_balance(
             balance, *args, **kwargs
         )
-
-        asset = balance.asset
 
         target = self._expected.get(asset)
 

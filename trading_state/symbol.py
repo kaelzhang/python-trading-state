@@ -184,6 +184,9 @@ class SymbolManager:
     _symbol_prices: Dict[str, Decimal]
     _valuation_paths: Dict[str, ValuationPath]
 
+    _allowed_assets: Optional[Set[str]] = None
+    _allowed_all_assets: bool = False
+
     def __init__(
         self,
         config: TradingConfig
@@ -200,6 +203,9 @@ class SymbolManager:
         self._symbol_prices = {}
         self._valuation_paths = {}
         self._account_assets = set(config.account_currencies)
+
+    async def init(self) -> None:
+        ...
 
     def set_price(
         self,
@@ -404,3 +410,35 @@ class SymbolManager:
             search(current_state, False)
 
         return None
+
+    def _get_allowed_assets(self) -> Set[str]:
+        if self._allowed_assets is not None:
+            return self._allowed_assets
+
+        assets = set[str]()
+
+        for symbol_name in self._config.symbols:
+            symbol = self.get_symbol(symbol_name)
+            if symbol is None:
+                continue
+
+            assets.add(symbol.base_asset)
+            assets.add(symbol.quote_asset)
+
+        self._allowed_assets = assets
+
+        if not assets:
+            self._allowed_all_assets = True
+
+        return assets
+
+    def should_handle_asset(self, asset: str) -> bool:
+        if self._allowed_all_assets:
+            return True
+
+        allowed_assets = self._get_allowed_assets()
+
+        if not allowed_assets:
+            return True
+
+        return asset in allowed_assets

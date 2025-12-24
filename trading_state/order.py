@@ -45,7 +45,6 @@ class Trade:
         commission_cost (Decimal): the cost of commission asset based on the account currency
     """
 
-
     base_quantity: Decimal
     base_price: Decimal
     quote_quantity: Decimal

@@ -27,6 +27,10 @@ class TradingConfig:
         max_order_history_size (int): the maximum size of the order history
 
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
+
+        benchmark_assets (Tuple[str, ...]): the assets to benchmark the performance of the strategy
+
+        symbols (Tuple[str, ...]): the list of symbols to take into account. If not provided, then all the symbols will be taken into account.
     """
     account_currency: str
     alt_account_currencies: Tuple[str, ...] = field(default_factory=tuple)
@@ -36,6 +40,8 @@ class TradingConfig:
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 
     benchmark_assets: Tuple[str, ...] = field(default_factory=tuple)
+
+    symbols: Tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def account_currencies(self) -> Tuple[str, ...]:

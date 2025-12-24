@@ -1,5 +1,4 @@
 from decimal import Decimal
-import pytest
 from datetime import datetime, timedelta
 
 from trading_state import (
