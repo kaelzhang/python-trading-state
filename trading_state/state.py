@@ -840,7 +840,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             ):
                 target.status = PositionTargetStatus.ACHIEVED
 
-        if status is OrderStatus.FILLED or status is OrderStatus.CANCELLED:
+        if status.completed():
             self._perf.track_order(order)
 
         # So that the caller of trading state

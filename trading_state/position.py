@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from .symbol import Symbols
-from .order import Order
+from .order import (
+    Order,
+    Trade
+)
 from .common import (
     DECIMAL_ZERO,
     FactoryDict
@@ -59,8 +62,6 @@ class PositionTracker:
         self._symbols = symbols
         self._positions = FactoryDict[str, Position](Position)
 
-    # Ref:
-    #
     def track_order(self, order: Order) -> None:
         """
         Track the order and update the position of the account

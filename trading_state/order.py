@@ -17,15 +17,9 @@ from .symbol import (
     Symbol,
     Symbols,
 )
-from .enums import (
-    OrderStatus
-)
-from .order_ticket import (
-    OrderTicket
-)
-from .target import (
-    PositionTarget,
-)
+from .enums import OrderStatus
+from .order_ticket import OrderTicket
+from .target import PositionTarget
 from .common import (
     class_repr,
     DECIMAL_ZERO,
@@ -41,7 +35,17 @@ class OrderUpdatedType(Enum):
 
 @dataclass
 class Trade:
-    ...
+    """The trade for the order
+
+    Args:
+        quantity (Decimal) the base asset quantity of the trade
+        valuation_price (Decimal) the average price of the base asset based on the account currency
+        commission_cost (Decimal) the cost of commission asset based on the account currency
+    """
+
+    quantity: Decimal
+    valuation_price: Decimal
+    commission_cost: Decimal
 
 
 class Order(EventEmitter[OrderUpdatedType]):
@@ -114,6 +118,8 @@ class Order(EventEmitter[OrderUpdatedType]):
             created_at (datetime = None): The creation time of the order
             filled_quantity (Decimal = None): The new filled base assert quantity of the order
             quote_quantity (Decimal = None): The cumulative quote asset transacted quantity of the order
+            commission_asset (str = None): The commission asset name
+            commission_quantity (Decimal = None): The cumulative quantity of the commission asset
             id (str = None): The client order id
 
         Usage::
@@ -187,17 +193,53 @@ class Order(EventEmitter[OrderUpdatedType]):
     def _update_trades(
         self,
         symbols: Symbols,
-        old_filled_quantity: Optional[Decimal],
-        old_quote_quantity: Optional[Decimal],
-        old_commission_quantity: Optional[Decimal]
+        old_filled_quantity: Decimal,
+        old_quote_quantity: Decimal,
+        old_commission_quantity: Decimal
     ) -> None:
-        """Update the trades of the order"""
+        """Update the trades of the order, also calculate the valuation value of asset cost according to the current price
+        """
 
-        if self.filled_quantity > old_filled_quantity:
-            self.trades.append(Trade(
-                filled_quantity = self.filled_quantity - old_filled_quantity,
-                quote_quantity = self.quote_quantity - old_quote_quantity
-            ))
+        quantity_delta = self.filled_quantity - old_filled_quantity
+
+        if quantity_delta.is_zero():
+            return
+
+        quote_quantity_delta = self.quote_quantity - old_quote_quantity
+        commision_quantity_delta = (
+            self.commission_quantity - old_commission_quantity
+        )
+
+        ticket = self.ticket
+        quote_asset = ticket.symbol.quote_asset
+        quote_price = symbols.valuation_price(quote_asset)
+
+        avg_valuation_price = (
+            # We should always calculate the cost of a trade by using
+            # quote asset transacted quantity * its valuation price.
+
+            # Because when we place a limit order at a certain price,
+            # the actual average price might be lower than the price
+            quote_quantity_delta * quote_price
+            / quantity_delta
+        )
+
+        commission_cost = DECIMAL_ZERO
+
+        if self.commission_asset is not None:
+            commission_cost = (
+                commision_quantity_delta * symbols.valuation_price(
+                    self.commission_asset
+                )
+            )
+
+        self.trades.append(
+            Trade(
+                quantity=quantity_delta,
+                valuation_price=avg_valuation_price,
+                commission_cost=commission_cost
+            )
+        )
 
     @property
     def status(self) -> OrderStatus:
@@ -206,11 +248,6 @@ class Order(EventEmitter[OrderUpdatedType]):
     @property
     def id(self) -> Optional[str]:
         return self._id
-
-    # def clean(self) -> None:
-    #     """Clean the order trades"""
-
-    #     self.trades = []
 
 
 ORDER_COMPARISON_KEYS = [
