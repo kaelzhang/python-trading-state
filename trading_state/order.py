@@ -38,13 +38,17 @@ class Trade:
     """The trade for the order
 
     Args:
-        quantity (Decimal) the base asset quantity of the trade
-        valuation_price (Decimal) the average price of the base asset based on the account currency
-        commission_cost (Decimal) the cost of commission asset based on the account currency
+        base_quantity (Decimal): the base asset quantity of the trade
+        base_price (Decimal): the average price of the base asset based on the account currency
+        quote_quantity (Decimal): the quote asset quantity of the trade
+        quote_price (Decimal): the price of the quote asset
+        commission_cost (Decimal): the cost of commission asset based on the account currency
     """
 
-    quantity: Decimal
-    valuation_price: Decimal
+    base_quantity: Decimal
+    base_price: Decimal
+    quote_quantity: Decimal
+    quote_price: Decimal
     commission_cost: Decimal
 
 
@@ -200,9 +204,9 @@ class Order(EventEmitter[OrderUpdatedType]):
         """Update the trades of the order, also calculate the valuation value of asset cost according to the current price
         """
 
-        quantity_delta = self.filled_quantity - old_filled_quantity
+        base_quantity_delta = self.filled_quantity - old_filled_quantity
 
-        if quantity_delta.is_zero():
+        if base_quantity_delta.is_zero():
             return
 
         quote_quantity_delta = self.quote_quantity - old_quote_quantity
@@ -214,14 +218,14 @@ class Order(EventEmitter[OrderUpdatedType]):
         quote_asset = ticket.symbol.quote_asset
         quote_price = symbols.valuation_price(quote_asset)
 
-        avg_valuation_price = (
+        base_price = (
             # We should always calculate the cost of a trade by using
             # quote asset transacted quantity * its valuation price.
 
             # Because when we place a limit order at a certain price,
             # the actual average price might be lower than the price
             quote_quantity_delta * quote_price
-            / quantity_delta
+            / base_quantity_delta
         )
 
         commission_cost = DECIMAL_ZERO
@@ -235,8 +239,10 @@ class Order(EventEmitter[OrderUpdatedType]):
 
         self.trades.append(
             Trade(
-                quantity=quantity_delta,
-                valuation_price=avg_valuation_price,
+                base_quantity=base_quantity_delta,
+                base_price=base_price,
+                quote_quantity=quote_quantity_delta,
+                quote_price=quote_price,
                 commission_cost=commission_cost
             )
         )

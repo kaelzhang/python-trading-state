@@ -11,7 +11,8 @@ from typing import (
     Any,
     Hashable,
     Union,
-    Set
+    Set,
+    Iterator
 )
 
 
@@ -115,6 +116,9 @@ class FactoryDict(Generic[K, V]):
             value = self._factory()
             self._data[key] = value
         return value
+
+    def items(self) -> Iterator[Tuple[K, V]]:
+        return self._data.items()
 
     def clear(self) -> None:
         self._data.clear()

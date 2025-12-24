@@ -41,7 +41,7 @@ class CashFlow:
         return class_repr(self, main='asset')
 
 
-class PerfNode:
+class PerformanceNode:
     ...
 
 
@@ -90,7 +90,7 @@ class PerformanceAnalyzer:
         self,
         tags: List[str] = None,
         time: datetime = datetime.now()
-    ) -> PerfNode:
+    ) -> PerformanceNode:
         """
         Record current performance snapshot
 
@@ -99,7 +99,7 @@ class PerformanceAnalyzer:
             time (datetime): Timestamp of the snapshot
 
         Returns:
-            PerfNode: The created performance snapshot
+            PerformanceNode: The created performance snapshot
         """
 
         # account_value = self._get_account_value()
