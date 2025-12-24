@@ -33,10 +33,7 @@ STP_MODE_MAP = {
 }
 
 
-Symbols = Set[Symbol]
-
-
-def decode_exchange_info_response(exchange_info: dict) -> Symbols:
+def decode_exchange_info_response(exchange_info: dict) -> Set[Symbol]:
     """
     Generate symbols from the Binance exchange info.
 

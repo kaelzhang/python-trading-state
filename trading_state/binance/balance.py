@@ -1,9 +1,7 @@
 from typing import (
-    Set,
-    Tuple
+    Set
 )
 from decimal import Decimal
-from datetime import datetime
 
 from trading_state import (
     Balance,
@@ -13,14 +11,12 @@ from trading_state.common import (
     timestamp_to_datetime
 )
 
-Balances = Set[Balance]
-
 
 # Ref
 # https://github.com/binance/binance-spot-api-docs/blob/master/user-data-stream.md#balance-update
 def decode_account_update_event(
     payload: dict
-) -> Tuple[datetime, Set[Balance]]:
+) -> Set[Balance]:
     """
     Generate balances from Binance account update, ie. the user stream event of `outboundAccountPosition`
 
@@ -32,7 +28,7 @@ def decode_account_update_event(
     """
 
     balances = set[Balance]()
-    event_time = timestamp_to_datetime(payload['E'])
+    # event_time = timestamp_to_datetime(payload['E'])
 
     for balance in payload['B']:
         balances.add(
@@ -43,12 +39,12 @@ def decode_account_update_event(
             )
         )
 
-    return event_time, balances
+    return balances
 
 
 def decode_balance_update_event(
     payload: dict
-) -> Tuple[datetime, CashFlow]:
+) -> CashFlow:
     """
     Generate balances from Binance balance update
 
@@ -61,10 +57,10 @@ def decode_balance_update_event(
 
     asset = payload['a']
     update = Decimal(payload['d'])
-    event_time = timestamp_to_datetime(payload['E'])
+    # event_time = timestamp_to_datetime(payload['E'])
     clear_time = timestamp_to_datetime(payload['T'])
 
-    return event_time, CashFlow(asset, update, clear_time)
+    return CashFlow(asset, update, clear_time)
 
 
 def decode_account_info_response(account_info: dict) -> Set[Balance]:
