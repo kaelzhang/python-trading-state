@@ -144,7 +144,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             self._orders
         )
 
-        self._init_future = asyncio.Future[None]()
+        # self._init_future = asyncio.Future[None]()
 
     @property
     def config(self) -> TradingConfig:
