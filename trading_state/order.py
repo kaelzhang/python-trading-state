@@ -177,7 +177,8 @@ class Order(EventEmitter[OrderUpdatedType]):
             old_commission_quantity
         )
 
-        if id is not None and self._id != id:
+        if id is not None and self._id is None:
+            # Do not allow to change order id after set
             self._id = id
 
         if self._status.lt(OrderStatus.CREATED):
