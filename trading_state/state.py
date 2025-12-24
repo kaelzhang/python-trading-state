@@ -482,6 +482,13 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         return self._orders.get_orders()
 
+    def update_order(self, order: Order, **kwargs) -> None:
+        """
+        Update an order in the trading state
+        """
+
+        order.update(self._symbols, **kwargs)
+
     # End of public methods ---------------------------------------------
 
     def _check_allocation_weights(self, weights: AllocationWeights) -> None:
@@ -798,10 +805,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
             self._on_order_status_updated
         )
 
-        order.on(
-            OrderUpdatedType.FILLED_QUANTITY_UPDATED,
-            self._on_order_filled_quantity_updated
-        )
+        # order.on(
+        #     OrderUpdatedType.FILLED_QUANTITY_UPDATED,
+        #     self._on_order_filled_quantity_updated
+        # )
 
         self._orders.add(order)
 
@@ -833,17 +840,20 @@ class TradingState(EventEmitter[TradingStateEvent]):
             ):
                 target.status = PositionTargetStatus.ACHIEVED
 
+        if status is OrderStatus.FILLED or status is OrderStatus.CANCELLED:
+            self._perf.track_order(order)
+
         # So that the caller of trading state
         # can also listen to the changes of order status
         self.emit(TradingStateEvent.ORDER_STATUS_UPDATED, order, status)
 
-    def _on_order_filled_quantity_updated(
-        self,
-        order: Order,
-        filled_quantity: Decimal
-    ) -> None:
-        self.emit(
-            TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED,
-            order,
-            filled_quantity
-        )
+    # def _on_order_filled_quantity_updated(
+    #     self,
+    #     order: Order,
+    #     filled_quantity: Decimal
+    # ) -> None:
+    #     self.emit(
+    #         TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED,
+    #         order,
+    #         filled_quantity
+    #     )

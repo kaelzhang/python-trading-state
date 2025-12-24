@@ -1,4 +1,3 @@
-from decimal import Decimal
 from typing import (
     Callable, Optional,
     List,
@@ -8,12 +7,15 @@ from typing import (
     Tuple,
     Iterator
 )
+from decimal import Decimal
+from dataclasses import dataclass
 from itertools import islice
 from datetime import datetime
 from enum import Enum
 
 from .symbol import (
     Symbol,
+    Symbols,
 )
 from .enums import (
     OrderStatus
@@ -37,6 +39,11 @@ class OrderUpdatedType(Enum):
     FILLED_QUANTITY_UPDATED = 2
 
 
+@dataclass
+class Trade:
+    ...
+
+
 class Order(EventEmitter[OrderUpdatedType]):
     """Order
 
@@ -53,11 +60,16 @@ class Order(EventEmitter[OrderUpdatedType]):
 
     # Mutable properties
     # Cumulative filled base quantity
-    filled_quantity: Decimal
+    filled_quantity: Decimal = DECIMAL_ZERO
 
     # Cumulative quote asset transacted quantity
-    quote_quantity: Decimal
+    quote_quantity: Decimal = DECIMAL_ZERO
+
+    commission_asset: Optional[str] = None
+    commission_quantity: Decimal = DECIMAL_ZERO
+
     created_at: Optional[datetime]
+    trades: List[Trade]
 
     def __repr__(self) -> str:
         return class_repr(self, keys=[
@@ -79,17 +91,20 @@ class Order(EventEmitter[OrderUpdatedType]):
         self.target = target
 
         self._status = OrderStatus.INIT
-        self.filled_quantity = DECIMAL_ZERO
-        self.quote_quantity = DECIMAL_ZERO
+
         self.created_at = None
+        self.trades = []
 
     def update(
         self,
-        status: OrderStatus = None,
-        created_at: datetime = None,
-        updated_at: datetime = None,
-        filled_quantity: Decimal = None,
-        quote_quantity: Decimal = None,
+        symbols: Symbols,
+        status: Optional[OrderStatus] = None,
+        created_at: Optional[datetime] = None,
+        updated_at: Optional[datetime] = None,
+        filled_quantity: Optional[Decimal] = None,
+        quote_quantity: Optional[Decimal] = None,
+        commission_asset: Optional[str] = None,
+        commission_quantity: Optional[Decimal] = None,
         id: str = None
     ) -> None:
         """Update the order
@@ -109,12 +124,27 @@ class Order(EventEmitter[OrderUpdatedType]):
             )
         """
 
+        if self.status.completed():
+            # The order is already completed,
+            # it should not be updated any more
+            return
+
+        old_filled_quantity = self.filled_quantity
+        old_quote_quantity = self.quote_quantity
+        old_commission_quantity = self.commission_quantity
+
+        if commission_asset is not None:
+            self.commission_asset = commission_asset
+
         if quote_quantity is not None:
             self.quote_quantity = quote_quantity
 
+        if commission_quantity is not None:
+            self.commission_quantity = commission_quantity
+
         if (
             filled_quantity is not None
-            and self.filled_quantity != filled_quantity
+            and old_filled_quantity != filled_quantity
         ):
             self.filled_quantity = filled_quantity
 
@@ -125,6 +155,13 @@ class Order(EventEmitter[OrderUpdatedType]):
                     self,
                     filled_quantity
                 )
+
+        self._update_trades(
+            symbols,
+            old_filled_quantity,
+            old_quote_quantity,
+            old_commission_quantity
+        )
 
         if status is OrderStatus.CREATED:
             if id is None:
@@ -145,6 +182,23 @@ class Order(EventEmitter[OrderUpdatedType]):
             self._status = status
             self.emit(OrderUpdatedType.STATUS_UPDATED, self, status)
 
+    # Ref:
+    # https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream#order-update
+    def _update_trades(
+        self,
+        symbols: Symbols,
+        old_filled_quantity: Optional[Decimal],
+        old_quote_quantity: Optional[Decimal],
+        old_commission_quantity: Optional[Decimal]
+    ) -> None:
+        """Update the trades of the order"""
+
+        if self.filled_quantity > old_filled_quantity:
+            self.trades.append(Trade(
+                filled_quantity = self.filled_quantity - old_filled_quantity,
+                quote_quantity = self.quote_quantity - old_quote_quantity
+            ))
+
     @property
     def status(self) -> OrderStatus:
         return self._status
@@ -152,6 +206,11 @@ class Order(EventEmitter[OrderUpdatedType]):
     @property
     def id(self) -> Optional[str]:
         return self._id
+
+    # def clean(self) -> None:
+    #     """Clean the order trades"""
+
+    #     self.trades = []
 
 
 ORDER_COMPARISON_KEYS = [

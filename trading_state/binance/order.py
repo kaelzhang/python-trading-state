@@ -68,13 +68,17 @@ def decode_order_update_event(
     client_order_id = payload['c']
     filled_quantity = Decimal(payload['z'])
     quote_quantity = Decimal(payload['Z'])
+    commission_asset = payload['N'] or None
+    commission_quantity = Decimal(payload['n'])
     updated_at = timestamp_to_datetime(payload['T'])
     event_time = timestamp_to_datetime(payload['E'])
 
     update_kwargs = {
         'filled_quantity': filled_quantity,
         'quote_quantity': quote_quantity,
-        'time': updated_at
+        'time': updated_at,
+        'commission_asset': commission_asset,
+        'commission_quantity': commission_quantity
     }
 
     if order_status == 'CANCELED':

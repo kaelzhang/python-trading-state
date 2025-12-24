@@ -19,22 +19,22 @@ from .order import (
 class CashFlow:
     __slots__ = (
         'asset',
-        'amount',
+        'quantity',
         'time'
     )
 
     asset: str
-    amount: Decimal
+    quantity: Decimal
     time: datetime
 
     def __init__(
         self,
         asset: str,
-        amount: Decimal,
+        quantity: Decimal,
         time: datetime
     ):
         self.asset = asset
-        self.amount = amount
+        self.quantity = quantity
         self.time = time
 
     def __repr__(self) -> str:
@@ -104,7 +104,7 @@ class PerformanceAnalyzer:
 
         # account_value = self._get_account_value()
 
-    def register_order(
+    def track_order(
         self,
         order: Order
     ) -> None:

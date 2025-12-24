@@ -100,6 +100,11 @@ class OrderStatus(OrderedEnum):
     # The order is rejected by the exchange
     REJECTED = ('REJECTED', 7)
 
+    def completed(self) -> bool:
+        no = self.value[1]
+
+        return no == 6 or no == 7
+
 
 class PositionTargetStatus(OrderedEnum):
     INIT = ('INIT', 0)
