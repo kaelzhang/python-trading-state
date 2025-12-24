@@ -80,6 +80,9 @@ class Order(EventEmitter[OrderUpdatedType]):
     created_at: Optional[datetime]
     trades: List[Trade]
 
+    # Whether the order has been added to the order history
+    _added: bool = False
+
     def __repr__(self) -> str:
         return class_repr(self, keys=[
             'id',
@@ -174,12 +177,7 @@ class Order(EventEmitter[OrderUpdatedType]):
             old_commission_quantity
         )
 
-        if self._id is None:
-            if id is None:
-                raise ValueError(
-                    'order id is required on the first update'
-                )
-
+        if id is not None and self._id != id:
             self._id = id
 
         if self._status.lt(OrderStatus.CREATED):
@@ -311,8 +309,12 @@ class OrderHistory:
         self,
         order: Order
     ) -> None:
-        self._history.append(order)
-        self._check_size()
+        if not order._added:
+            # Mark the order as added to the history
+            order._added = True
+
+            self._history.append(order)
+            self._check_size()
 
     def query(
         self,
@@ -390,9 +392,12 @@ class OrderManager:
                 # it means it has been created by the exchange,
                 # so we should add it to the order history
                 self.history.append(order)
-                self._id_orders[order.id] = order
+                if order.id is not None:
+                    self._id_orders[order.id] = order
 
             case OrderStatus.FILLED:
+                # The order might be filled directly
+                self.history.append(order)
                 self._purge_order(order)
                 order.off()
 

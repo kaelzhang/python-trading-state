@@ -841,19 +841,23 @@ class TradingState(EventEmitter[TradingStateEvent]):
         order: Order,
         status: OrderStatus
     ) -> None:
-        if status is OrderStatus.CANCELLED:
-            self.cancel_order(order)
+        match status:
+            case OrderStatus.REJECTED:
+                self.cancel_order(order)
 
-        if status is OrderStatus.FILLED:
-            target = order.target
-            target_orders = self._target_orders[target]
+            case OrderStatus.CANCELLED:
+                self.cancel_order(order)
 
-            # All orders are filled
-            if all(
-                order.status is OrderStatus.FILLED
-                for order in target_orders
-            ):
-                target.status = PositionTargetStatus.ACHIEVED
+            case OrderStatus.FILLED:
+                target = order.target
+                target_orders = self._target_orders[target]
+
+                # All orders are filled
+                if all(
+                    order.status is OrderStatus.FILLED
+                    for order in target_orders
+                ):
+                    target.status = PositionTargetStatus.ACHIEVED
 
         if status.completed():
             self._perf.track_order(order)
