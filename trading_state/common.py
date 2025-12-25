@@ -110,12 +110,23 @@ class FactoryDict(Generic[K, V]):
         self._data: Dict[K, V] = {}
         self._factory = factory
 
+    def get(self, key: K) -> Optional[V]:
+        """Just get, no new creation
+        """
+        return self._data.get(key)
+
     def __getitem__(self, key: K) -> V:
         value = self._data.get(key)
         if value is None:
             value = self._factory()
             self._data[key] = value
         return value
+
+    def __contains__(self, key: K) -> bool:
+        return key in self._data
+
+    def __delitem__(self, key: K) -> None:
+        self._data.pop(key, None)
 
     def items(self) -> Iterator[Tuple[K, V]]:
         return self._data.items()

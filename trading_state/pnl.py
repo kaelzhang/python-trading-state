@@ -82,16 +82,29 @@ class PerformanceAnalyzer:
     def _get_account_value(self) -> Decimal:
         return self._balances.get_account_value()
 
-    def set_cash_flow(self, cash_flow: CashFlow) -> None:
+    def set_cash_flow(self, cash_flow: CashFlow) -> bool:
         """See state.set_cash_flow()
+
+        Returns
+            bool:`True` if the cash flow is set successfully
         """
 
         asset = cash_flow.asset
         price = self._symbols.valuation_price(asset)
-        self._net_deposits += price * cash_flow.amount
+
+        if price.is_zero():
+            # The price is not ready yet, which indicates
+            # the total balance of the asset is not included in the
+            # account value, that we will treat the total balance as
+            # a cash flow to the account later.
+            return False
+
+        self._net_deposits += price * cash_flow.quantity
 
         self._cash_flows.append(cash_flow)
         self.record()
+
+        return True
 
     def track_order(
         self,

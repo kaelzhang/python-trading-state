@@ -20,6 +20,7 @@ from .enums import (
 from .config import TradingConfig
 from .common import (
     DECIMAL_ONE,
+    DECIMAL_ZERO,
     FactoryDict,
 )
 
@@ -184,9 +185,6 @@ class SymbolManager:
     _symbol_prices: Dict[str, Decimal]
     _valuation_paths: Dict[str, ValuationPath]
 
-    _allowed_assets: Optional[Set[str]] = None
-    _allowed_all_assets: bool = False
-
     def __init__(
         self,
         config: TradingConfig
@@ -203,9 +201,6 @@ class SymbolManager:
         self._symbol_prices = {}
         self._valuation_paths = {}
         self._account_assets = set(config.account_currencies)
-
-    async def init(self) -> None:
-        ...
 
     def set_price(
         self,
@@ -273,24 +268,61 @@ class SymbolManager:
     def has_asset(self, asset: str) -> bool:
         return asset in self._assets
 
-    def valuation_price(self, asset: str) -> Decimal:
+    @overload
+    def valuation_price_info(
+        self,
+        asset: str
+    ) -> Tuple[None, Set[str]]:
+        ... # pragma: no cover
+
+    @overload
+    def valuation_price_info(
+        self,
+        asset: str
+    ) -> Tuple[Decimal, None]:
+        ... # pragma: no cover
+
+    def valuation_price_info(
+        self,
+        asset: str
+    ) -> Tuple[Optional[Decimal], Optional[Set[str]]]:
         """
         Get the valuation price of an asset
 
-        Should be called after `symbol_ready`
+        Returns: (or)
+            - Tuple[None, Set[str]]: if the price is not ready yet, return the dependencies
+            - Tuple[Decimal, None]: if the price is ready, return the price and None
+
+        Could be called before `symbol_ready`
         """
 
         price = DECIMAL_ONE
+        dependencies = set[str]()
 
         for step in self.valuation_path(asset):
             symbol_price = self.get_price(step.symbol.name)
+
+            if symbol_price is None:
+                # Collect all dependencies
+                dependencies.add(step.symbol.name)
+                continue
+
+            if dependencies:
+                continue
 
             if step.forward:
                 price *= symbol_price
             else:
                 price /= symbol_price
 
-        return price
+        if dependencies:
+            return None, dependencies
+
+        return price, None
+
+    def valuation_price(self, asset: str) -> Decimal:
+        price, _ = self.valuation_price_info(asset)
+        return price or DECIMAL_ZERO
 
     def is_account_asset(self, asset: str) -> bool:
         return asset in self._account_assets
@@ -410,35 +442,3 @@ class SymbolManager:
             search(current_state, False)
 
         return None
-
-    def _get_allowed_assets(self) -> Set[str]:
-        if self._allowed_assets is not None:
-            return self._allowed_assets
-
-        assets = set[str]()
-
-        for symbol_name in self._config.symbols:
-            symbol = self.get_symbol(symbol_name)
-            if symbol is None:
-                continue
-
-            assets.add(symbol.base_asset)
-            assets.add(symbol.quote_asset)
-
-        self._allowed_assets = assets
-
-        if not assets:
-            self._allowed_all_assets = True
-
-        return assets
-
-    def should_handle_asset(self, asset: str) -> bool:
-        if self._allowed_all_assets:
-            return True
-
-        allowed_assets = self._get_allowed_assets()
-
-        if not allowed_assets:
-            return True
-
-        return asset in allowed_assets

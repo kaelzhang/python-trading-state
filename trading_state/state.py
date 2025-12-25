@@ -8,7 +8,7 @@ from typing import (
     List
 )
 from decimal import Decimal
-import asyncio
+from datetime import datetime
 
 from .enums import (
     OrderStatus,
@@ -113,10 +113,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     _orders: OrderManager
 
-    # 0: not initialized
-    # 1: initializing
-    # 2: initialized
-    _init_status: int = 0
+    _pending_cash_flows: FactoryDict[str, List[CashFlow]]
 
     def __init__(
         self,
@@ -144,7 +141,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
             self._orders
         )
 
-        # self._init_future = asyncio.Future[None]()
+        self._pending_cash_flows = FactoryDict[
+            str, List[CashFlow]
+        ](list[CashFlow])
 
     @property
     def config(self) -> TradingConfig:
@@ -152,29 +151,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     # Public methods
     # ------------------------------------------------------------------------
-
-    async def init(self) -> None:
-        """
-        Tell the trading state to start initialization
-        which should be called after:
-        - setting up the symbols
-        - setting up the balances
-
-        It will
-        - wait for available prices for all required symbols to be set
-        - limit the balance updates to the supported assets
-        """
-
-        if self._init_status == 2:
-            return
-
-        if self._init_status == 1:
-            await self._symbols.init()
-
-            # To prevent self._after_init() being called multiple times
-            if self._init_status == 1:
-                self._init_status = 2
-                self._after_init()
 
     def set_price(
         self,
@@ -188,6 +164,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
         """
 
         updated = self._symbols.set_price(symbol_name, price)
+
+        self._check_balance_cash_flow(symbol_name)
 
         if updated:
             self.emit(TradingStateEvent.PRICE_UPDATED, symbol_name, price)
@@ -302,6 +280,15 @@ class TradingState(EventEmitter[TradingStateEvent]):
     ) -> None:
         """Handle external cashflow update
         """
+
+        asset = cash_flow.asset
+
+        if self._balances.get_balance(asset) is None:
+            # The cash flow is not part of the balance,
+            # we will treat it as a pending cash flow
+            # once the balance is set
+            self._pending_cash_flows[asset].append(cash_flow)
+            return
 
         self._perf.set_cash_flow(cash_flow)
 
@@ -554,16 +541,16 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         asset = balance.asset
 
-        if (
-            self._init_status > 0
-            and not self._symbols.should_handle_asset(asset)
-        ):
-            # Do not handle the balance update for the asset
-            return
-
         old_balance, balance = self._balances.set_balance(
             balance, *args, **kwargs
         )
+
+        if asset in self._pending_cash_flows:
+            for cash_flow in self._pending_cash_flows[asset]:
+                # TODO: handle cash_flow.time
+                self._perf.set_cash_flow(cash_flow)
+            # Clean up
+            del self._pending_cash_flows[asset]
 
         target = self._expected.get(asset)
 
@@ -910,3 +897,26 @@ class TradingState(EventEmitter[TradingStateEvent]):
             order,
             filled_quantity
         )
+
+    def _check_balance_cash_flow(self, symbol_name: str) -> None:
+        not_ready_assets = self._balances.not_ready_assets
+
+        assets = not_ready_assets.dependents(symbol_name)
+
+        if assets is None:
+            return
+
+        for asset in assets:
+            balance = self._balances.get_balance(asset)
+            cf = CashFlow(
+                asset=asset,
+                quantity=balance.total,
+                time=datetime.now()
+            )
+
+            # We treat the balance as a cash flow to the account,
+            # so that the performance analyzer could get the
+            # correct PnL
+            success = self._perf.set_cash_flow(cf)
+            if success:
+                not_ready_assets.clear(asset)

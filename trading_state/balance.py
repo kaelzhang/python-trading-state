@@ -13,6 +13,7 @@ from .common import (
     DECIMAL_ZERO,
     class_repr,
     SuccessOrException,
+    FactoryDict
 )
 from .symbol import SymbolManager
 from .exceptions import (
@@ -56,6 +57,47 @@ class Balance:
         return class_repr(self, main='asset')
 
 
+class DependencyManager:
+    """
+    The manager to maintain the relationship between
+    - balance asset
+    - its dependency symbol names for valuation purposes
+    """
+
+    _asset_symbols: Dict[str, Set[str]]
+    _symbol_assets: FactoryDict[str, Set[str]]
+
+    def __init__(self) -> None:
+        self._asset_symbols = {}
+        self._symbol_assets = FactoryDict[str, Set[str]](set[str])
+
+    def add(
+        self,
+        asset: str,
+        dependencies: Set[str]
+    ) -> None:
+        self._asset_symbols[asset] = dependencies
+
+        for symbol_name in dependencies:
+            self._symbol_assets[symbol_name].add(asset)
+
+    def clear(self, asset: str) -> None:
+        symbols = self._asset_symbols.pop(asset, None)
+
+        if symbols is None:
+            return
+
+        for symbol_name in symbols:
+            assets = self._symbol_assets[symbol_name]
+
+            assets.discard(asset)
+            if not assets:
+                del self._symbol_assets[symbol_name]
+
+    def dependents(self, symbol_name: str) -> Optional[Set[str]]:
+        return self._symbol_assets.get(symbol_name)
+
+
 class BalanceManager:
     _balances: Dict[str, Balance]
 
@@ -67,6 +109,7 @@ class BalanceManager:
 
     _checked_symbol_names: Set[str]
     _checked_asset_names: Set[str]
+    not_ready_assets: DependencyManager
 
     def __init__(
         self,
@@ -83,10 +126,7 @@ class BalanceManager:
         self._checked_symbol_names = set[str]()
         self._checked_asset_names = set[str]()
 
-    def clean(self) -> None:
-        for asset in list(self._balances.keys()):
-            if not self._symbols.should_handle_asset(asset):
-                self._balances.pop(asset)
+        self.not_ready_assets = DependencyManager()
 
     def freeze(
         self,
@@ -103,7 +143,7 @@ class BalanceManager:
 
         self._frozen[asset] = quantity
 
-    def get_balance(self, asset: str) -> Balance:
+    def get_balance(self, asset: str) -> Optional[Balance]:
         return self._balances.get(asset)
 
     def set_balance(
@@ -151,12 +191,26 @@ class BalanceManager:
     def get_account_value(self) -> Decimal:
         """
         See state.get_account_value()
+
+        It is ok that the valuation price is not ready for some assets,
+        if a certain asset becomes ready later, we will treat it as
+        a cash flow to the account.
         """
 
-        return sum(
-            balance.total * self._symbols.valuation_price(balance.asset)
-            for balance in self._balances.values()
-        )
+        summary = DECIMAL_ZERO
+
+        for balance in self._balances.values():
+            price, deps = self._symbols.valuation_price_info(
+                balance.asset
+            )
+
+            if price is None:
+                self.not_ready_assets.add(balance.asset, deps)
+                continue
+
+            summary += balance.total * price
+
+        return summary
 
     def get_asset_total_balance(self, asset: str, extra: Decimal) -> Decimal:
         """

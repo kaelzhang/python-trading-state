@@ -41,8 +41,6 @@ class TradingConfig:
 
     benchmark_assets: Tuple[str, ...] = field(default_factory=tuple)
 
-    symbols: Tuple[str, ...] = field(default_factory=tuple)
-
     @property
     def account_currencies(self) -> Tuple[str, ...]:
         # Put the account currency at the end, so that
