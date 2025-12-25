@@ -113,8 +113,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     _orders: OrderManager
 
-    _pending_cash_flows: FactoryDict[str, List[CashFlow]]
-
     def __init__(
         self,
         config: TradingConfig
@@ -140,10 +138,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
             self._balances,
             self._orders
         )
-
-        self._pending_cash_flows = FactoryDict[
-            str, List[CashFlow]
-        ](list[CashFlow])
 
     @property
     def config(self) -> TradingConfig:
@@ -281,15 +275,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
         """Handle external cashflow update
         """
 
-        asset = cash_flow.asset
-
-        if self._balances.get_balance(asset) is None:
-            # The cash flow is not part of the balance,
-            # we will treat it as a pending cash flow
-            # once the balance is set
-            self._pending_cash_flows[asset].append(cash_flow)
-            return
-
         self._perf.set_cash_flow(cash_flow)
 
     def get_account_value(self) -> Decimal:
@@ -297,7 +282,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Get the value of the account in the account currency
         """
 
-        return self._balances.get_account_value()
+        return self._balances.get_account_value(False)
 
     def get_price(
         self,
@@ -544,13 +529,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
         old_balance, balance = self._balances.set_balance(
             balance, *args, **kwargs
         )
-
-        if asset in self._pending_cash_flows:
-            for cash_flow in self._pending_cash_flows[asset]:
-                # TODO: handle cash_flow.time
-                self._perf.set_cash_flow(cash_flow)
-            # Clean up
-            del self._pending_cash_flows[asset]
 
         target = self._expected.get(asset)
 

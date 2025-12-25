@@ -28,14 +28,15 @@ def decode_account_update_event(
     """
 
     balances = set[Balance]()
-    # event_time = timestamp_to_datetime(payload['E'])
+    time = timestamp_to_datetime(payload['u'])
 
     for balance in payload['B']:
         balances.add(
             Balance(
                 balance['a'],
                 Decimal(balance['f']),
-                Decimal(balance['l'])
+                Decimal(balance['l']),
+                time
             )
         )
 
@@ -57,7 +58,6 @@ def decode_balance_update_event(
 
     asset = payload['a']
     update = Decimal(payload['d'])
-    # event_time = timestamp_to_datetime(payload['E'])
     clear_time = timestamp_to_datetime(payload['T'])
 
     return CashFlow(asset, update, clear_time)
@@ -75,13 +75,15 @@ def decode_account_info_response(account_info: dict) -> Set[Balance]:
     """
 
     balances = set[Balance]()
+    time = timestamp_to_datetime(account_info['updateTime'])
 
     for balance in account_info['balances']:
         balances.add(
             Balance(
                 balance['asset'],
                 Decimal(balance['free']),
-                Decimal(balance['locked'])
+                Decimal(balance['locked']),
+                time
             )
         )
 

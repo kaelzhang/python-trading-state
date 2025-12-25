@@ -1,4 +1,7 @@
-from typing import List
+from typing import (
+    List,
+    Optional,
+)
 from decimal import Decimal
 from datetime import datetime
 
@@ -73,21 +76,31 @@ class PerformanceAnalyzer:
 
         self._position_tracker = PositionTracker(symbols)
 
-    def init(self) -> None:
-        if not self._inited:
-            self._inited = True
-
-            self._initial_account_value = self._get_account_value()
-
     def _get_account_value(self) -> Decimal:
-        return self._balances.get_account_value()
+        return self._balances.get_account_value(True)
 
     def set_cash_flow(self, cash_flow: CashFlow) -> bool:
         """See state.set_cash_flow()
 
-        Returns
-            bool:`True` if the cash flow is set successfully
+        Returns:
+            bool: True if the cash flow is set successfully, False otherwise
         """
+
+        if not self._inited:
+            # The performance analyzer is not initialized yet,
+            # we could just ignore the cash flow
+            return False
+
+        if self._balances.get_balance(cash_flow.asset) is None:
+            # The balance is not ready yet,
+            # the balance of the asset will be treated as a cash flow later,
+            # so we just ignore the cash flow
+            return False
+
+        if self._cash_flows and self._cash_flows[-1].time >= cash_flow.time:
+            # The cash flow is not in the correct order,
+            # we will ignore it
+            return False
 
         asset = cash_flow.asset
         price = self._symbols.valuation_price(asset)
@@ -115,7 +128,17 @@ class PerformanceAnalyzer:
         self._record()
 
     def record(self, *args, **kwargs) -> PerformanceNode:
+        # If the performance analyzer is not initialized,
+        # we will initialize it
+        self.init()
+
         return self._record(*args, **kwargs)
+
+    def init(self) -> None:
+        if not self._inited:
+            self._inited = True
+
+            self._initial_account_value = self._get_account_value()
 
     def _record(
         self,

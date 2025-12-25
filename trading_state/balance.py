@@ -6,7 +6,7 @@ from typing import (
     Optional,
     Set,
 )
-
+from datetime import datetime
 from decimal import Decimal
 
 from .common import (
@@ -38,16 +38,19 @@ class Balance:
     asset: str
     free: Decimal
     locked: Decimal
+    time: Optional[datetime]
 
     def __init__(
         self,
         asset: str,
         free: Decimal,
-        locked: Decimal
+        locked: Decimal,
+        time: Optional[datetime] = None
     ):
         self.asset = asset
         self.free = free
         self.locked = locked
+        self.time = time
 
     @property
     def total(self) -> Decimal:
@@ -96,6 +99,25 @@ class DependencyManager:
 
     def dependents(self, symbol_name: str) -> Optional[Set[str]]:
         return self._symbol_assets.get(symbol_name)
+
+
+"""
+Low-hanging fruit conclusions:
+1. CF before get_account_value:
+  => just abandon, unnecessary to track
+
+Case 1:
+1. get_account_value for BTC + USDT (but BTC not ready)
+2. cash_flow BTC
+    => just abandon, because Balance(BTC).total will be treated as a CF
+3. set_price BTCUSDT => balance BTC -> cash flow
+4. buy BTC, balance BTC increase => no cash flow
+5. get_account_value for BTC + USDT (BTC ready now)
+
+Case 2: (impossible)
+1. get_account_value for BTC + USDT (but BTC not ready)
+2. buy BTC, balance BTC increase => impossible, because BTC is not ready yet
+"""
 
 
 class BalanceManager:
@@ -188,7 +210,10 @@ class BalanceManager:
     def get_notional_limit(self, asset: str) -> Optional[Decimal]:
         return self._notional_limits.get(asset)
 
-    def get_account_value(self) -> Decimal:
+    def get_account_value(
+        self,
+        check_ready: bool
+    ) -> Decimal:
         """
         See state.get_account_value()
 
@@ -205,7 +230,8 @@ class BalanceManager:
             )
 
             if price is None:
-                self.not_ready_assets.add(balance.asset, deps)
+                if check_ready:
+                    self.not_ready_assets.add(balance.asset, deps)
                 continue
 
             summary += balance.total * price
