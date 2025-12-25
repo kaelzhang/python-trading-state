@@ -59,7 +59,7 @@ class PerformanceNode:
 
 class PerformanceAnalyzer:
     _inited: bool = False
-    _net_deposits: Decimal = DECIMAL_ZERO
+    _net_cash_flow: Decimal = DECIMAL_ZERO
     _initial_account_value: Decimal = DECIMAL_ZERO
     _realized_pnl_total: Decimal = DECIMAL_ZERO
 
@@ -120,7 +120,7 @@ class PerformanceAnalyzer:
             # a cash flow to the account later.
             return False
 
-        self._net_deposits += price * cash_flow.quantity
+        self._net_cash_flow += price * cash_flow.quantity
 
         self._cash_flows.append(cash_flow)
         self.record()
@@ -207,6 +207,7 @@ class PerformanceAnalyzer:
             unrealized_pnl=unrealized_pnl,
             positions=snapshots,
             benchmarks=benchmarks,
+            net_cash_flow=self._net_cash_flow,
             tags=tags
         )
 
