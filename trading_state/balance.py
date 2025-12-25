@@ -29,12 +29,6 @@ from .config import TradingConfig
 
 
 class Balance:
-    __slots__ = (
-        'asset',
-        'free',
-        'locked'
-    )
-
     asset: str
     free: Decimal
     locked: Decimal
@@ -57,7 +51,10 @@ class Balance:
         return self.free + self.locked
 
     def __repr__(self) -> str:
-        return class_repr(self, main='asset')
+        return class_repr(self, main='asset', keys=[
+            'free',
+            'locked'
+        ])
 
 
 class DependencyManager:

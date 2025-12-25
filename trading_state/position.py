@@ -205,7 +205,7 @@ class PositionTracker:
 
     #     return total_cost
 
-    def snapshot(self) -> Dict[str, PositionSnapshot]:
+    def snapshots(self) -> Dict[str, PositionSnapshot]:
         """Get the snapshot of all positions, including unrealized PnL, based on the account currency.
         """
 

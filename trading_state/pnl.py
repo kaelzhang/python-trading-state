@@ -1,7 +1,8 @@
 from typing import (
     List,
-    Optional,
+    Dict,
 )
+from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime
 
@@ -13,10 +14,7 @@ from .common import (
 from .config import TradingConfig
 from .symbol import SymbolManager
 from .balance import BalanceManager
-from .order import (
-    OrderManager,
-    Order
-)
+from .order import Order
 from .position import (
     PositionTracker
 )
@@ -47,34 +45,44 @@ class CashFlow:
         return class_repr(self, main='asset')
 
 
+@dataclass
+class BenchmarkPerformance:
+    asset: str
+    price: Decimal
+    benchmark_return: Decimal
+
+
+@dataclass
 class PerformanceNode:
     ...
 
 
 class PerformanceAnalyzer:
-    _cash_flows: List[CashFlow]
-    _net_deposits: Decimal = DECIMAL_ZERO
-
     _inited: bool = False
+    _net_deposits: Decimal = DECIMAL_ZERO
     _initial_account_value: Decimal = DECIMAL_ZERO
     _realized_pnl_total: Decimal = DECIMAL_ZERO
+
+    _cash_flows: List[CashFlow]
+    _perf_nodes: List[PerformanceNode]
+
+    _initial_benchmark_prices: Dict[str, Decimal]
 
     def __init__(
         self,
         config: TradingConfig,
         symbols: SymbolManager,
-        balances: BalanceManager,
-        orders: OrderManager
+        balances: BalanceManager
     ):
         self._config = config
         self._symbols = symbols
         self._balances = balances
-        self._orders = orders
 
         self._cash_flows = []
-        self._inited = False
+        self._perf_nodes = []
 
         self._position_tracker = PositionTracker(symbols)
+        self._initial_benchmark_prices = {}
 
     def _get_account_value(self) -> Decimal:
         return self._balances.get_account_value(True)
@@ -135,14 +143,20 @@ class PerformanceAnalyzer:
         return self._record(*args, **kwargs)
 
     def init(self) -> None:
-        if not self._inited:
-            self._inited = True
+        if self._inited:
+            return
 
-            self._initial_account_value = self._get_account_value()
+        self._inited = True
+        self._initial_account_value = self._get_account_value()
+
+        for asset in self._config.benchmark_assets:
+            self._initial_benchmark_prices[asset] = (
+                self._symbols.valuation_price(asset)
+            )
 
     def _record(
         self,
-        tags: List[str] = None,
+        tags: List[str] = [],
         time: datetime = datetime.now()
     ) -> PerformanceNode:
         """
@@ -157,3 +171,45 @@ class PerformanceAnalyzer:
         """
 
         account_value = self._get_account_value()
+        realized_pnl = self._realized_pnl_total
+
+        snapshots = self._position_tracker.snapshots()
+
+        unrealized_pnl = DECIMAL_ZERO
+        for snapshot in snapshots.values():
+            unrealized_pnl += snapshot.unrealized_pnl
+
+
+        benchmarks = set[BenchmarkPerformance]()
+
+        for asset in self._config.benchmark_assets:
+            price = self._symbols.valuation_price(asset)
+            benchmark_return = DECIMAL_ZERO
+            init_price = self._initial_benchmark_prices[asset]
+
+            if init_price > 0:
+                benchmark_return = (price - init_price) / init_price
+            else:
+                self._initial_benchmark_prices[asset] = price
+
+            benchmarks.add(
+                BenchmarkPerformance(
+                    asset,
+                    price,
+                    benchmark_return
+                )
+            )
+
+        node = PerformanceNode(
+            time=time,
+            account_value=account_value,
+            realized_pnl=realized_pnl,
+            unrealized_pnl=unrealized_pnl,
+            positions=snapshots,
+            benchmarks=benchmarks,
+            tags=tags
+        )
+
+        self._perf_nodes.append(node)
+
+        return node

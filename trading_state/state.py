@@ -135,8 +135,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._perf = PerformanceAnalyzer(
             config,
             self._symbols,
-            self._balances,
-            self._orders
+            self._balances
         )
 
     @property
