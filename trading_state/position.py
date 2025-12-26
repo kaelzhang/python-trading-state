@@ -49,6 +49,9 @@ class PositionSnapshot:
     unrealized_pnl: Decimal
 
 
+PositionSnapshots = Dict[str, PositionSnapshot]
+
+
 class PositionTracker:
     """
     PositionTracker is used to track the position changes of the account,
@@ -188,24 +191,7 @@ class PositionTracker:
 
             position.lots = [lot for lot in new_lots if lot.quantity > 0]
 
-    # def get_position(self, asset: str) -> Position:
-    #     """Get position for a certain asset"""
-
-    #     return self._positions[asset]
-
-    # def get_total_cost_basis(self, price_book: PriceBook) -> Decimal:
-    #     """获取所有持仓的总成本（以USDT计）"""
-    #     total_cost = Decimal('0')
-
-    #     for asset, pos in self.positions.items():
-    #         if asset == 'USDT':
-    #             total_cost += pos['total_quantity']
-    #         else:
-    #             total_cost += pos['total_cost']
-
-    #     return total_cost
-
-    def snapshots(self) -> Dict[str, PositionSnapshot]:
+    def snapshots(self) -> PositionSnapshots:
         """Get the snapshot of all positions, including unrealized PnL, based on the account currency.
         """
 

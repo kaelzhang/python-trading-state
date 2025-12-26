@@ -28,7 +28,8 @@ from .balance import (
 )
 from .pnl import (
     PerformanceAnalyzer,
-    CashFlow
+    CashFlow,
+    PerformanceNode
 )
 from .order import (
     Order,
@@ -501,6 +502,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
         """
 
         order.update(self._symbols, **kwargs)
+
+    def record(self, *args, **kwargs) -> PerformanceNode:
+        return self._perf.record(*args, **kwargs)
 
     # End of public methods ---------------------------------------------
 

@@ -1,6 +1,9 @@
 from typing import (
     List,
     Dict,
+    Optional,
+    Iterable,
+    Set
 )
 from dataclasses import dataclass
 from decimal import Decimal
@@ -16,7 +19,8 @@ from .symbol import SymbolManager
 from .balance import BalanceManager
 from .order import Order
 from .position import (
-    PositionTracker
+    PositionTracker,
+    PositionSnapshots
 )
 
 
@@ -54,7 +58,14 @@ class BenchmarkPerformance:
 
 @dataclass
 class PerformanceNode:
-    ...
+    time: datetime
+    account_value: Decimal
+    realized_pnl: Decimal
+    unrealized_pnl: Decimal
+    positions: PositionSnapshots
+    benchmarks: Set[BenchmarkPerformance]
+    net_cash_flow: Decimal
+    tags: Set[str]
 
 
 class PerformanceAnalyzer:
@@ -133,7 +144,11 @@ class PerformanceAnalyzer:
     ) -> None:
         self._realized_pnl_total += self._position_tracker.track_order(order)
 
-        self._record()
+        self._record(
+            # For internal tags, follow the '__XXX__' format
+            tags=['__ORDER__'],
+            time=order.updated_at
+        )
 
     def record(self, *args, **kwargs) -> PerformanceNode:
         # If the performance analyzer is not initialized,
@@ -156,8 +171,8 @@ class PerformanceAnalyzer:
 
     def _record(
         self,
-        tags: List[str] = [],
-        time: datetime = datetime.now()
+        tags: Optional[Iterable[str]] = None,
+        time: Optional[datetime] = None
     ) -> PerformanceNode:
         """
         Record current performance snapshot
@@ -169,6 +184,9 @@ class PerformanceAnalyzer:
         Returns:
             PerformanceNode: The created performance snapshot
         """
+
+        if time is None:
+            time = datetime.now()
 
         account_value = self._get_account_value()
         realized_pnl = self._realized_pnl_total
@@ -208,7 +226,7 @@ class PerformanceAnalyzer:
             positions=snapshots,
             benchmarks=benchmarks,
             net_cash_flow=self._net_cash_flow,
-            tags=tags
+            tags=set[str](tags or [])
         )
 
         self._perf_nodes.append(node)
