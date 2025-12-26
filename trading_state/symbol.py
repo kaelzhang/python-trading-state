@@ -6,6 +6,7 @@ from typing import (
     Tuple,
     Optional,
     overload,
+    Union,
     TYPE_CHECKING
 )
 from enum import Enum
@@ -74,7 +75,7 @@ class Symbol:
     def allow(
         self,
         feature: FeatureType,
-        allow: bool | List[Enum]
+        allow: Union[bool, List[Enum]] = True
     ) -> None:
         self._allowed_features[feature] = allow
 
@@ -268,24 +269,10 @@ class SymbolManager:
     def has_asset(self, asset: str) -> bool:
         return asset in self._assets
 
-    @overload
     def valuation_price_info(
         self,
         asset: str
-    ) -> Tuple[None, Set[str]]:
-        ... # pragma: no cover
-
-    @overload
-    def valuation_price_info(
-        self,
-        asset: str
-    ) -> Tuple[Decimal, None]:
-        ... # pragma: no cover
-
-    def valuation_price_info(
-        self,
-        asset: str
-    ) -> Tuple[Optional[Decimal], Optional[Set[str]]]:
+    ) -> Union[Tuple[None, Set[str]], Tuple[Decimal, None]]:
         """
         Get the valuation price of an asset
 
