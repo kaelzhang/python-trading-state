@@ -74,6 +74,10 @@ from .common import (
     EventEmitter
 )
 
+from .position import (
+    PositionSnapshot
+)
+
 from .pnl import (
     CashFlow,
     PerformanceNode,

@@ -70,11 +70,17 @@ class PerformanceNode:
     time: datetime
     account_value: Decimal
     realized_pnl: Decimal
-    unrealized_pnl: Decimal
     positions: PositionSnapshots
     benchmarks: Set[BenchmarkPerformance]
     net_cash_flow: Decimal
     tags: Set[str]
+
+    @property
+    def unrealized_pnl(self) -> Decimal:
+        return sum(
+            position.unrealized_pnl
+            for position in self.positions.values()
+        )
 
 
 class PerformanceAnalyzer:
@@ -202,12 +208,6 @@ class PerformanceAnalyzer:
         realized_pnl = self._realized_pnl_total
 
         snapshots = self._position_tracker.snapshots()
-
-        unrealized_pnl = DECIMAL_ZERO
-        for snapshot in snapshots.values():
-            unrealized_pnl += snapshot.unrealized_pnl
-
-
         benchmarks = set[BenchmarkPerformance]()
 
         for asset in self._config.benchmark_assets:
@@ -232,7 +232,6 @@ class PerformanceAnalyzer:
             time=time,
             account_value=account_value,
             realized_pnl=realized_pnl,
-            unrealized_pnl=unrealized_pnl,
             positions=snapshots,
             benchmarks=benchmarks,
             net_cash_flow=self._net_cash_flow,

@@ -47,8 +47,14 @@ class PositionSnapshot:
     quantity: Decimal
     cost: Decimal
     valuation_price: Decimal
-    value: Decimal
-    unrealized_pnl: Decimal
+
+    @property
+    def value(self) -> Decimal:
+        return self.quantity * self.valuation_price
+
+    @property
+    def unrealized_pnl(self) -> Decimal:
+        return self.value - self.cost
 
 
 PositionSnapshots = Dict[str, PositionSnapshot]
@@ -221,15 +227,11 @@ class PositionTracker:
 
         for asset, position in self._positions.items():
             valuation_price = self._symbols.valuation_price(asset)
-            value = position.total_quantity * valuation_price
-            unrealized_pnl = value - position.total_cost
 
             snapshots[asset] = PositionSnapshot(
                 quantity=position.total_quantity,
                 cost=position.total_cost,
-                valuation_price=valuation_price,
-                value=value,
-                unrealized_pnl=unrealized_pnl
+                valuation_price=valuation_price
             )
 
         return snapshots
