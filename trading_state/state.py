@@ -52,6 +52,7 @@ from .allocate import (
 from .common import (
     DECIMAL_ZERO,
     DECIMAL_ONE,
+    DECIMAL_INF,
     ValueOrException,
     FactoryDict,
     EventEmitter
@@ -187,12 +188,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
         The notional limit of an asset limits:
         - the maximum quantity of the **account_currency** asset the trader could **BUY** the asset,
         - no SELL.
-        - the maximum quantity of the asset the trader could **SELL** the asset,
-        - no BUY.
 
         Args:
             asset (str): the asset to set the notional limit for
-            limit (Decimal | None): the maximum quantity of the account currency the trader could BUY the asset. `None` means no notional limit.
+            limit (Decimal | None): the maximum quantity of the account currency the trader could BUY the asset. `None` means no notional limit. `None` is not suggested in production.
 
         For example, if::
 
@@ -560,7 +559,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         # so that self.exposure() will return the recalculated exposure
         self._expected.pop(asset, None)
 
-    def _get_asset_exposure(self, asset: str) -> Decimal:
+    def _get_asset_exposure(self, asset: str) -> Optional[Decimal]:
         """
         Get the calculated limit exposure of an asset
 
@@ -573,6 +572,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
         balance = self._get_asset_expected_balance(asset)
         price = self._symbols.valuation_price(asset)
         limit = self._balances.get_notional_limit(asset)
+
+        if limit is None:
+            # If no notional limit, then the exposure is not calculable
+            return None
 
         return balance * price / limit
 
@@ -644,19 +647,28 @@ class TradingState(EventEmitter[TradingStateEvent]):
         value = balance * valuation_price
 
         limit = self._balances.get_notional_limit(asset)
-        value_delta = Decimal(str(target.exposure)) * limit - value
-        quantity = value_delta / valuation_price
 
-        if quantity.is_zero():
-            # Usually, it won't be zero,
-            # but the balance might changed after `.expect()`
-            return
+        if limit is not None:
+            value_delta = Decimal(str(target.exposure)) * limit - value
+            quantity = value_delta / valuation_price
 
-        side = OrderSide.BUY
+            if quantity.is_zero():
+                # Usually, it won't be zero,
+                # but the balance might changed after `.expect()`
+                return
 
-        if quantity < DECIMAL_ZERO:
-            side = OrderSide.SELL
-            quantity = - quantity
+            side = OrderSide.BUY
+            if quantity < DECIMAL_ZERO:
+                side = OrderSide.SELL
+                quantity = - quantity
+        else:
+            # If no notional limit, then all in or all out
+            quantity = DECIMAL_INF
+            side = (
+                OrderSide.BUY
+                if target.exposure > DECIMAL_ZERO
+                else OrderSide.SELL
+            )
 
         if (
             # No allocation weights

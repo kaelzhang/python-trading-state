@@ -25,6 +25,15 @@ from .position import (
 
 
 class CashFlow:
+    """
+    CashFlow is the increase or decrease in the amount of an asset initiated by deposit / withdrawal / transfer.
+
+    Args:
+        asset (str): The asset of the cash flow
+        quantity (Decimal): The quantity of the cash flow
+        time (datetime): The time of the cash flow
+    """
+
     __slots__ = (
         'asset',
         'quantity',

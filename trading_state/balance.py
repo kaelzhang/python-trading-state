@@ -197,10 +197,6 @@ class BalanceManager:
         if limit is not None and limit < DECIMAL_ZERO:
             limit = None
 
-        if limit is None:
-            self._notional_limits.pop(asset, None)
-            return
-
         # Just set the notional limit
         self._notional_limits[asset] = limit
 
@@ -294,6 +290,8 @@ class BalanceManager:
 
         if not self._symbols.is_account_asset(asset):
             if asset not in self._notional_limits:
+                # To avoid human mistake,
+                # it is a must to set the notional limit explicitly
                 return NotionalLimitNotSetError(asset)
 
             path = self._symbols.valuation_path(asset)

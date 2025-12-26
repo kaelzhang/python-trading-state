@@ -19,6 +19,7 @@ from typing import (
 
 DECIMAL_ZERO = Decimal('0')
 DECIMAL_ONE = Decimal('1')
+DECIMAL_INF = Decimal('Infinity')
 
 SuccessOrException = Optional[Exception]
 type ValueOrException[T] = Union[
