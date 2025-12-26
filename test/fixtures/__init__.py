@@ -1,3 +1,4 @@
+from typing import Optional
 import json
 from pathlib import Path
 from typing import Dict
@@ -56,15 +57,25 @@ def get_symbols() -> Symbols:
     return symbols
 
 
-def create_state() -> TradingState:
-    return TradingState(
-        config=TradingConfig(
-            account_currency=USDT,
-            alt_account_currencies=[USDC],
-            context={
-                'get_avg_price': mock_get_avg_price
-            }
+DEFAULT_CONFIG_KWARGS = dict(
+    account_currency=USDT,
+    alt_account_currencies=(USDC,),
+    context={
+        'get_avg_price': mock_get_avg_price
+    }
+)
+
+
+def create_state(
+    config: Optional[TradingConfig],
+) -> TradingState:
+    if config is None:
+        config = TradingConfig(
+            **DEFAULT_CONFIG_KWARGS
         )
+
+    return TradingState(
+        config=config
     )
 
 
@@ -100,8 +111,10 @@ def init_balances(state: TradingState) -> None:
     ])
 
 
-def init_state() -> TradingState:
-    state = create_state()
+def init_state(
+    config: Optional[TradingConfig] = None,
+) -> TradingState:
+    state = create_state(config=config)
     init_symbols(state)
     init_prices(state)
     init_notional_limits(state)
