@@ -412,6 +412,10 @@ class OrderManager:
                 self._purge_order(order)
                 order.off()
 
+            case OrderStatus.REJECTED:
+                self._purge_order(order)
+                order.off()
+
     def get_order_by_id(self, order_id: str) -> Optional[Order]:
         return self._id_orders.get(order_id)
 

@@ -1,3 +1,4 @@
+from ast import List
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 
@@ -141,24 +142,29 @@ class EventEmitter(Generic[K]):
     not ensure execution order of listeners
     """
 
-    _listeners: FactoryDict[K, Set[Callable]]
+    _listeners: FactoryDict[K, List[Callable]]
 
     def __init__(self):
-        self._listeners = FactoryDict[K, Set[Callable]](set[Callable])
+        self._listeners = FactoryDict[K, Set[Callable]](list[Callable])
 
     def on(
         self,
         event: str,
         listener: Callable
     ) -> None:
-        self._listeners[event].add(listener)
+        self._listeners[event].append(listener)
 
     def emit(
         self,
         event: str,
         *args: Any
     ) -> None:
-        for listener in self._listeners[event]:
+        listeners = self._listeners.get(event)
+        if listeners is None:
+            return
+
+        # Regenerate the list to avoid .off() during iteration
+        for listener in list(listeners):
             listener(*args)
 
     def off(self) -> None:
