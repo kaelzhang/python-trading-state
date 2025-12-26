@@ -1,4 +1,3 @@
-from ast import List
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 
@@ -13,7 +12,8 @@ from typing import (
     Hashable,
     Union,
     Set,
-    Iterator
+    Iterator,
+    List
 )
 
 
