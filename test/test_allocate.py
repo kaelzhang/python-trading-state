@@ -31,17 +31,17 @@ symbol_BTCFDUSD = Symbol(BTC + FDUSD, BTC, FDUSD)
 resources = [
     AllocationResource(
         symbol_BTCUSDT,
-        balance=Balance(USDT, free=Decimal('10000'), locked=Decimal('0')),
+        free=Decimal('10000'),
         weight=Decimal('1'),
     ),
     AllocationResource(
         symbol_BTCUSDC,
-        balance=Balance(USDC, free=Decimal('10000'), locked=Decimal('0')),
+        free=Decimal('10000'),
         weight=Decimal('1.5'),
     ),
     AllocationResource(
         symbol_BTCFDUSD,
-        balance=Balance(FDUSD, free=Decimal('10000'), locked=Decimal('0')),
+        free=Decimal('10000'),
         weight=Decimal('2.5'),
     ),
 ]

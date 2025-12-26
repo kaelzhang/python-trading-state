@@ -5,7 +5,6 @@ from typing import (
 from bisect import bisect_left
 from decimal import Decimal
 
-from .balance import Balance
 from .symbol import Symbol
 from .target import PositionTarget
 from .enums import OrderSide
@@ -16,11 +15,11 @@ class AllocationResource:
     def __init__(
         self,
         symbol: Symbol,
-        balance: Balance,
+        free: Decimal,
         weight: Decimal,
     ):
         self.symbol = symbol
-        self.balance = balance
+        self.free = free
         self.weight = weight
 
 
@@ -55,10 +54,10 @@ def buy_allocate(
     # sorting Sj/Wj allows a fast split using a threshold T = V/sum_W.
     order = sorted(
         range(n),
-        key=lambda i: (resources[i].balance.free / resources[i].weight)
+        key=lambda i: (resources[i].free / resources[i].weight)
     )
 
-    caps_sorted = [resources[i].balance.free for i in order]
+    caps_sorted = [resources[i].free for i in order]
     w_sorted = [resources[i].weight for i in order]
     ratio_sorted = [
         caps_sorted[i] / w_sorted[i]

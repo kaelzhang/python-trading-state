@@ -184,14 +184,7 @@ class PerformanceAnalyzer:
         time: Optional[datetime] = None
     ) -> PerformanceNode:
         """
-        Record current performance snapshot
-
-        Args:
-            tags (List[str] = None): List of tags to add to the snapshot
-            time (datetime): Timestamp of the snapshot
-
-        Returns:
-            PerformanceNode: The created performance snapshot
+        see state.record()
         """
 
         if time is None:

@@ -503,6 +503,16 @@ class TradingState(EventEmitter[TradingStateEvent]):
         order.update(self._symbols, **kwargs)
 
     def record(self, *args, **kwargs) -> PerformanceNode:
+        """
+        Record current performance snapshot
+
+        Args:
+            tags (Iterable[str] = None): List of tags to add to the snapshot
+            time (datetime = None): Timestamp of the snapshot
+
+        Returns:
+            PerformanceNode: The created performance snapshot
+        """
         return self._perf.record(*args, **kwargs)
 
     # End of public methods ---------------------------------------------
@@ -707,7 +717,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         side: OrderSide
     ) -> None:
         resources = list[AllocationResource](
-            AllocationResource(symbol, balance, weight)
+            AllocationResource(symbol, balance.free, weight)
             for i, quote_asset in enumerate(
                 self._config.account_currencies
             )
@@ -720,16 +730,13 @@ class TradingState(EventEmitter[TradingStateEvent]):
                 and (
                     # For BUY: balance must be positive
                     (
-                        balance := (
-                            self._balances.get_balance(quote_asset)
-                            or Balance(quote_asset, DECIMAL_ZERO, DECIMAL_ZERO)
-                        )
-                    ).total > DECIMAL_ZERO
+                        balance := self._balances.get_balance(quote_asset)
+                    ) is not None and balance.free > 0
                     # For SELL, allow the balance of a quote asset to be 0
                     or side is OrderSide.SELL
 
                 # For both BUY and SELL, the weight must be positive
-                ) and (weight := weights[i]) > DECIMAL_ZERO
+                ) and (weight := weights[i]) > 0
             )
         )
 
@@ -774,6 +781,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
                 self._balances.get_balance(
                     symbol.quote_asset
                 ).free / target.price
+            )
+        else:
+            quantity = min(
+                quantity,
+                # We need to check the available balance of the base asset
+                self._balances.get_balance(symbol.base_asset).free
             )
 
         self._create_order(symbol, quantity, target, side)
