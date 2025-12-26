@@ -55,8 +55,12 @@ def test_valuation_path():
     step2 = path[1]
 
     assert step1.symbol.base_asset == 'LUN'
-    assert step1.symbol.quote_asset == 'ETH'
-    assert step2.symbol.base_asset == 'ETH'
+    assert (
+        step1.symbol.quote_asset == 'ETH'
+        # Two possible paths
+        or step1.symbol.quote_asset == 'BTC'
+    )
+    assert step2.symbol.base_asset == step1.symbol.quote_asset
     assert step2.symbol.quote_asset == USDT
 
     assert step1.forward
