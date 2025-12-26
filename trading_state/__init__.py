@@ -57,13 +57,13 @@ from .order_ticket import (
 
 from .order import (
     Order,
-    OrderHistory
+    # OrderHistory
 )
 
 from .symbol import (
     Symbol,
-    ValuationPathStep,
-    ValuationPath
+    # ValuationPathStep,
+    # ValuationPath
 )
 
 from .target import (
@@ -76,5 +76,6 @@ from .common import (
 
 from .pnl import (
     CashFlow,
-    PerformanceAnalyzer
+    PerformanceNode,
+    BenchmarkPerformance
 )
