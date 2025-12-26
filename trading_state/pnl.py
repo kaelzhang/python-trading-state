@@ -58,14 +58,14 @@ class CashFlow:
         return class_repr(self, main='asset')
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BenchmarkPerformance:
     asset: str
     price: Decimal
     benchmark_return: Decimal
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PerformanceNode:
     time: datetime
     account_value: Decimal

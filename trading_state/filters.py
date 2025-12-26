@@ -90,7 +90,7 @@ def apply_range(
     return None, new_target
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PrecisionFilter(BaseFilter):
     base_asset_precision: int
     quote_asset_precision: int
@@ -147,7 +147,7 @@ class PrecisionFilter(BaseFilter):
 #     trailing_stop: bool
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PriceFilter(BaseFilter):
     min_price: Decimal
     max_price: Decimal
@@ -210,7 +210,7 @@ class PriceFilter(BaseFilter):
         return None, modified
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class QuantityFilter(BaseFilter):
     min_quantity: Decimal
     max_quantity: Decimal
@@ -286,7 +286,7 @@ class MarketQuantityFilter(QuantityFilter):
 
 PARAM_ICEBERG_QUANTITY = 'iceberg_quantity'
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class IcebergQuantityFilter(BaseFilter):
     limit: int
 
@@ -317,7 +317,7 @@ class IcebergQuantityFilter(BaseFilter):
 
 PARAM_TRAILING_DELTA = 'trailing_delta'
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class TrailingDeltaFilter(BaseFilter):
     min_trailing_above_delta: int
     max_trailing_above_delta: int
@@ -373,7 +373,7 @@ class TrailingDeltaFilter(BaseFilter):
         return None, modified
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class NotionalFilter(BaseFilter):
     min_notional: Decimal
     apply_min_to_market: bool

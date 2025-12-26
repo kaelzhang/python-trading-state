@@ -14,7 +14,7 @@ from .common import (
 from .enums import OrderSide
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Lot:
     quantity: Decimal
     price: Decimal
@@ -24,7 +24,8 @@ class Lot:
         return self.quantity * self.price
 
 
-@dataclass
+# Mutable, should not be frozen
+@dataclass(slots=True)
 class Position:
     total_quantity: Decimal = DECIMAL_ZERO
     total_cost: Decimal = DECIMAL_ZERO
@@ -40,7 +41,7 @@ class Position:
         )
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PositionSnapshot:
     quantity: Decimal
     cost: Decimal

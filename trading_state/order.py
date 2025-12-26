@@ -33,7 +33,7 @@ class OrderUpdatedType(Enum):
     FILLED_QUANTITY_UPDATED = 2
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Trade:
     """The trade for the order
 
