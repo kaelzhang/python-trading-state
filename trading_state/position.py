@@ -17,6 +17,16 @@ from .enums import OrderSide
 
 @dataclass(slots=True)
 class Lot:
+    """
+    A single lot of a position, which is used to track the cost basis of an asset in details.
+
+    - quantity (Decimal): the quantity of the lot
+    - price (Decimal): the price of the lot
+
+    Computed properties:
+    - cost (Decimal): the cost of the lot
+    """
+
     quantity: Decimal
     price: Decimal
 
@@ -28,22 +38,41 @@ class Lot:
 # Mutable, should not be frozen
 @dataclass(slots=True)
 class Position:
-    total_quantity: Decimal = DECIMAL_ZERO
-    total_cost: Decimal = DECIMAL_ZERO
+    """
+    The position of an asset, which is used to track the cost basis and unrealized PnL.
+
+    - quantity (Decimal): the total quantity of the position
+    - cost (Decimal): the total cost of the position
+    - lots (List[Lot]): the lots of the position
+
+    Computed properties:
+    - avg_cost (Decimal): the average cost of the position
+    """
+
+    quantity: Decimal = DECIMAL_ZERO
+    cost: Decimal = DECIMAL_ZERO
 
     lots: List[Lot] = field(default_factory=list)
 
     @property
     def avg_cost(self) -> Decimal:
         return (
-            self.total_cost / self.total_quantity
-            if self.total_quantity > 0
+            self.cost / self.quantity
+            if self.quantity > 0
             else DECIMAL_ZERO
         )
 
 
 @dataclass(frozen=True, slots=True)
 class PositionSnapshot:
+    """
+    A snapshot of a position
+
+    - quantity (Decimal): the quantity of the position
+    - cost (Decimal): the cost of the position
+    - valuation_price (Decimal): the valuation price of the position
+    """
+
     quantity: Decimal
     cost: Decimal
     valuation_price: Decimal
@@ -147,7 +176,7 @@ class PositionTracker:
 
         # Position to decrease
         position = self._positions[qa]
-        if position.total_quantity > 0:
+        if position.quantity > 0:
             avg_cost = position.avg_cost
             cost = qq * avg_cost
             proceeds = qq * self._symbols.valuation_price(qa)
@@ -181,15 +210,15 @@ class PositionTracker:
         if increase:
             cost = quantity * price
 
-            position.total_quantity += quantity
-            position.total_cost += cost
+            position.quantity += quantity
+            position.cost += cost
 
             # Add the new lot of the asset position
             position.lots.append(Lot(quantity, price))
 
         # Sell, decrease the position
         else:
-            if position.total_quantity.is_zero():
+            if position.quantity.is_zero():
                 # No position to decrease
                 return
 
@@ -205,14 +234,14 @@ class PositionTracker:
                 # Sell the whole lot
                 if lot.quantity <= remaining_quantity:
                     remaining_quantity -= lot.quantity
-                    position.total_cost -= lot.cost
-                    position.total_quantity -= lot.quantity
+                    position.cost -= lot.cost
+                    position.quantity -= lot.quantity
                 else:
                     lot.quantity -= remaining_quantity
 
                     # Reduce the total cost and quantity of the position
-                    position.total_cost -= remaining_quantity * lot.price
-                    position.total_quantity -= remaining_quantity
+                    position.cost -= remaining_quantity * lot.price
+                    position.quantity -= remaining_quantity
                     new_lots.append(lot)
 
                     remaining_quantity = DECIMAL_ZERO
@@ -229,8 +258,8 @@ class PositionTracker:
             valuation_price = self._symbols.valuation_price(asset)
 
             snapshots[asset] = PositionSnapshot(
-                quantity=position.total_quantity,
-                cost=position.total_cost,
+                quantity=position.quantity,
+                cost=position.cost,
                 valuation_price=valuation_price
             )
 
