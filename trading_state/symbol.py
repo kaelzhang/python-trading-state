@@ -330,6 +330,9 @@ class SymbolManager:
         if path is not None:
             self._use_primary_account_currency(path)
 
+        # If path is None, we still cache the result,
+        # because Symbols need to be initialized
+        # at the beginning of the trading session,
         self._valuation_paths[asset] = path
 
         return path

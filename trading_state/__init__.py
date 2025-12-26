@@ -28,6 +28,7 @@ from .exceptions import (
     SymbolPriceNotReadyError,
     NotionalLimitNotSetError,
     ValuationPriceNotReadyError,
+    ValuationNotAvailableError,
     BalanceNotReadyError,
     FeatureNotAllowedError
 )

@@ -4,6 +4,7 @@ test_files = *
 # test_files = state_errors
 # test_files = state*
 # test_files = allocate
+# test_files = symbol
 
 # For local development
 test:

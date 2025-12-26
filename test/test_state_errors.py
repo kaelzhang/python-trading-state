@@ -14,8 +14,11 @@ from trading_state import (
     SymbolPriceNotReadyError,
     SymbolNotDefinedError,
     FeatureNotAllowedError,
-    FeatureType
+    FeatureType,
+    Symbol,
+    ValuationNotAvailableError
 )
+from trading_state.symbol import ValuationPathStep
 
 from .fixtures import (
     init_state,
@@ -189,3 +192,42 @@ def test_feature_not_allowed_error(test_symbols: Symbols):
     assert not orders
 
     assert error
+
+
+def test_valuation_path_not_available(test_symbols: Symbols):
+    state = init_state()
+
+    X = 'X'
+    Y = 'Y'
+    Z = 'Z'
+
+    XY = 'XY'
+    ZY = 'ZY'
+
+    ZUSDT = 'ZUSDT'
+
+    symbol_XY = Symbol(XY, X, Y)
+    symbol_ZY = Symbol(ZY, Z, Y)
+    symbol_ZUSDT = Symbol(ZUSDT, Z, USDT)
+
+    state.set_symbol(symbol_XY)
+    state.set_symbol(symbol_ZY)
+
+    state.set_notional_limit(X, None)
+
+    exception = state._balances.check_asset_ready(X)
+    assert isinstance(exception, ValuationNotAvailableError)
+    assert exception.asset == X
+
+    state.set_symbol(symbol_ZUSDT)
+
+    # Clean the cached valuation path
+    # Only for testing
+    del state._symbols._valuation_paths[X]
+
+    path = state._symbols.valuation_path(X)
+    assert path == [
+        ValuationPathStep(symbol_XY, True),
+        ValuationPathStep(symbol_ZY, False),
+        ValuationPathStep(symbol_ZUSDT, True),
+    ]

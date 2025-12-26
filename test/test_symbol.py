@@ -1,8 +1,7 @@
-# from pytest import fixture
-# from typing import Dict
-
-# from trading_state.symbol import Symbol
-from trading_state.enums import FeatureType, OrderType
+from trading_state import (
+    FeatureType,
+    OrderType,
+)
 
 from .fixtures import (
     get_symbols,
