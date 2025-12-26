@@ -899,7 +899,9 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if assets is None:
             return
 
-        for asset in assets:
+        # `assets` might be modified during the iteration,
+        # so assets -> list(assets)
+        for asset in list(assets):
             balance = self._balances.get_balance(asset)
             cf = CashFlow(
                 asset=asset,
