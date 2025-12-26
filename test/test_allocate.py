@@ -1,7 +1,6 @@
 from decimal import Decimal
 
 from trading_state import (
-    Balance,
     Symbol,
     PositionTarget,
     OrderSide

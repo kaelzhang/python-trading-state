@@ -14,7 +14,7 @@ from .common import (
 from .enums import OrderSide
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class Lot:
     quantity: Decimal
     price: Decimal
