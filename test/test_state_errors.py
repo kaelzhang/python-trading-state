@@ -29,10 +29,14 @@ from .fixtures import (
     USDT,
     USDC,
     X,
-    symbol_XY,
-    symbol_ZY,
-    symbol_ZUSDT
+    XY,
+    ZY,
+    ZUSDT
 )
+
+
+BTCUSDC = BTCUSDC.name
+BTCUSDT = BTCUSDT.name
 
 
 @fixture
@@ -200,8 +204,8 @@ def test_feature_not_allowed_error(test_symbols: Symbols):
 def test_valuation_path_not_available(test_symbols: Symbols):
     state = init_state()
 
-    state.set_symbol(symbol_XY)
-    state.set_symbol(symbol_ZY)
+    state.set_symbol(XY)
+    state.set_symbol(ZY)
 
     state.set_notional_limit(X, None)
 
@@ -209,7 +213,7 @@ def test_valuation_path_not_available(test_symbols: Symbols):
     assert isinstance(exception, ValuationNotAvailableError)
     assert exception.asset == X
 
-    state.set_symbol(symbol_ZUSDT)
+    state.set_symbol(ZUSDT)
 
     # Clean the cached valuation path
     # Only for testing
@@ -217,7 +221,7 @@ def test_valuation_path_not_available(test_symbols: Symbols):
 
     path = state._symbols.valuation_path(X)
     assert path == [
-        ValuationPathStep(symbol_XY, True),
-        ValuationPathStep(symbol_ZY, False),
-        ValuationPathStep(symbol_ZUSDT, True),
+        ValuationPathStep(XY, True),
+        ValuationPathStep(ZY, False),
+        ValuationPathStep(ZUSDT, True),
     ]

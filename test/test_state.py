@@ -24,6 +24,10 @@ from .fixtures import (
 )
 
 
+BTCUSDC = BTCUSDC.name
+BTCUSDT = BTCUSDT.name
+
+
 def test_trading_state():
     state = init_state()
 

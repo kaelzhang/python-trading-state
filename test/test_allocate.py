@@ -13,33 +13,25 @@ from trading_state.allocate import (
 )
 
 from .fixtures import (
-    BTC,
-    USDT,
     BTCUSDT,
-    USDC,
-    BTCUSDC
+    BTCUSDC,
+    BTCFDUSD
 )
 
-FDUSD = 'FDUSD'
-
-
-symbol_BTCUSDT = Symbol(BTCUSDT, BTC, USDT)
-symbol_BTCUSDC = Symbol(BTCUSDC, BTC, USDC)
-symbol_BTCFDUSD = Symbol(BTC + FDUSD, BTC, FDUSD)
 
 resources = [
     AllocationResource(
-        symbol_BTCUSDT,
+        BTCUSDT,
         free=Decimal('10000'),
         weight=Decimal('1'),
     ),
     AllocationResource(
-        symbol_BTCUSDC,
+        BTCUSDC,
         free=Decimal('10000'),
         weight=Decimal('1.5'),
     ),
     AllocationResource(
-        symbol_BTCFDUSD,
+        BTCFDUSD,
         free=Decimal('10000'),
         weight=Decimal('2.5'),
     ),
@@ -49,7 +41,7 @@ resources = sorted(resources, key=lambda r: r.symbol.name)
 price = Decimal('10000')
 
 target = PositionTarget(
-    symbol=symbol_BTCUSDT,
+    symbol=BTCUSDT,
     # Arbitrary value, has nothing to do with the allocation
     exposure=Decimal('0.1'),
     use_market_order=False,

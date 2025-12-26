@@ -19,26 +19,21 @@ def load_exchange_info() -> dict:
         return json.load(f)
 
 
-BTCUSDC = 'BTCUSDC'
-BTCUSDT = 'BTCUSDT'
 BTC = 'BTC'
 USDT = 'USDT'
 USDC = 'USDC'
-
+FDUSD = 'FDUSD'
 X = 'X'
 Y = 'Y'
 Z = 'Z'
 
-XY = 'XY'
-ZY = 'ZY'
-
-ZUSDT = 'ZUSDT'
-ZUSDC = 'ZUSDC'
-
-symbol_XY = Symbol(XY, X, Y)
-symbol_ZY = Symbol(ZY, Z, Y)
-symbol_ZUSDT = Symbol(ZUSDT, Z, USDT)
-symbol_ZUSDC = Symbol(ZUSDC, Z, USDC)
+XY = Symbol(X + Y, X, Y)
+ZY = Symbol(Z + Y, Z, Y)
+ZUSDT = Symbol(Z + USDT, Z, USDT)
+ZUSDC = Symbol(Z + USDC, Z, USDC)
+BTCUSDC = Symbol(BTC + USDC, BTC, USDC)
+BTCUSDT = Symbol(BTC + USDT, BTC, USDT)
+BTCFDUSD = Symbol(BTC + FDUSD, BTC, FDUSD)
 
 
 def mock_get_avg_price(symbol_name: str, mins: int) -> Decimal:
@@ -84,10 +79,10 @@ def init_symbols(state: TradingState) -> None:
 
 
 def init_prices(state: TradingState) -> None:
-    state.set_price(BTCUSDC, Decimal('10000'))
-    assert state.set_price(BTCUSDT, Decimal('10000'))
+    state.set_price(BTCUSDC.name, Decimal('10000'))
+    assert state.set_price(BTCUSDT.name, Decimal('10000'))
 
-    assert not state.set_price(BTCUSDT, Decimal('10000'))
+    assert not state.set_price(BTCUSDT.name, Decimal('10000'))
 
 
 def init_notional_limits(state: TradingState) -> None:
