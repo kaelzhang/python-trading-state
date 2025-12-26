@@ -5,6 +5,7 @@ from typing import (
     Tuple,
     Optional,
     Set,
+    Iterator
 )
 from datetime import datetime
 from decimal import Decimal
@@ -164,6 +165,9 @@ class BalanceManager:
 
     def get_balance(self, asset: str) -> Optional[Balance]:
         return self._balances.get(asset)
+
+    def get_balances(self) -> Iterator[Balance]:
+        return self._balances.values()
 
     def set_balance(
         self,

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from .symbol import SymbolManager
+from .balance import BalanceManager
 from .order import Order
 from .common import (
     DECIMAL_ZERO,
@@ -64,10 +65,30 @@ class PositionTracker:
 
     def __init__(
         self,
-        symbols: SymbolManager
+        symbols: SymbolManager,
+        balances: BalanceManager
     ):
         self._symbols = symbols
+        self._balances = balances
+
         self._positions = FactoryDict[str, Position](Position)
+
+    def init(self) -> None:
+        """Set the initial positions of the account according to the balances
+        """
+
+        for balance in self._balances.get_balances():
+            price = self._symbols.valuation_price(balance.asset)
+
+            if price.is_zero():
+                continue
+
+            self.update_position(
+                balance.asset,
+                balance.total,
+                price,
+                True
+            )
 
     def track_order(self, order: Order) -> Decimal:
         """
@@ -116,7 +137,7 @@ class PositionTracker:
         # base -> increase position
         # quote -> decrease position
 
-        self._update_position(ba, bq, bc / bq, True)
+        self.update_position(ba, bq, bc / bq, True)
 
         # Position to decrease
         position = self._positions[qa]
@@ -126,11 +147,11 @@ class PositionTracker:
             proceeds = qq * self._symbols.valuation_price(qa)
             realized_pnl = proceeds - cost
 
-        self._update_position(qa, qq, qc / qq, False)
+        self.update_position(qa, qq, qc / qq, False)
 
         return realized_pnl
 
-    def _update_position(
+    def update_position(
         self,
         asset: str,
         quantity: Decimal,

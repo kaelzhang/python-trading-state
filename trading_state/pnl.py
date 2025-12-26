@@ -101,7 +101,7 @@ class PerformanceAnalyzer:
         self._cash_flows = []
         self._perf_nodes = []
 
-        self._position_tracker = PositionTracker(symbols)
+        self._position_tracker = PositionTracker(symbols, balances)
         self._initial_benchmark_prices = {}
 
     def _get_account_value(self) -> Decimal:
@@ -143,6 +143,12 @@ class PerformanceAnalyzer:
         self._net_cash_flow += price * cash_flow.quantity
 
         self._cash_flows.append(cash_flow)
+        self._position_tracker.update_position(
+            cash_flow.asset,
+            cash_flow.quantity,
+            price,
+            True
+        )
         self.record()
 
         return True
@@ -162,11 +168,11 @@ class PerformanceAnalyzer:
     def record(self, *args, **kwargs) -> PerformanceNode:
         # If the performance analyzer is not initialized,
         # we will initialize it
-        self.init()
+        self._init()
 
         return self._record(*args, **kwargs)
 
-    def init(self) -> None:
+    def _init(self) -> None:
         if self._inited:
             return
 
@@ -177,6 +183,8 @@ class PerformanceAnalyzer:
             self._initial_benchmark_prices[asset] = (
                 self._symbols.valuation_price(asset)
             )
+
+        self._position_tracker.init()
 
     def _record(
         self,
