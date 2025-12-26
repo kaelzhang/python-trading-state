@@ -1,12 +1,20 @@
+from decimal import Decimal
+
 from trading_state import (
     FeatureType,
     OrderType,
 )
+from trading_state.symbol import ValuationPathStep
 
 from .fixtures import (
     get_symbols,
     init_state,
-    USDT
+    USDT,
+    X,
+    symbol_XY,
+    symbol_ZY,
+    symbol_ZUSDC,
+    symbol_ZUSDT
 )
 
 
@@ -64,3 +72,43 @@ def test_valuation_path():
 
     assert step1.forward
     assert step2.forward
+
+
+def test_valuation_path_primary_account_currency():
+    state = init_state()
+
+    state.set_symbol(symbol_XY)
+    state.set_symbol(symbol_ZY)
+    state.set_symbol(symbol_ZUSDC)
+    state.set_symbol(symbol_ZUSDT)
+
+    path = state._symbols.valuation_path(X)
+    assert path == [
+        ValuationPathStep(symbol_XY, True),
+        ValuationPathStep(symbol_ZY, False),
+        ValuationPathStep(symbol_ZUSDT, True),
+    ]
+
+def test_valuation_price_info():
+    state = init_state()
+
+    state.set_symbol(symbol_XY)
+    state.set_symbol(symbol_ZY)
+    state.set_symbol(symbol_ZUSDC)
+
+    price, dependencies = state._symbols.valuation_price_info(X)
+    assert price is None
+    assert dependencies == {symbol_XY.name, symbol_ZY.name, symbol_ZUSDC.name}
+
+    state.set_price(symbol_ZY.name, Decimal('2'))
+
+    price, dependencies = state._symbols.valuation_price_info(X)
+    assert price is None
+    assert dependencies == {symbol_XY.name, symbol_ZUSDC.name}
+
+    state.set_price(symbol_XY.name, Decimal('10000'))
+    state.set_price(symbol_ZUSDC.name, Decimal('0.5'))
+
+    price, dependencies = state._symbols.valuation_price_info(X)
+    assert price == Decimal('2500')
+    assert dependencies is None

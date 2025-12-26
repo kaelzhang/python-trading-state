@@ -15,7 +15,6 @@ from trading_state import (
     SymbolNotDefinedError,
     FeatureNotAllowedError,
     FeatureType,
-    Symbol,
     ValuationNotAvailableError
 )
 from trading_state.symbol import ValuationPathStep
@@ -28,7 +27,11 @@ from .fixtures import (
     BTCUSDT,
     BTC,
     USDT,
-    USDC
+    USDC,
+    X,
+    symbol_XY,
+    symbol_ZY,
+    symbol_ZUSDT
 )
 
 
@@ -196,19 +199,6 @@ def test_feature_not_allowed_error(test_symbols: Symbols):
 
 def test_valuation_path_not_available(test_symbols: Symbols):
     state = init_state()
-
-    X = 'X'
-    Y = 'Y'
-    Z = 'Z'
-
-    XY = 'XY'
-    ZY = 'ZY'
-
-    ZUSDT = 'ZUSDT'
-
-    symbol_XY = Symbol(XY, X, Y)
-    symbol_ZY = Symbol(ZY, Z, Y)
-    symbol_ZUSDT = Symbol(ZUSDT, Z, USDT)
 
     state.set_symbol(symbol_XY)
     state.set_symbol(symbol_ZY)

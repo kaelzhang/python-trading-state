@@ -25,6 +25,21 @@ BTC = 'BTC'
 USDT = 'USDT'
 USDC = 'USDC'
 
+X = 'X'
+Y = 'Y'
+Z = 'Z'
+
+XY = 'XY'
+ZY = 'ZY'
+
+ZUSDT = 'ZUSDT'
+ZUSDC = 'ZUSDC'
+
+symbol_XY = Symbol(XY, X, Y)
+symbol_ZY = Symbol(ZY, Z, Y)
+symbol_ZUSDT = Symbol(ZUSDT, Z, USDT)
+symbol_ZUSDC = Symbol(ZUSDC, Z, USDC)
+
 
 def mock_get_avg_price(symbol_name: str, mins: int) -> Decimal:
     return Decimal('10000')
