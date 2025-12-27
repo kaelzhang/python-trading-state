@@ -83,7 +83,7 @@ class DependencyManager:
             self._symbol_assets[symbol_name].add(asset)
 
     def clear(self, asset: str) -> None:
-        symbols = self._asset_symbols.pop(asset, None)
+        symbols = self._asset_symbols.pop(asset)
 
         if symbols is None:
             return

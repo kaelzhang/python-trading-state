@@ -76,9 +76,12 @@ def create_state(
             **DEFAULT_CONFIG_KWARGS
         )
 
-    return TradingState(
+    state = TradingState(
         config=config
     )
+
+    assert state.config == config
+    return state
 
 
 def init_symbols(state: TradingState) -> None:

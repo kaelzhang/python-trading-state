@@ -21,6 +21,7 @@ from .fixtures import (
     USDT,
     USDC,
     Z,
+    X,
     ZUSDT,
     BTCUSDT,
     ETHUSDT,
@@ -44,7 +45,10 @@ def test_pnl():
     state.set_cash_flow(cash_flow_z)
 
     state.set_balances([
-        Balance('invalid', Decimal('1'), Decimal('0'), time=now),
+        # invalid balance, asset not found
+        Balance('invalid', Decimal('1'), Decimal('0'), now),
+        # Zero balance, which is actually invalid
+        Balance(X, DECIMAL_ZERO, DECIMAL_ZERO, now)
     ])
 
     # Initial record
