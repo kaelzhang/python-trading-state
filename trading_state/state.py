@@ -525,7 +525,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Record current performance snapshot
 
         Args:
-            tags (Iterable[str] = None): List of tags to add to the snapshot
+            labels (dict = {}): List of labels to add to the snapshot
             time (datetime = None): Timestamp of the snapshot
 
         Returns:

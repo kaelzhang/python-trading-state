@@ -2,8 +2,7 @@ from typing import (
     List,
     Dict,
     Optional,
-    Iterable,
-    Set
+    Any
 )
 from dataclasses import dataclass
 from decimal import Decimal
@@ -66,6 +65,7 @@ class BenchmarkPerformance:
 
 
 BenchmarkPerformances = Dict[str, BenchmarkPerformance]
+Labels = Dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +76,7 @@ class PerformanceNode:
     positions: PositionSnapshots
     benchmarks: BenchmarkPerformances
     net_cash_flow: Decimal
-    tags: Set[str]
+    labels: Labels
 
     @property
     def unrealized_pnl(self) -> Decimal:
@@ -169,8 +169,10 @@ class PerformanceAnalyzer:
         self._realized_pnl_total += self._position_tracker.track_order(order)
 
         self._record(
-            # For internal tags, follow the '__XXX__' format
-            tags=['__ORDER__'],
+            # For internal labels, follow the '__XXX__' format
+            labels={
+                '__ORDER__': True
+            },
             time=order.updated_at
         )
 
@@ -197,8 +199,8 @@ class PerformanceAnalyzer:
 
     def _record(
         self,
-        tags: Optional[Iterable[str]] = None,
-        time: Optional[datetime] = None
+        time: Optional[datetime] = None,
+        labels: Labels = {}
     ) -> PerformanceNode:
         """
         see state.record()
@@ -236,7 +238,7 @@ class PerformanceAnalyzer:
             positions=snapshots,
             benchmarks=benchmarks,
             net_cash_flow=self._net_cash_flow,
-            tags=set[str](tags or [])
+            labels=labels
         )
 
         self._perf_nodes.append(node)
