@@ -497,7 +497,25 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def update_order(self, order: Order, **kwargs) -> None:
         """
-        Update an order in the trading state
+        Update the order
+
+        Args:
+            status (OrderStatus = None): The new status of the order
+            created_at (datetime = None): The creation time of the order
+            updated_at (datetime = None): The update time of the order
+            filled_quantity (Decimal = None): The new filled base assert quantity of the order
+            quote_quantity (Decimal = None): The cumulative quote asset transacted quantity of the order
+            commission_asset (str = None): The commission asset name
+            commission_quantity (Decimal = None): The cumulative quantity of the commission asset
+            id (str = None): The client order id
+
+        Usage::
+
+            state.update_order(
+                order,
+                filled_quantity = Decimal('0.5'),
+                quote_quantity = Decimal('1000')
+            )
         """
 
         order.update(self._symbols, **kwargs)

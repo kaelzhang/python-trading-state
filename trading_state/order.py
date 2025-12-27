@@ -118,24 +118,7 @@ class Order(EventEmitter[OrderUpdatedType]):
         commission_quantity: Optional[Decimal] = None,
         id: str = None
     ) -> None:
-        """Update the order
-
-        Args:
-            status (OrderStatus = None): The new status of the order
-            created_at (datetime = None): The creation time of the order
-            filled_quantity (Decimal = None): The new filled base assert quantity of the order
-            quote_quantity (Decimal = None): The cumulative quote asset transacted quantity of the order
-            commission_asset (str = None): The commission asset name
-            commission_quantity (Decimal = None): The cumulative quantity of the commission asset
-            id (str = None): The client order id
-
-        Usage::
-
-            state.update_order(
-                order,
-                filled_quantity = Decimal('0.5'),
-                quote_quantity = Decimal('1000')
-            )
+        """see state.update_order()
         """
 
         if self.status.completed():

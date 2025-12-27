@@ -21,6 +21,7 @@ def load_exchange_info() -> dict:
 
 
 BTC = 'BTC'
+ETH = 'ETH'
 USDT = 'USDT'
 USDC = 'USDC'
 FDUSD = 'FDUSD'
@@ -35,6 +36,7 @@ ZUSDC = Symbol(Z + USDC, Z, USDC)
 BTCUSDC = Symbol(BTC + USDC, BTC, USDC)
 BTCUSDT = Symbol(BTC + USDT, BTC, USDT)
 BTCFDUSD = Symbol(BTC + FDUSD, BTC, FDUSD)
+ETHUSDT = Symbol(ETH + USDT, ETH, USDT)
 
 
 def mock_get_avg_price(symbol_name: str, mins: int) -> Decimal:

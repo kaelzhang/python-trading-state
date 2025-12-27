@@ -65,13 +65,16 @@ class BenchmarkPerformance:
     benchmark_return: Decimal
 
 
+BenchmarkPerformances = Dict[str, BenchmarkPerformance]
+
+
 @dataclass(frozen=True, slots=True)
 class PerformanceNode:
     time: datetime
     account_value: Decimal
     realized_pnl: Decimal
     positions: PositionSnapshots
-    benchmarks: Set[BenchmarkPerformance]
+    benchmarks: BenchmarkPerformances
     net_cash_flow: Decimal
     tags: Set[str]
 
@@ -208,7 +211,7 @@ class PerformanceAnalyzer:
         realized_pnl = self._realized_pnl_total
 
         snapshots = self._position_tracker.snapshots()
-        benchmarks = set[BenchmarkPerformance]()
+        benchmarks: BenchmarkPerformances = {}
 
         for asset in self._config.benchmark_assets:
             price = self._symbols.valuation_price(asset)
@@ -220,12 +223,10 @@ class PerformanceAnalyzer:
             else:
                 self._initial_benchmark_prices[asset] = price
 
-            benchmarks.add(
-                BenchmarkPerformance(
-                    asset,
-                    price,
-                    benchmark_return
-                )
+            benchmarks[asset] = BenchmarkPerformance(
+                asset,
+                price,
+                benchmark_return
             )
 
         node = PerformanceNode(
