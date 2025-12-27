@@ -159,7 +159,10 @@ def test_pnl():
     # ---------------------------------------------------
     price2 = Decimal('5000')
     state.set_price(BTCUSDT.name, price2)
+
+    assert state.get_price(ETHUSDT.name) is None
     state.set_price(ETHUSDT.name, price2)
+    assert state.get_price(ETHUSDT.name) == price2
 
     now5 = datetime.now()
     node5 = state.record(time=now5)

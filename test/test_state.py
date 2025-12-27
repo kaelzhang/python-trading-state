@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 
 from trading_state import (
+    TradingConfig,
     OrderSide,
     MarketQuantityType,
     TimeInForce,
@@ -20,7 +21,10 @@ from .fixtures import (
     BTCUSDC,
     BTCUSDT,
     BTC,
-    USDT
+    USDT,
+    ZUSDT,
+    Z,
+    DEFAULT_CONFIG_KWARGS
 )
 
 
@@ -581,3 +585,71 @@ def test_allocation_not_enough_balance():
 
     orders, _ = state.get_orders()
     assert not orders
+
+
+def test_expect_with_no_notional_limit():
+    kwargs = {
+        **DEFAULT_CONFIG_KWARGS,
+    }
+    kwargs['alt_account_currencies'] = tuple()
+    config = TradingConfig(**kwargs)
+    state = init_state(config=config)
+
+    price = Decimal('10000')
+
+    state.set_notional_limit(Z, None)
+    state.set_price(ZUSDT.name, price)
+    state.set_symbol(ZUSDT)
+    state.set_balances([
+        Balance(Z, DECIMAL_ZERO, DECIMAL_ZERO)
+    ])
+
+    exception, success = state.expect(
+        ZUSDT.name,
+        exposure=Decimal('0.1'),
+        price=price,
+        use_market_order=False
+    )
+
+    assert exception is None
+    orders, _ = state.get_orders()
+
+    order = orders.pop()
+
+    DECIMAL_20 = Decimal('20')
+    DECIMAL_20K = Decimal('200000')
+
+    assert order.ticket.quantity == DECIMAL_20
+    assert order.ticket.side == OrderSide.BUY
+
+    state.update_order(
+        order,
+        filled_quantity=DECIMAL_20,
+        quote_quantity=DECIMAL_20K,
+        status=OrderStatus.FILLED
+    )
+
+    state.set_balances([
+        Balance(Z, DECIMAL_20, DECIMAL_ZERO),
+        Balance(USDT, DECIMAL_ZERO, DECIMAL_ZERO)
+    ])
+
+    state.expect(
+        ZUSDT.name,
+        exposure=DECIMAL_ZERO,
+        price=price,
+        use_market_order=False
+    )
+
+    orders, _ = state.get_orders()
+    order = orders.pop()
+
+    assert order.ticket.quantity == Decimal('20')
+    assert order.ticket.side == OrderSide.SELL
+
+    state.update_order(
+        order,
+        status=OrderStatus.REJECTED
+    )
+
+    assert not state._expected
