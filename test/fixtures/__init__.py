@@ -62,6 +62,7 @@ def get_symbols() -> Symbols:
 DEFAULT_CONFIG_KWARGS = dict(
     account_currency=USDT,
     alt_account_currencies=(USDC,),
+    max_order_history_size=2,
     context={
         'get_avg_price': mock_get_avg_price
     }

@@ -194,7 +194,7 @@ class Order(EventEmitter[OrderUpdatedType]):
             return
 
         quote_quantity_delta = self.quote_quantity - old_quote_quantity
-        commision_quantity_delta = (
+        commission_quantity_delta = (
             self.commission_quantity - old_commission_quantity
         )
 
@@ -216,7 +216,7 @@ class Order(EventEmitter[OrderUpdatedType]):
 
         if self.commission_asset is not None:
             commission_cost = (
-                commision_quantity_delta * symbols.valuation_price(
+                commission_quantity_delta * symbols.valuation_price(
                     self.commission_asset
                 )
             )

@@ -2,7 +2,6 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 
 from trading_state import (
-    TradingConfig,
     OrderSide,
     MarketQuantityType,
     TimeInForce,
@@ -13,18 +12,19 @@ from trading_state import (
     TradingStateEvent,
 )
 from trading_state.common import (
-    DECIMAL_ZERO
+    DECIMAL_ZERO,
+    DECIMAL_ONE
 )
 
 from .fixtures import (
     init_state,
     BTCUSDC,
+    USDC,
     BTCUSDT,
     BTC,
     USDT,
     ZUSDT,
-    Z,
-    DEFAULT_CONFIG_KWARGS
+    Z
 )
 
 
@@ -587,13 +587,8 @@ def test_allocation_not_enough_balance():
     assert not orders
 
 
-def test_expect_with_no_notional_limit():
-    kwargs = {
-        **DEFAULT_CONFIG_KWARGS,
-    }
-    kwargs['alt_account_currencies'] = tuple()
-    config = TradingConfig(**kwargs)
-    state = init_state(config=config)
+def test_expect_with_no_notional_limit_and_order_trades():
+    state = init_state()
 
     price = Decimal('10000')
 
@@ -626,8 +621,18 @@ def test_expect_with_no_notional_limit():
         order,
         filled_quantity=DECIMAL_20,
         quote_quantity=DECIMAL_20K,
+        commission_asset=USDC,
+        commission_quantity=Decimal('0.02'),
         status=OrderStatus.FILLED
     )
+
+    assert len(order.trades) == 1
+    trade = order.trades[0]
+    assert trade.base_quantity == DECIMAL_20
+    assert trade.base_price == price
+    assert trade.quote_quantity == DECIMAL_20K
+    assert trade.quote_price == DECIMAL_ONE
+    assert trade.commission_cost == Decimal('0.02')
 
     state.set_balances([
         Balance(Z, DECIMAL_20, DECIMAL_ZERO),

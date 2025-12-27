@@ -124,8 +124,8 @@ class FactoryDict(Generic[K, V]):
             self._data[key] = value
         return value
 
-    def __contains__(self, key: K) -> bool:
-        return key in self._data
+    # def __contains__(self, key: K) -> bool:
+    #     return key in self._data
 
     def __delitem__(self, key: K) -> None:
         self._data.pop(key, None)
