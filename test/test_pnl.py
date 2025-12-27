@@ -43,7 +43,12 @@ def test_pnl():
     cash_flow_z = CashFlow(Z, Decimal('0.5'), now)
     state.set_cash_flow(cash_flow_z)
 
+    state.set_balances([
+        Balance('invalid', Decimal('1'), Decimal('0'), time=now),
+    ])
+
     # Initial record
+    # BTC: $10000
     # ---------------------------------------------------
     node = state.record(time=now)
 
@@ -90,7 +95,7 @@ def test_pnl():
 
     now3 = datetime.now()
 
-    # Cash Flow of BTC
+    # Cash Flow of BTC, + $20000
     # ---------------------------------------------------
     state.set_balances([
         Balance(BTC, Decimal('1'), Decimal('0'), time=now3)
@@ -157,6 +162,7 @@ def test_pnl():
 
     BTC_position5 = node5.positions[BTC]
     assert BTC_position5.unrealized_pnl == Decimal('-22500')
+    assert BTC_position5.quantity == Decimal('2.5')
     assert node5.unrealized_pnl == Decimal('-22500')
 
     # Set price of Z
@@ -174,3 +180,80 @@ def test_pnl():
     assert ETH_benchmark6.benchmark_return == Decimal('0')
     assert ETH_benchmark6.price == Decimal('5000')
     assert ETH_benchmark6.asset == ETH
+
+    # Sell
+    # ---------------------------------------------------
+    state.expect(
+        BTCUSDT.name,
+        exposure=Decimal('0.025'),
+        price=price2,
+        use_market_order=False
+    )
+
+    orders, _ = state.get_orders()
+    assert len(orders) == 1
+
+    order = orders.pop()
+
+    state.update_order(
+        order,
+        filled_quantity=Decimal('2'),
+        # The USDT used is less than the expected quote quantity
+        quote_quantity=Decimal('15000'),
+        status=OrderStatus.FILLED,
+    )
+
+    now7 = datetime.now()
+    node7 = state.record(time=now7)
+
+    assert node7.realized_pnl == Decimal('-18000')
+    assert node7.unrealized_pnl == Decimal('-2500')
+
+    # print(state._perf._position_tracker._positions._data)
+
+    # Sell more
+    # ---------------------------------------------------
+    state.expect(
+        BTCUSDT.name,
+        exposure=Decimal('0.02'),
+        price=price2,
+        use_market_order=False
+    )
+
+    orders, _ = state.get_orders()
+    assert len(orders) == 1
+    order = orders.pop()
+
+    state.update_order(
+        order,
+        filled_quantity=Decimal('0.1'),
+        # The USDT used is less than the expected quote quantity
+        quote_quantity=Decimal('500'),
+        status=OrderStatus.FILLED,
+    )
+
+    now8 = datetime.now()
+    node8 = state.record(time=now8)
+
+    assert node8.realized_pnl == Decimal('-18500')
+
+    # Decrease ETH
+    # ---------------------------------------------------
+    state.set_cash_flow(
+        CashFlow(Z, Decimal('-2'), datetime.now())
+    )
+
+    # This should not happen, however we should handle it to prevent dirty data
+    state.set_cash_flow(
+        CashFlow(Z, Decimal('-1'), datetime.now())
+    )
+
+    # Zero cash flow, which is invalid
+    state.set_cash_flow(
+        CashFlow(Z, Decimal('0'), datetime.now())
+    )
+
+    now9 = datetime.now()
+    node9 = state.record(time=now9)
+
+    assert node9.positions[Z].quantity == Decimal('0')

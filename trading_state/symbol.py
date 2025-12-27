@@ -286,7 +286,13 @@ class SymbolManager:
         price = DECIMAL_ONE
         dependencies = set[str]()
 
-        for step in self.valuation_path(asset):
+        path = self.valuation_path(asset)
+
+        if path is None:
+            # No valuation path available, which is not supported
+            return None, dependencies
+
+        for step in path:
             symbol_price = self.get_price(step.symbol.name)
 
             if symbol_price is None:

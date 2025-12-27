@@ -222,6 +222,12 @@ class BalanceManager:
         summary = DECIMAL_ZERO
 
         for balance in self._balances.values():
+            total = balance.total
+
+            if total.is_zero():
+                # Dirty data
+                continue
+
             price, deps = self._symbols.valuation_price_info(
                 balance.asset
             )
@@ -231,7 +237,7 @@ class BalanceManager:
                     self.not_ready_assets.add(balance.asset, deps)
                 continue
 
-            summary += balance.total * price
+            summary += total * price
 
         return summary
 

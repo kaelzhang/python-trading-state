@@ -149,14 +149,14 @@ class PerformanceAnalyzer:
             # a cash flow to the account later.
             return False
 
-        self._net_cash_flow += price * cash_flow.quantity
+        quantity = cash_flow.quantity
 
+        self._net_cash_flow += price * quantity
         self._cash_flows.append(cash_flow)
         self._position_tracker.update_position(
             cash_flow.asset,
-            cash_flow.quantity,
-            price,
-            True
+            quantity,
+            price
         )
         self.record()
 

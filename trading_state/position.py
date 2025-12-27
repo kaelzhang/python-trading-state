@@ -121,8 +121,7 @@ class PositionTracker:
             self.update_position(
                 balance.asset,
                 balance.total,
-                price,
-                True
+                price
             )
 
     def track_order(self, order: Order) -> Decimal:
@@ -172,9 +171,16 @@ class PositionTracker:
         # base -> increase position
         # quote -> decrease position
 
-        self.update_position(ba, bq, bc / bq, True)
+        # Increase
+        # -------------------------------------------------
+        self.update_position(ba, bq, bc / bq)
+
+        # Should not handle
+        if self._symbols.is_account_asset(qa):
+            return realized_pnl
 
         # Position to decrease
+        # -------------------------------------------------
         position = self._positions[qa]
         if position.quantity > 0:
             avg_cost = position.avg_cost
@@ -182,7 +188,7 @@ class PositionTracker:
             proceeds = qq * self._symbols.valuation_price(qa)
             realized_pnl = proceeds - cost
 
-        self.update_position(qa, qq, qc / qq, False)
+        self.update_position(qa, - qq, qc / qq)
 
         return realized_pnl
 
@@ -190,8 +196,7 @@ class PositionTracker:
         self,
         asset: str,
         quantity: Decimal,
-        price: Decimal,
-        increase: bool
+        price: Decimal
     ) -> None:
         """
         Update the position of the account according to FIFO method
@@ -204,10 +209,13 @@ class PositionTracker:
             # Do not track the account assets
             return
 
+        if quantity.is_zero():
+            return
+
         position = self._positions[asset]
 
-        # Buy, increase the position
-        if increase:
+        # Increase the position
+        if quantity > 0:
             cost = quantity * price
 
             position.quantity += quantity
@@ -216,13 +224,13 @@ class PositionTracker:
             # Add the new lot of the asset position
             position.lots.append(Lot(quantity, price))
 
-        # Sell, decrease the position
+        # Decrease the position
         else:
             if position.quantity.is_zero():
                 # No position to decrease
                 return
 
-            remaining_quantity = quantity
+            remaining_quantity = - quantity
             new_lots = []
 
             # FIFO
