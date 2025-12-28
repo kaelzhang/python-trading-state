@@ -11,8 +11,7 @@ from typing import (
     Any,
     Hashable,
     Union,
-    Set,
-    Iterator,
+    Iterable,
     List
 )
 
@@ -68,7 +67,7 @@ def apply_tick_size(number: Decimal, tick_size: Decimal) -> Decimal:
 def class_repr(
     self,
     main: Optional[str] = None,
-    keys: Optional[Tuple[str]] = None
+    keys: Optional[Iterable[str]] = None
 ) -> str:
     """
     Returns a string representation of an class instance comprises of slots
@@ -124,13 +123,10 @@ class FactoryDict(Generic[K, V]):
             self._data[key] = value
         return value
 
-    # def __contains__(self, key: K) -> bool:
-    #     return key in self._data
-
     def __delitem__(self, key: K) -> None:
         self._data.pop(key, None)
 
-    def items(self) -> Iterator[Tuple[K, V]]:
+    def items(self):
         return self._data.items()
 
     def clear(self) -> None:
@@ -146,18 +142,18 @@ class EventEmitter(Generic[K]):
     _listeners: FactoryDict[K, List[Callable]]
 
     def __init__(self):
-        self._listeners = FactoryDict[K, Set[Callable]](list[Callable])
+        self._listeners = FactoryDict[K, List[Callable]](list[Callable])
 
     def on(
         self,
-        event: str,
+        event: K,
         listener: Callable
     ) -> None:
         self._listeners[event].append(listener)
 
     def emit(
         self,
-        event: str,
+        event: K,
         *args: Any
     ) -> None:
         listeners = self._listeners.get(event)

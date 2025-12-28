@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 from typing import (
-    List, Optional, Union,
+    List, Optional, Union, Any,
     TYPE_CHECKING
 )
 from enum import Enum
@@ -60,7 +60,7 @@ class BaseOrderTicket:
             self.REQUIRED_PARAMS + self.OPTIONAL_PARAMS
         )
 
-    others: dict[str, any]
+    others: dict[str, Any]
 
     def __repr__(self) -> str:
         return class_repr(self, keys=['type', *self.PARAMS])

@@ -353,7 +353,7 @@ class OrderManager:
         max_order_history_size: int,
         symbols: SymbolManager
     ) -> None:
-        self._symbols = SymbolManager
+        self._symbols = symbols
 
         self._open_orders = set[Order]()
         self._id_orders = {}
