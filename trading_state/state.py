@@ -169,7 +169,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_symbol(
         self,
-        symbol: Symbol
+        symbol: Symbol, /
     ) -> None:
         """
         Set (add or update) the symbol info for a symbol
@@ -210,7 +210,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self,
         weights: Optional[
             Tuple[AllocationWeights, AllocationWeights]
-        ]
+        ], /
     ) -> None:
         """
         Set the weights of the alternative account currencies to the account currency.
@@ -247,7 +247,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_balances(
         self,
-        new: Iterable[Balance],
+        new: Iterable[Balance], /,
         *args, **kwargs
     ) -> None:
         """
@@ -269,7 +269,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_cash_flow(
         self,
-        cash_flow: CashFlow
+        cash_flow: CashFlow, /
     ) -> None:
         """Handle external cashflow update
         """
@@ -285,7 +285,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def get_price(
         self,
-        symbol_name: str
+        symbol_name: str, /
     ) -> Decimal | None:
         """
         Get the price of a symbol
@@ -293,7 +293,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         return self._symbols.get_price(symbol_name)
 
-    def support_symbol(self, symbol_name: str) -> bool:
+    def support_symbol(self, symbol_name: str, /) -> bool:
         """
         Check whether the symbol is supported
         """
@@ -302,7 +302,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def exposure(
         self,
-        asset: str
+        asset: str, /
     ) -> ValueOrException[Decimal]:
         """
         Get the current expected limit exposure or the calculated limit exposure of an asset
@@ -326,7 +326,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         return None, self._get_asset_exposure(asset)
 
-    def cancel_order(self, order: Order) -> None:
+    def cancel_order(self, order: Order, /) -> None:
         """
         Cancel an order from the trading state, and trigger the cancellation the next tick
 
@@ -394,12 +394,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
             **criteria
         )
 
-    def get_order_by_id(self, order_id: str) -> Optional[Order]:
+    def get_order_by_id(self, order_id: str, /) -> Optional[Order]:
         return self._orders.get_order_by_id(order_id)
 
     def expect(
         self,
-        symbol_name: str,
+        symbol_name: str, /,
         exposure: Decimal,
         price: Decimal,
         use_market_order: bool,
@@ -495,7 +495,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         return orders, orders_to_cancel
 
-    def update_order(self, order: Order, **kwargs) -> None:
+    def update_order(self, order: Order, /, **kwargs) -> None:
         """
         Update the order
 

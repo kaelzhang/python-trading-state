@@ -244,3 +244,6 @@ class PerformanceAnalyzer:
         self._perf_nodes.append(node)
 
         return node
+
+    def order_pnl(self, order: Order) -> Decimal:
+        ...

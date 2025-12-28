@@ -283,7 +283,7 @@ def test_order_filled():
 def test_no_same_exposure():
     state = init_state()
     state.expect(
-        symbol_name=BTCUSDT,
+        BTCUSDT,
         exposure=Decimal('0.2'),
         price=Decimal('10000'),
         use_market_order=False
@@ -314,7 +314,7 @@ def test_alt_currencies():
 
     # It will create 2 orders, allocated into BTCUSDT and BTCUSDC
     state.expect(
-        symbol_name=BTCUSDT,
+        BTCUSDT,
         exposure=Decimal('0.3'),
         price=Decimal('10000'),
         use_market_order=False
@@ -405,7 +405,7 @@ def test_alt_currencies():
     # Although the symbol name is BTCUSDC, it will still allocate
     # into BTCUSDT and BTCUSDC
     state.expect(
-        symbol_name=BTCUSDC,
+        BTCUSDC,
         exposure=Decimal('0.3'),
         price=Decimal('10000'),
         use_market_order=False
@@ -488,7 +488,7 @@ def test_allocate_sell():
     # Although the symbol name is BTCUSDC,
     # but the weight of USDC is 0, we will only allocate to USDT
     state.expect(
-        symbol_name=BTCUSDC,
+        BTCUSDC,
         exposure=Decimal('0'),
         price=Decimal('10000'),
         use_market_order=False
@@ -517,7 +517,7 @@ def test_alt_currencies_edge_cases():
     # it is not possible to allocate into two quote currencies,
     # due to the limitation of NOTIONAL
     state.expect(
-        symbol_name=BTCUSDC,
+        BTCUSDC,
         exposure=Decimal('0.10005'),
         price=Decimal('10000'),
         use_market_order=False
@@ -535,7 +535,7 @@ def test_alt_currencies_edge_cases():
     # The exposure delta is too small
     # to create even a single order due to NOTIONAL
     state.expect(
-        symbol_name=BTCUSDC,
+        BTCUSDC,
         exposure=Decimal('0.10004'),
         price=Decimal('10000'),
         use_market_order=False
@@ -549,7 +549,7 @@ def test_alt_currencies_edge_cases():
 
     # Sell
     state.expect(
-        symbol_name=BTCUSDC,
+        BTCUSDC,
         exposure=Decimal('0'),
         price=Decimal('10000'),
         use_market_order=False
@@ -573,7 +573,7 @@ def test_allocation_not_enough_balance():
     )
 
     state.expect(
-        symbol_name=BTCUSDC,
+        BTCUSDC,
         exposure=Decimal('0.2'),
         price=Decimal('10000'),
         use_market_order=False
