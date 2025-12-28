@@ -29,7 +29,7 @@ from .balance import (
 from .pnl import (
     PerformanceAnalyzer,
     CashFlow,
-    PerformanceNode
+    PerformanceSnapshot
 )
 from .order import (
     Order,
@@ -520,7 +520,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         order.update(self._symbols, **kwargs)
 
-    def record(self, *args, **kwargs) -> PerformanceNode:
+    def record(self, *args, **kwargs) -> PerformanceSnapshot:
         """
         Record current performance snapshot
 
@@ -529,9 +529,25 @@ class TradingState(EventEmitter[TradingStateEvent]):
             time (datetime = None): Timestamp of the snapshot
 
         Returns:
-            PerformanceNode: The created performance snapshot
+            PerformanceSnapshot: The created performance snapshot
         """
         return self._perf.record(*args, **kwargs)
+
+    def performance(
+        self,
+        descending: bool = False
+    ) -> Iterator[PerformanceSnapshot]:
+        """
+        Returns an iterator of performance snapshots
+
+        Args:
+            descending (bool = False): Whether to iterate in descending order, ie. the most recent snapshots first
+
+        Returns:
+            Iterator[PerformanceSnapshot]
+        """
+
+        return self._perf.iterator(descending)
 
     # End of public methods ---------------------------------------------
 

@@ -7,7 +7,7 @@ from trading_state import (
     CashFlow,
     OrderSide,
     OrderStatus,
-    # PerformanceNode
+    # PerformanceSnapshot
 )
 
 from trading_state.common import (

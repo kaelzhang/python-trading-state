@@ -2,7 +2,8 @@ from typing import (
     List,
     Dict,
     Optional,
-    Any
+    Any,
+    Iterator
 )
 from dataclasses import dataclass
 from decimal import Decimal
@@ -69,7 +70,7 @@ Labels = Dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
-class PerformanceNode:
+class PerformanceSnapshot:
     time: datetime
     account_value: Decimal
     realized_pnl: Decimal
@@ -93,7 +94,7 @@ class PerformanceAnalyzer:
     _realized_pnl_total: Decimal = DECIMAL_ZERO
 
     _cash_flows: List[CashFlow]
-    _perf_nodes: List[PerformanceNode]
+    _perf_nodes: List[PerformanceSnapshot]
 
     _initial_benchmark_prices: Dict[str, Decimal]
 
@@ -176,7 +177,7 @@ class PerformanceAnalyzer:
             time=order.updated_at
         )
 
-    def record(self, *args, **kwargs) -> PerformanceNode:
+    def record(self, *args, **kwargs) -> PerformanceSnapshot:
         # If the performance analyzer is not initialized,
         # we will initialize it
         self._init()
@@ -201,7 +202,7 @@ class PerformanceAnalyzer:
         self,
         time: Optional[datetime] = None,
         labels: Labels = {}
-    ) -> PerformanceNode:
+    ) -> PerformanceSnapshot:
         """
         see state.record()
         """
@@ -231,7 +232,7 @@ class PerformanceAnalyzer:
                 benchmark_return
             )
 
-        node = PerformanceNode(
+        node = PerformanceSnapshot(
             time=time,
             account_value=account_value,
             realized_pnl=realized_pnl,
@@ -244,6 +245,13 @@ class PerformanceAnalyzer:
         self._perf_nodes.append(node)
 
         return node
+
+    def iterator(self, descending: bool) -> Iterator[PerformanceSnapshot]:
+        return (
+            reversed(self._perf_nodes)
+            if descending
+            else iter(self._perf_nodes)
+        )
 
     def order_pnl(self, order: Order) -> Decimal:
         ...
