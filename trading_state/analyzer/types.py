@@ -15,7 +15,7 @@ from trading_state.common import FactoryDict
 class DataclassProtocol(Protocol):
     __dataclass_fields__: dict
 
-DataclassClass = TypeVar('DataclassClass', bound=DataclassProtocol)
+Params = TypeVar('Params', bound=DataclassProtocol)
 
 
 class AnalyzerCategory(StringEnum):
@@ -34,7 +34,56 @@ class AnalyzerTypeInfo:
     name: str
     description: str
     category: AnalyzerCategory
-    params: Type[DataclassClass] | None = None
+    params: Type[Params] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsAnnualizedReturn:
+    trading_days: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsSharpeRatio:
+    risk_free_rate: float = 0.0
+    # Which calculates the annualization factor via sqrt(trading_days)
+    trading_days: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsSortinoRatio:
+    minimum_acceptable_return: float = 0.0
+    downside_threshold: float = 0.0
+    # Which calculates the annualization factor via sqrt(trading_days)
+    trading_days: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsTreynorRatio:
+    # Which is the name of an asset,
+    # i.e the key name of the `PerformanceSnapshot.benchmarks` dict
+    benchmark: str = 'btc'
+    risk_free_rate: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsInformationRatio:
+    # Same as `ParamsTreynorRatio.benchmark`
+    benchmark: str = 'btc'
+    tracking_error_window: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsM2:
+    # Same as `ParamsTreynorRatio.benchmark`
+    benchmark: str = 'btc'
+    risk_free_rate: float = 0.0
+    # Same as `ParamsAnnualizedReturn.trading_days`
+    trading_days: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsCalmarRatio:
+    risk_free_rate: float = 0.0
 
 
 class AnalyzerType(Enum):
@@ -47,7 +96,8 @@ class AnalyzerType(Enum):
     ANNUALIZED_RETURN = AnalyzerTypeInfo(
         name='Annualized Return',
         description='Annualizes period returns (not necessarily compounded)',
-        category=AnalyzerCategory.RETURN_AND_GROWTH
+        category=AnalyzerCategory.RETURN_AND_GROWTH,
+        params=ParamsAnnualizedReturn
     )
 
     CAGR = AnalyzerTypeInfo(
@@ -71,31 +121,36 @@ class AnalyzerType(Enum):
     SHARPE_RATIO = AnalyzerTypeInfo(
         name='Sharpe Ratio',
         description='Ratio of the expected excess return per unit of total volatility',
-        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
+        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS,
+        params=ParamsSharpeRatio
     )
 
     SORTINO_RATIO = AnalyzerTypeInfo(
         name='Sortino Ratio',
         description='Excess return per unit of downside deviation (penalizes only downside risk)',
-        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
+        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS,
+        params=ParamsSortinoRatio
     )
 
     TREYNOR_RATIO = AnalyzerTypeInfo(
         name='Treynor Ratio',
         description='Excess return per unit of systematic risk (beta)',
-        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
+        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS,
+        params=ParamsTreynorRatio
     )
 
     IR = AnalyzerTypeInfo(
         name='Information Ratio',
         description='Active return per unit of tracking error (active risk)',
-        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
+        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS,
+        params=ParamsInformationRatio
     )
 
     M2 = AnalyzerTypeInfo(
         name='Modigliani-Modigliani (M²)',
         description='Risk-adjusted return scaled to benchmark volatility',
-        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
+        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS,
+        params=ParamsM2
     )
 
     CALMAR_RATIO = AnalyzerTypeInfo(
@@ -137,7 +192,8 @@ class AnalyzerType(Enum):
     VOLATILITY = AnalyzerTypeInfo(
         name='Volatility (Annualized Std Dev)',
         description='Annualized standard deviation of returns (total variability)',
-        category=AnalyzerCategory.VOLATILITY_AND_DOWNSIDE_RISK
+        category=AnalyzerCategory.VOLATILITY_AND_DOWNSIDE_RISK,
+        params=ParamsAnnualizedReturn
     )
 
     DOWNSIDE_DEVIATION = AnalyzerTypeInfo(
@@ -319,7 +375,7 @@ class AnalyzerType(Enum):
     def params(
         self,
         *args, **kwargs
-    ) -> Tuple[Self, DataclassClass]:
+    ) -> Tuple[Self, Params]:
         if self.value.params is None:
             raise ValueError(
                 f'No parameters are supported for {self.value.name}'
