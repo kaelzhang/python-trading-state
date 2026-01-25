@@ -1,6 +1,8 @@
 from typing import (
     Iterable,
-    Tuple
+    Tuple,
+    Any,
+    List
 )
 
 
@@ -18,7 +20,12 @@ AnalyzeTarget = Tuple[AnalyzerType, Params | None]
 
 class PerformanceAnalyzer:
     """
+    Args:
+        targets: The targets to analyze.
+
     Usage::
+
+        from trading_state import TradingStateEvent
 
         from trading_state.analyzer import (
             PerformanceAnalyzer,
@@ -36,17 +43,20 @@ class PerformanceAnalyzer:
             )
         ])
 
-        analyzer.add_snapshots(*snapshots)
+        state.on(
+            TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED,
+            analyzer.add_snapshots
+        )
 
         analyzer.analyze()
     """
 
-    _targets: list[AnalyzeTarget]
-    _snapshots: list[PerformanceSnapshot]
+    _targets: List[AnalyzeTarget]
+    _snapshots: List[PerformanceSnapshot]
 
     def __init__(
         self,
-        targets: list[AnalyzeTarget | AnalyzerType]
+        targets: List[AnalyzeTarget | AnalyzerType]
     ) -> None:
         self._snapshots = []
         self._targets = [
@@ -57,5 +67,11 @@ class PerformanceAnalyzer:
     def add_snapshots(self, *snapshots: PerformanceSnapshot) -> None:
         self.snapshots.extend(snapshots)
 
-    def analyze(self) -> dict[AnalyzerType, float]:
+    def analyze(
+        self
+    ) -> dict[AnalyzerType, Any]:
+        """
+        Analyze the performance snapshots and return the results according to the targets.
+        """
+
         ...

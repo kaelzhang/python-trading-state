@@ -27,7 +27,7 @@ from .balance import (
     BalanceManager,
 )
 from .pnl import (
-    PerformanceAnalyzer,
+    PerformanceTracker,
     CashFlow,
     PerformanceSnapshot
 )
@@ -134,7 +134,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             config.max_order_history_size,
             self._symbols
         )
-        self._perf = PerformanceAnalyzer(
+        self._perf = PerformanceTracker(
             config,
             self._symbols,
             self._balances,

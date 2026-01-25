@@ -88,7 +88,7 @@ class PerformanceSnapshot:
         )
 
 
-class PerformanceAnalyzer:
+class PerformanceTracker:
     _inited: bool = False
     _net_cash_flow: Decimal = DECIMAL_ZERO
     _initial_account_value: Decimal = DECIMAL_ZERO
