@@ -15,9 +15,28 @@ from trading_state.binance import (
     decode_exchange_info_response
 )
 
+from stock_pandas import StockDataFrame
+import pandas as pd
+
+
+FIXTURE_ROOT = Path(__file__).parent
+
+
+def read_fixture(name: str) -> str:
+    return
+
+
+
 def load_exchange_info() -> dict:
-    with open(Path(__file__).parent / 'bn_exchange_info.json', 'r') as f:
+    with open(FIXTURE_ROOT / 'bn_exchange_info.json', 'r') as f:
         return json.load(f)
+
+
+def get_stock() -> StockDataFrame:
+    return StockDataFrame(
+        pd.read_csv(FIXTURE_ROOT / 'stock.csv'),
+        date_col='open_time'
+    )
 
 
 BTC = 'BTC'

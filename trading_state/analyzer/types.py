@@ -337,23 +337,23 @@ class AnalyzerType(Enum):
         params=ParamsBenchmarkRelative
     )
 
-    TRANSACTION_COST_DRAG = AnalyzerTypeInfo(
-        name='Transaction Cost Drag',
-        description='Return erosion due to fees, slippage, and impact (should be included in net performance)',
-        category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
-    )
+    # TRANSACTION_COST_DRAG = AnalyzerTypeInfo(
+    #     name='Transaction Cost Drag',
+    #     description='Return erosion due to fees, slippage, and impact (should be included in net performance)',
+    #     category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
+    # )
 
-    TURNOVER = AnalyzerTypeInfo(
-        name='Turnover',
-        description='Trading intensity that drives costs and capacity constraints',
-        category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
-    )
+    # TURNOVER = AnalyzerTypeInfo(
+    #     name='Turnover',
+    #     description='Trading intensity that drives costs and capacity constraints',
+    #     category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
+    # )
 
-    SLIPPAGE_SENSITIVITY = AnalyzerTypeInfo(
-        name='Slippage Sensitivity',
-        description='How performance changes under different slippage assumptions',
-        category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
-    )
+    # SLIPPAGE_SENSITIVITY = AnalyzerTypeInfo(
+    #     name='Slippage Sensitivity',
+    #     description='How performance changes under different slippage assumptions',
+    #     category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
+    # )
 
     WIN_RATE = AnalyzerTypeInfo(
         name='Win Rate',
