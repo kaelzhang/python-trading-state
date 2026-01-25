@@ -34,7 +34,8 @@ dev = [
     "twine",
     "mypy",
     "build",
-    "stock-pandas"
+    "stock-pandas",
+    "pandas"
 ]
 
 [tool.setuptools.dynamic]
