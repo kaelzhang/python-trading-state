@@ -7,11 +7,11 @@ from trading_state.pnl import PerformanceSnapshot
 from .types import Params
 
 
-def _as_float(value: Decimal) -> float:
+def as_float(value: Decimal) -> float:
     return float(value)
 
 
-def _normalize_daily_return(
+def normalize_daily_return(
     period_return: Optional[float],
     days: float
 ) -> Optional[float]:
@@ -49,14 +49,14 @@ def annualize_cagr(total_return: Optional[float], days: float, trading_days: int
     return base ** (trading_days / days) - 1.0
 
 
-def _mean(values: Iterable[float]) -> Optional[float]:
+def mean(values: Iterable[float]) -> Optional[float]:
     values = list(values)
     if not values:
         return None
     return sum(values) / len(values)
 
 
-def _weighted_mean(values: list[float], weights: list[float]) -> Optional[float]:
+def weighted_mean(values: list[float], weights: list[float]) -> Optional[float]:
     if not values or not weights or len(values) != len(weights):
         return None
     total_weight = sum(weights)
@@ -65,32 +65,32 @@ def _weighted_mean(values: list[float], weights: list[float]) -> Optional[float]
     return sum(value * weight for value, weight in zip(values, weights)) / total_weight
 
 
-def _weighted_variance(
+def weighted_variance(
     values: list[float],
     weights: list[float],
     ddof: float = 1.0
 ) -> Optional[float]:
     if not values or not weights or len(values) != len(weights):
         return None
-    mean = _weighted_mean(values, weights)
-    if mean is None:
+    avg = weighted_mean(values, weights)
+    if avg is None:
         return None
     total_weight = sum(weights)
     if total_weight <= ddof:
         return None
     variance = sum(
-        weight * (value - mean) ** 2
+        weight * (value - avg) ** 2
         for value, weight in zip(values, weights)
     ) / (total_weight - ddof)
     return variance
 
 
-def _weighted_std(values: list[float], weights: list[float]) -> Optional[float]:
-    variance = _weighted_variance(values, weights)
+def weighted_std(values: list[float], weights: list[float]) -> Optional[float]:
+    variance = weighted_variance(values, weights)
     return sqrt(variance) if variance is not None else None
 
 
-def _weighted_covariance(
+def weighted_covariance(
     xs: list[float],
     ys: list[float],
     weights: list[float],
@@ -100,8 +100,8 @@ def _weighted_covariance(
         return None
     if len(xs) != len(ys) or len(xs) != len(weights):
         return None
-    mean_x = _weighted_mean(xs, weights)
-    mean_y = _weighted_mean(ys, weights)
+    mean_x = weighted_mean(xs, weights)
+    mean_y = weighted_mean(ys, weights)
     if mean_x is None or mean_y is None:
         return None
     total_weight = sum(weights)
@@ -114,22 +114,22 @@ def _weighted_covariance(
     return cov
 
 
-def _weighted_correlation(
+def weighted_correlation(
     xs: list[float],
     ys: list[float],
     weights: list[float]
 ) -> Optional[float]:
-    cov = _weighted_covariance(xs, ys, weights)
+    cov = weighted_covariance(xs, ys, weights)
     if cov is None:
         return None
-    std_x = _weighted_std(xs, weights)
-    std_y = _weighted_std(ys, weights)
+    std_x = weighted_std(xs, weights)
+    std_y = weighted_std(ys, weights)
     if std_x is None or std_y is None or std_x == 0 or std_y == 0:
         return None
     return cov / (std_x * std_y)
 
 
-def _quantile(values: list[float], q: float) -> Optional[float]:
+def quantile(values: list[float], q: float) -> Optional[float]:
     if not values:
         return None
     if q <= 0:
@@ -146,28 +146,27 @@ def _quantile(values: list[float], q: float) -> Optional[float]:
     return ordered[lower] * (1 - weight) + ordered[upper] * weight
 
 
-def _risk_free_daily(risk_free_rate: float, trading_days: int) -> float:
+def risk_free_daily(risk_free_rate: float, trading_days: int) -> float:
     if trading_days <= 0:
         return 0.0
     return (1.0 + risk_free_rate) ** (1.0 / trading_days) - 1.0
 
 
-def _daily_threshold(value: float, trading_days: int) -> float:
+def daily_threshold(value: float, trading_days: int) -> float:
     if trading_days <= 0:
         return value
     return (1.0 + value) ** (1.0 / trading_days) - 1.0
 
 
-def _get_trading_days(params: Optional[Params], default: int = 252) -> int:
+def get_trading_days(params: Optional[Params], default: int = 252) -> int:
     if params is None:
         return default
     value = getattr(params, 'trading_days', default)
     return value if value > 0 else default
 
 
-def _is_order_snapshot(snapshot: PerformanceSnapshot) -> bool:
+def is_order_snapshot(snapshot: PerformanceSnapshot) -> bool:
     labels = snapshot.labels or {}
     if not isinstance(labels, dict):
         return False
     return bool(labels.get('__ORDER__'))
-

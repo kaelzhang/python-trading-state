@@ -33,7 +33,8 @@ dev = [
     "pytest-cov",
     "twine",
     "mypy",
-    "build"
+    "build",
+    "stock-pandas"
 ]
 
 [tool.setuptools.dynamic]

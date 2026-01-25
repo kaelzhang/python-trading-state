@@ -32,17 +32,19 @@ from .metrics_stats import (
     annualize_from_daily,
     annualize_cagr,
     compound_returns,
-    _mean,
-    _weighted_mean,
-    _weighted_variance,
-    _weighted_std,
-    _weighted_covariance,
-    _weighted_correlation,
-    _quantile,
-    _risk_free_daily,
-    _daily_threshold,
-    _get_trading_days
+    mean,
+    weighted_mean,
+    weighted_variance,
+    weighted_std,
+    weighted_covariance,
+    weighted_correlation,
+    quantile,
+    risk_free_daily,
+    daily_threshold,
+    get_trading_days
 )
+
+CALENDAR_DAYS = 365
 
 
 def _paired_daily_returns(
@@ -144,7 +146,7 @@ def _trade_extras(summary: TradeSummary) -> Optional[dict[str, float]]:
     return extras or None
 
 
-def calc_total_return(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_total_return(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -158,50 +160,49 @@ def calc_annualized_return(context: AnalysisContext, params: ParamsAnnualizedRet
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
-    trading_days = _get_trading_days(params)
-    mean_daily = _weighted_mean(full.daily_returns, full.daily_weights)
+    trading_days = get_trading_days(params)
+    mean_daily = weighted_mean(full.daily_returns, full.daily_weights)
     value = annualize_from_daily(mean_daily, trading_days)
     windows = _window_results(
         context.windows(),
         lambda w: annualize_from_daily(
-            _weighted_mean(w.daily_returns, w.daily_weights),
+            weighted_mean(w.daily_returns, w.daily_weights),
             trading_days
         )
     )
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_cagr(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_cagr(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
-    trading_days = _get_trading_days(params)
     days = (full.end_time - full.start_time).total_seconds() / 86400.0
-    value = annualize_cagr(full.cumulative_return, days, trading_days)
+    value = annualize_cagr(full.cumulative_return, days, CALENDAR_DAYS)
     windows = _window_results(
         context.windows(),
         lambda w: annualize_cagr(
             w.cumulative_return,
             (w.end_time - w.start_time).total_seconds() / 86400.0,
-            trading_days
+            CALENDAR_DAYS
         )
     )
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_mean_return(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_mean_return(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
-    value = _weighted_mean(full.daily_returns, full.daily_weights)
+    value = weighted_mean(full.daily_returns, full.daily_weights)
     windows = _window_results(
         context.windows(),
-        lambda w: _weighted_mean(w.daily_returns, w.daily_weights)
+        lambda w: weighted_mean(w.daily_returns, w.daily_weights)
     )
     return MetricResult(value, full.end_time, windows, notes='daily')
 
 
-def calc_geometric_mean_return(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_geometric_mean_return(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -217,8 +218,8 @@ def calc_volatility(context: AnalysisContext, params: ParamsAnnualizedReturn) ->
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
-    std = _weighted_std(full.daily_returns, full.daily_weights)
-    trading_days = _get_trading_days(params)
+    std = weighted_std(full.daily_returns, full.daily_weights)
+    trading_days = get_trading_days(params)
     value = std * sqrt(trading_days) if std is not None else None
     windows = _window_results(
         context.windows(),
@@ -231,7 +232,7 @@ def calc_downside_deviation(context: AnalysisContext, params: ParamsDownsideDevi
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
-    trading_days = _get_trading_days(params)
+    trading_days = get_trading_days(params)
     threshold = _downside_threshold(
         params.minimum_acceptable_return,
         params.downside_threshold,
@@ -249,7 +250,7 @@ def calc_semi_variance(context: AnalysisContext, params: ParamsSemiVariance) -> 
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
-    trading_days = _get_trading_days(params)
+    trading_days = get_trading_days(params)
     threshold = _downside_threshold(
         params.minimum_acceptable_return,
         params.downside_threshold,
@@ -267,8 +268,8 @@ def calc_sharpe_ratio(context: AnalysisContext, params: ParamsSharpeRatio) -> Me
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
-    trading_days = _get_trading_days(params)
-    rf_daily = _risk_free_daily(params.risk_free_rate, trading_days)
+    trading_days = get_trading_days(params)
+    rf_daily = risk_free_daily(params.risk_free_rate, trading_days)
     value = _sharpe_ratio(full.daily_returns, full.daily_weights, rf_daily, trading_days)
     windows = _window_results(
         context.windows(),
@@ -281,7 +282,7 @@ def calc_sortino_ratio(context: AnalysisContext, params: ParamsSortinoRatio) -> 
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
-    trading_days = _get_trading_days(params)
+    trading_days = get_trading_days(params)
     threshold = _downside_threshold(
         params.minimum_acceptable_return,
         params.downside_threshold,
@@ -302,7 +303,7 @@ def calc_treynor_ratio(context: AnalysisContext, params: ParamsTreynorRatio) -> 
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    rf_daily = _risk_free_daily(params.risk_free_rate, 252)
+    rf_daily = risk_free_daily(params.risk_free_rate, 252)
     value = _treynor_ratio(full, benchmark, rf_daily)
     windows = _window_results(
         context.windows(),
@@ -333,7 +334,7 @@ def calc_m2(context: AnalysisContext, params: ParamsM2) -> MetricResult:
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    rf_daily = _risk_free_daily(params.risk_free_rate, params.trading_days)
+    rf_daily = risk_free_daily(params.risk_free_rate, params.trading_days)
     value = _m2(full, benchmark, rf_daily, params.trading_days)
     windows = _window_results(
         context.windows(),
@@ -354,7 +355,7 @@ def calc_calmar_ratio(context: AnalysisContext, params: ParamsCalmarRatio) -> Me
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_mar_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_mar_ratio(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -366,7 +367,7 @@ def calc_mar_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -> 
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_upi_martin_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_upi_martin_ratio(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -378,7 +379,7 @@ def calc_upi_martin_ratio(context: AnalysisContext, params: ParamsAnnualizedRetu
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_sterling_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_sterling_ratio(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -390,7 +391,7 @@ def calc_sterling_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_burke_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_burke_ratio(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -402,7 +403,7 @@ def calc_burke_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_pain_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_pain_ratio(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -414,7 +415,7 @@ def calc_pain_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) ->
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_mdd(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_mdd(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -426,7 +427,7 @@ def calc_mdd(context: AnalysisContext, params: ParamsAnnualizedReturn) -> Metric
     return MetricResult(stats.max_drawdown, full.end_time, windows, series=stats.series)
 
 
-def calc_average_drawdown(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_average_drawdown(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -438,7 +439,7 @@ def calc_average_drawdown(context: AnalysisContext, params: ParamsAnnualizedRetu
     return MetricResult(stats.avg_drawdown, full.end_time, windows)
 
 
-def calc_tuw(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_tuw(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -455,7 +456,7 @@ def calc_tuw(context: AnalysisContext, params: ParamsAnnualizedReturn) -> Metric
     return MetricResult(stats.tuw_max_days, full.end_time, [], series=series, extras=extras or None)
 
 
-def calc_ulcer_index(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_ulcer_index(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -491,7 +492,7 @@ def calc_cvar(context: AnalysisContext, params: ParamsVaR) -> MetricResult:
     return MetricResult(value, full.end_time, windows, notes='historical')
 
 
-def calc_skewness(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_skewness(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -499,7 +500,7 @@ def calc_skewness(context: AnalysisContext, params: ParamsAnnualizedReturn) -> M
     return MetricResult(value, full.end_time, [])
 
 
-def calc_kurtosis(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_kurtosis(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -541,7 +542,7 @@ def calc_jensen_alpha(context: AnalysisContext, params: ParamsBenchmarkRelative)
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    rf_daily = _risk_free_daily(params.risk_free_rate, 252)
+    rf_daily = risk_free_daily(params.risk_free_rate, 252)
     value = _jensen_alpha(full, benchmark, rf_daily, params.window)
     windows = _window_results(
         context.windows(),
@@ -595,7 +596,7 @@ def calc_tracking_error(context: AnalysisContext, params: ParamsBenchmarkRelativ
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_win_rate(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_win_rate(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.trade_full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -614,7 +615,7 @@ def calc_win_rate(context: AnalysisContext, params: ParamsAnnualizedReturn) -> M
     )
 
 
-def calc_payoff_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_payoff_ratio(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.trade_full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -633,7 +634,7 @@ def calc_payoff_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) 
     )
 
 
-def calc_expectancy(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_expectancy(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.trade_full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -652,7 +653,7 @@ def calc_expectancy(context: AnalysisContext, params: ParamsAnnualizedReturn) ->
     )
 
 
-def calc_profit_factor(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_profit_factor(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.trade_full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -671,7 +672,7 @@ def calc_profit_factor(context: AnalysisContext, params: ParamsAnnualizedReturn)
     )
 
 
-def calc_kelly_criterion(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_kelly_criterion(context: AnalysisContext, _params: Params | None) -> MetricResult:
     full = context.trade_full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -703,7 +704,7 @@ def _geometric_mean_daily(window: WindowData) -> Optional[float]:
 
 
 def _annualized_std(window: WindowData, trading_days: int) -> Optional[float]:
-    std = _weighted_std(window.daily_returns, window.daily_weights)
+    std = weighted_std(window.daily_returns, window.daily_weights)
     if std is None:
         return None
     return std * sqrt(trading_days)
@@ -715,7 +716,7 @@ def _downside_threshold(
     trading_days: int
 ) -> float:
     threshold = downside_threshold if downside_threshold != 0.0 else minimum_acceptable_return
-    return _daily_threshold(threshold, trading_days)
+    return daily_threshold(threshold, trading_days)
 
 
 def _downside_deviation(
@@ -743,7 +744,7 @@ def _downside_deviation_daily(
             weights.append(weight)
     if not filtered:
         return None
-    variance = _weighted_variance(filtered, weights)
+    variance = weighted_variance(filtered, weights)
     if variance is None:
         return None
     return sqrt(variance)
@@ -763,7 +764,7 @@ def _semi_variance(
             weights.append(weight)
     if not filtered:
         return None
-    variance = _weighted_variance(filtered, weights, ddof=0.0)
+    variance = weighted_variance(filtered, weights, ddof=0.0)
     if variance is None:
         return None
     return variance * trading_days
@@ -775,10 +776,10 @@ def _sharpe_ratio(
     rf_daily: float,
     trading_days: int
 ) -> Optional[float]:
-    mean_daily = _weighted_mean(daily_returns, daily_weights)
+    mean_daily = weighted_mean(daily_returns, daily_weights)
     if mean_daily is None:
         return None
-    std = _weighted_std(daily_returns, daily_weights)
+    std = weighted_std(daily_returns, daily_weights)
     if std is None or std == 0:
         return None
     return (mean_daily - rf_daily) / std * sqrt(trading_days)
@@ -790,7 +791,7 @@ def _sortino_ratio(
     threshold: float,
     trading_days: int
 ) -> Optional[float]:
-    mean_daily = _weighted_mean(daily_returns, daily_weights)
+    mean_daily = weighted_mean(daily_returns, daily_weights)
     if mean_daily is None:
         return None
     downside = _downside_deviation_daily(daily_returns, daily_weights, threshold)
@@ -807,7 +808,7 @@ def _treynor_ratio(
     beta = _beta(window, benchmark, 0)
     if beta is None or beta == 0:
         return None
-    mean_daily = _weighted_mean(window.daily_returns, window.daily_weights)
+    mean_daily = weighted_mean(window.daily_returns, window.daily_weights)
     if mean_daily is None:
         return None
     excess = mean_daily - rf_daily
@@ -824,8 +825,8 @@ def _information_ratio(
     if lookback > 0 and len(active) > lookback:
         active = active[-lookback:]
         weights = weights[-lookback:]
-    mean_active = _weighted_mean(active, weights)
-    std_active = _weighted_std(active, weights)
+    mean_active = weighted_mean(active, weights)
+    std_active = weighted_std(active, weights)
     if mean_active is None or std_active is None or std_active == 0:
         return None
     return mean_active / std_active * sqrt(252)
@@ -858,7 +859,7 @@ def _calmar_ratio(
     if stats.max_drawdown is None or stats.max_drawdown == 0:
         return None
     days = (window.end_time - window.start_time).total_seconds() / 86400.0
-    cagr = annualize_cagr(window.cumulative_return, days, 252)
+    cagr = annualize_cagr(window.cumulative_return, days, CALENDAR_DAYS)
     if cagr is None:
         return None
     return (cagr - risk_free_rate) / stats.max_drawdown
@@ -869,7 +870,7 @@ def _mar_ratio(context: AnalysisContext, window: WindowData) -> Optional[float]:
     if stats.max_drawdown is None or stats.max_drawdown == 0:
         return None
     days = (window.end_time - window.start_time).total_seconds() / 86400.0
-    cagr = annualize_cagr(window.cumulative_return, days, 252)
+    cagr = annualize_cagr(window.cumulative_return, days, CALENDAR_DAYS)
     if cagr is None:
         return None
     return cagr / stats.max_drawdown
@@ -880,7 +881,7 @@ def _upi_martin_ratio(context: AnalysisContext, window: WindowData) -> Optional[
     if stats.ulcer_index is None or stats.ulcer_index == 0:
         return None
     days = (window.end_time - window.start_time).total_seconds() / 86400.0
-    cagr = annualize_cagr(window.cumulative_return, days, 252)
+    cagr = annualize_cagr(window.cumulative_return, days, CALENDAR_DAYS)
     if cagr is None:
         return None
     return cagr / stats.ulcer_index
@@ -891,7 +892,7 @@ def _sterling_ratio(context: AnalysisContext, window: WindowData) -> Optional[fl
     if stats.avg_drawdown is None or stats.avg_drawdown == 0:
         return None
     days = (window.end_time - window.start_time).total_seconds() / 86400.0
-    cagr = annualize_cagr(window.cumulative_return, days, 252)
+    cagr = annualize_cagr(window.cumulative_return, days, CALENDAR_DAYS)
     if cagr is None:
         return None
     return cagr / stats.avg_drawdown
@@ -902,11 +903,11 @@ def _burke_ratio(context: AnalysisContext, window: WindowData) -> Optional[float
     if not stats.episodes:
         return None
     squared = [ep.depth ** 2 for ep in stats.episodes]
-    denom = sqrt(_mean(squared)) if squared else None
+    denom = sqrt(mean(squared)) if squared else None
     if denom is None or denom == 0:
         return None
     days = (window.end_time - window.start_time).total_seconds() / 86400.0
-    cagr = annualize_cagr(window.cumulative_return, days, 252)
+    cagr = annualize_cagr(window.cumulative_return, days, CALENDAR_DAYS)
     if cagr is None:
         return None
     return cagr / denom
@@ -917,7 +918,7 @@ def _pain_ratio(context: AnalysisContext, window: WindowData) -> Optional[float]
     if stats.pain_index is None or stats.pain_index == 0:
         return None
     days = (window.end_time - window.start_time).total_seconds() / 86400.0
-    cagr = annualize_cagr(window.cumulative_return, days, 252)
+    cagr = annualize_cagr(window.cumulative_return, days, CALENDAR_DAYS)
     if cagr is None:
         return None
     return cagr / stats.pain_index
@@ -927,7 +928,7 @@ def _var_metric(returns: list[float], confidence_level: float, window: int) -> O
     data = returns[-window:] if window > 0 else returns
     if not data:
         return None
-    cutoff = _quantile(data, 1.0 - confidence_level)
+    cutoff = quantile(data, 1.0 - confidence_level)
     if cutoff is None:
         return None
     return -cutoff
@@ -937,24 +938,24 @@ def _cvar_metric(returns: list[float], confidence_level: float, window: int) -> 
     data = returns[-window:] if window > 0 else returns
     if not data:
         return None
-    cutoff = _quantile(data, 1.0 - confidence_level)
+    cutoff = quantile(data, 1.0 - confidence_level)
     if cutoff is None:
         return None
     tail = [r for r in data if r <= cutoff]
     if not tail:
         return None
-    return -_mean(tail)
+    return -mean(tail)
 
 
 def _skewness(returns: list[float]) -> Optional[float]:
     if len(returns) < 3:
         return None
-    mean = _mean(returns)
+    avg = mean(returns)
     if mean is None:
         return None
-    diffs = [r - mean for r in returns]
-    m2 = _mean([d ** 2 for d in diffs])
-    m3 = _mean([d ** 3 for d in diffs])
+    diffs = [r - avg for r in returns]
+    m2 = mean([d ** 2 for d in diffs])
+    m3 = mean([d ** 3 for d in diffs])
     if m2 is None or m3 is None or m2 == 0:
         return None
     return m3 / (m2 ** 1.5)
@@ -963,12 +964,12 @@ def _skewness(returns: list[float]) -> Optional[float]:
 def _kurtosis(returns: list[float]) -> Optional[float]:
     if len(returns) < 4:
         return None
-    mean = _mean(returns)
-    if mean is None:
+    avg = mean(returns)
+    if avg is None:
         return None
-    diffs = [r - mean for r in returns]
-    m2 = _mean([d ** 2 for d in diffs])
-    m4 = _mean([d ** 4 for d in diffs])
+    diffs = [r - avg for r in returns]
+    m2 = mean([d ** 2 for d in diffs])
+    m4 = mean([d ** 4 for d in diffs])
     if m2 is None or m4 is None or m2 == 0:
         return None
     return m4 / (m2 ** 2) - 3.0
@@ -978,8 +979,8 @@ def _tail_ratio(returns: list[float], quantile: float, window: int) -> Optional[
     data = returns[-window:] if window > 0 else returns
     if not data:
         return None
-    upper = _quantile(data, quantile)
-    lower = _quantile(data, 1.0 - quantile)
+    upper = quantile(data, quantile)
+    lower = quantile(data, 1.0 - quantile)
     if upper is None or lower is None or lower == 0:
         return None
     return upper / abs(lower)
@@ -991,8 +992,8 @@ def _alpha(window: WindowData, benchmark: BenchmarkSeries, lookback: int) -> Opt
         port = port[-lookback:]
         bench = bench[-lookback:]
         weights = weights[-lookback:]
-    mean_port = _weighted_mean(port, weights)
-    mean_bench = _weighted_mean(bench, weights)
+    mean_port = weighted_mean(port, weights)
+    mean_bench = weighted_mean(bench, weights)
     if mean_port is None or mean_bench is None:
         return None
     return (mean_port - mean_bench) * 252
@@ -1012,8 +1013,8 @@ def _jensen_alpha(
     beta = _weighted_beta(port, bench, weights)
     if beta is None:
         return None
-    mean_port = _weighted_mean(port, weights)
-    mean_bench = _weighted_mean(bench, weights)
+    mean_port = weighted_mean(port, weights)
+    mean_bench = weighted_mean(bench, weights)
     if mean_port is None or mean_bench is None:
         return None
     alpha_daily = (mean_port - rf_daily) - beta * (mean_bench - rf_daily)
@@ -1035,7 +1036,7 @@ def _correlation(window: WindowData, benchmark: BenchmarkSeries, lookback: int) 
         port = port[-lookback:]
         bench = bench[-lookback:]
         weights = weights[-lookback:]
-    return _weighted_correlation(port, bench, weights)
+    return weighted_correlation(port, bench, weights)
 
 
 def _tracking_error(window: WindowData, benchmark: BenchmarkSeries, lookback: int) -> Optional[float]:
@@ -1044,17 +1045,17 @@ def _tracking_error(window: WindowData, benchmark: BenchmarkSeries, lookback: in
     if lookback > 0 and len(active) > lookback:
         active = active[-lookback:]
         weights = weights[-lookback:]
-    std = _weighted_std(active, weights)
+    std = weighted_std(active, weights)
     if std is None:
         return None
     return std * sqrt(252)
 
 
 def _weighted_beta(xs: list[float], ys: list[float], weights: list[float]) -> Optional[float]:
-    cov = _weighted_covariance(xs, ys, weights)
+    cov = weighted_covariance(xs, ys, weights)
     if cov is None:
         return None
-    var = _weighted_variance(ys, weights)
+    var = weighted_variance(ys, weights)
     if var is None or var == 0:
         return None
     return cov / var
@@ -1110,7 +1111,7 @@ UNSUPPORTED_METRICS: dict[AnalyzerType, str] = {
 METRIC_CALCULATORS: dict[
     AnalyzerType,
     Callable[
-        [AnalysisContext, Params],
+        [AnalysisContext, Params | None],
         MetricResult | SkippedResult
     ]
 ] = {
@@ -1153,49 +1154,3 @@ METRIC_CALCULATORS: dict[
     AnalyzerType.PROFIT_FACTOR: calc_profit_factor,
     AnalyzerType.KELLY_CRITERION: calc_kelly_criterion,
 }
-
-
-__all__ = [
-    'MetricResult',
-    'SkippedResult',
-    'calc_total_return',
-    'calc_annualized_return',
-    'calc_cagr',
-    'calc_mean_return',
-    'calc_geometric_mean_return',
-    'calc_sharpe_ratio',
-    'calc_sortino_ratio',
-    'calc_treynor_ratio',
-    'calc_information_ratio',
-    'calc_m2',
-    'calc_calmar_ratio',
-    'calc_mar_ratio',
-    'calc_upi_martin_ratio',
-    'calc_sterling_ratio',
-    'calc_burke_ratio',
-    'calc_pain_ratio',
-    'calc_volatility',
-    'calc_downside_deviation',
-    'calc_semi_variance',
-    'calc_mdd',
-    'calc_average_drawdown',
-    'calc_tuw',
-    'calc_ulcer_index',
-    'calc_var',
-    'calc_cvar',
-    'calc_skewness',
-    'calc_kurtosis',
-    'calc_tail_ratio',
-    'calc_alpha',
-    'calc_jensen_alpha',
-    'calc_beta',
-    'calc_correlation',
-    'calc_tracking_error',
-    'calc_win_rate',
-    'calc_payoff_ratio',
-    'calc_expectancy',
-    'calc_profit_factor',
-    'calc_kelly_criterion',
-    'METRIC_CALCULATORS',
-    'UNSUPPORTED_METRICS',
-]

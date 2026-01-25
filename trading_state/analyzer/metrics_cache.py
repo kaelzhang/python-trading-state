@@ -18,11 +18,11 @@ from .metrics_models import (
     DrawdownStats
 )
 from .metrics_stats import (
-    _as_float,
-    _normalize_daily_return,
+    as_float,
+    normalize_daily_return,
     compound_returns,
-    _mean,
-    _is_order_snapshot
+    mean,
+    is_order_snapshot
 )
 
 
@@ -57,8 +57,8 @@ class SeriesCache:
 
     def _append_snapshot(self, snapshot: PerformanceSnapshot) -> None:
         time = snapshot.time
-        value = _as_float(snapshot.account_value)
-        cash_flow = _as_float(snapshot.net_cash_flow)
+        value = as_float(snapshot.account_value)
+        cash_flow = as_float(snapshot.net_cash_flow)
 
         index = len(self.times)
         self.times.append(time)
@@ -75,7 +75,7 @@ class SeriesCache:
             days = (time - self.times[index - 1]).total_seconds() / 86400.0
             if prev_value > 0:
                 period_return = (value - prev_value - delta_cash) / prev_value
-            daily_return = _normalize_daily_return(period_return, days)
+            daily_return = normalize_daily_return(period_return, days)
             self.return_points.append(
                 ReturnPoint(
                     time=time,
@@ -101,7 +101,7 @@ class SeriesCache:
             if bench is None:
                 series.cumulative_returns.append(None)
             else:
-                series.cumulative_returns.append(_as_float(bench.benchmark_return))
+                series.cumulative_returns.append(as_float(bench.benchmark_return))
 
         for asset, bench in snapshot.benchmarks.items():
             asset_key = asset.lower()
@@ -109,7 +109,7 @@ class SeriesCache:
                 continue
             series = BenchmarkSeries(
                 asset=asset,
-                cumulative_returns=[None] * index + [_as_float(bench.benchmark_return)],
+                cumulative_returns=[None] * index + [as_float(bench.benchmark_return)],
                 return_points=[
                     ReturnPoint(
                         time=self.times[i + 1],
@@ -132,7 +132,7 @@ class SeriesCache:
             if prev_cum is not None and curr_cum is not None and (1.0 + prev_cum) > 0:
                 period_return = (1.0 + curr_cum) / (1.0 + prev_cum) - 1.0
             days = (self.times[index] - self.times[index - 1]).total_seconds() / 86400.0
-            daily_return = _normalize_daily_return(period_return, days)
+            daily_return = normalize_daily_return(period_return, days)
             series.return_points.append(
                 ReturnPoint(
                     time=self.times[index],
@@ -143,7 +143,7 @@ class SeriesCache:
             )
 
     def _append_trade_snapshot(self, snapshot: PerformanceSnapshot, index: int) -> None:
-        is_order = _is_order_snapshot(snapshot)
+        is_order = is_order_snapshot(snapshot)
         if not is_order:
             return
         if self._last_order_index is None:
@@ -404,13 +404,13 @@ def compute_drawdown_stats(
 
     drawdowns = [point.value for point in series if point.value is not None]
     max_drawdown = max(drawdowns) if drawdowns else None
-    avg_drawdown = _mean([ep.depth for ep in episodes]) if episodes else None
-    ulcer_index = sqrt(_mean([d ** 2 for d in drawdowns])) if drawdowns else None
-    pain_index = _mean(drawdowns) if drawdowns else None
+    avg_drawdown = mean([ep.depth for ep in episodes]) if episodes else None
+    ulcer_index = sqrt(mean([d ** 2 for d in drawdowns])) if drawdowns else None
+    pain_index = mean(drawdowns) if drawdowns else None
 
     durations = [ep.duration_days for ep in episodes if ep.recovery_time is not None]
     tuw_max = max(durations) if durations else None
-    tuw_avg = _mean(durations) if durations else None
+    tuw_avg = mean(durations) if durations else None
     current_tuw = None
     if episodes and episodes[-1].recovery_time is None:
         current_tuw = episodes[-1].duration_days
@@ -438,8 +438,8 @@ def _trade_summary(window: TradeWindowData) -> TradeSummary:
     win_count = len(wins)
     loss_count = len(losses)
     win_rate = win_count / total if total > 0 else None
-    avg_win = _mean(wins)
-    avg_loss = _mean([abs(loss) for loss in losses])
+    avg_win = mean(wins)
+    avg_loss = mean([abs(loss) for loss in losses])
     total_profit = sum(wins) if wins else None
     total_loss = abs(sum(losses)) if losses else None
     profit_factor = None
@@ -448,7 +448,7 @@ def _trade_summary(window: TradeWindowData) -> TradeSummary:
     payoff_ratio = None
     if avg_win is not None and avg_loss is not None and avg_loss != 0:
         payoff_ratio = avg_win / avg_loss
-    expectancy = _mean(pnls)
+    expectancy = mean(pnls)
     kelly = None
     if win_rate is not None and payoff_ratio is not None and payoff_ratio != 0:
         kelly = win_rate - (1.0 - win_rate) / payoff_ratio
@@ -466,4 +466,3 @@ def _trade_summary(window: TradeWindowData) -> TradeSummary:
         total_profit=total_profit,
         total_loss=total_loss
     )
-

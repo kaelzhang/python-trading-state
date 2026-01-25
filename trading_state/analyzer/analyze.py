@@ -92,6 +92,7 @@ class PerformanceAnalyzer:
             return {}
 
         results: dict[AnalyzerType, Any] = {}
+
         for analyzer, params in self._targets:
             if analyzer in UNSUPPORTED_METRICS:
                 results[analyzer] = SkippedResult(
@@ -104,6 +105,7 @@ class PerformanceAnalyzer:
             if params is None and analyzer.value.params is not None:
                 params = analyzer.value.params()
             results[analyzer] = calculator(context, params)
+
         return results
 
     def _build_context(self) -> AnalysisContext | None:
