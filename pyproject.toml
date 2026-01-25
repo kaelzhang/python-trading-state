@@ -45,7 +45,8 @@ trading_state = ["py.typed"]
 [tool.setuptools.packages.find]
 include = [
     "trading_state",
-    "trading_state.binance"
+    "trading_state.binance",
+    "trading_state.analyzer"
 ]
 
 [tool.mypy]
