@@ -11,13 +11,15 @@ from .types import (
     AnalyzerType,
     Params
 )
-from .metrics import (
+from .metrics_cache import (
     AnalysisContext,
     SeriesCache,
+)
+from .metrics_calculators import (
     METRIC_CALCULATORS,
     UNSUPPORTED_METRICS,
-    SkippedResult
 )
+from .metrics_models import SkippedResult
 
 
 PerformanceSnapshots = Iterable[PerformanceSnapshot]

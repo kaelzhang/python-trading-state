@@ -68,6 +68,7 @@ class BenchmarkPerformance:
 
 BenchmarkPerformances = Dict[str, BenchmarkPerformance]
 Labels = Dict[str, Any]
+CashFlows = Dict[str, Decimal]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,7 @@ class PerformanceSnapshot:
     realized_pnl: Decimal
     positions: PositionSnapshots
     benchmarks: BenchmarkPerformances
+    cash_flows: CashFlows
     net_cash_flow: Decimal
     labels: Labels
 
@@ -95,6 +97,7 @@ class PerformanceTracker:
     _realized_pnl_total: Decimal = DECIMAL_ZERO
 
     _cash_flows: List[CashFlow]
+    _cash_flow_quantities: CashFlows
     _perf_nodes: List[PerformanceSnapshot]
 
     _initial_benchmark_prices: Dict[str, Decimal]
@@ -112,6 +115,7 @@ class PerformanceTracker:
         self._on_record = on_record
 
         self._cash_flows = []
+        self._cash_flow_quantities = {}
         self._perf_nodes = []
 
         self._position_tracker = PositionTracker(symbols, balances)
@@ -157,6 +161,11 @@ class PerformanceTracker:
 
         self._net_cash_flow += price * quantity
         self._cash_flows.append(cash_flow)
+        self._cash_flow_quantities[asset] = (
+            self._cash_flow_quantities.get(asset, DECIMAL_ZERO)
+            + quantity
+        )
+
         self._position_tracker.update_position(
             cash_flow.asset,
             quantity,
@@ -241,6 +250,7 @@ class PerformanceTracker:
             realized_pnl=realized_pnl,
             positions=snapshots,
             benchmarks=benchmarks,
+            cash_flows=self._cash_flow_quantities.copy(),
             net_cash_flow=self._net_cash_flow,
             labels=labels
         )
@@ -258,5 +268,5 @@ class PerformanceTracker:
             else iter(self._perf_nodes)
         )
 
-    def order_pnl(self, order: Order) -> Decimal:
-        ...
+    # def order_pnl(self, order: Order) -> Decimal:
+    #     ...

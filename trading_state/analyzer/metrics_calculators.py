@@ -1,13 +1,5 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-from decimal import Decimal
-from bisect import bisect_right
 from math import sqrt
-from typing import Callable, Iterable, Optional
-
-from trading_state.pnl import PerformanceSnapshot
+from typing import Callable, Optional
 
 from .types import (
     AnalyzerType,
@@ -25,566 +17,32 @@ from .types import (
     ParamsTailRatio,
     ParamsBenchmarkRelative
 )
-
-
-DEFAULT_WINDOWS: tuple[tuple[str, int], ...] = (
-    ('1w', 7),
-    ('1m', 30),
-    ('3m', 90),
-    ('6m', 180),
-    ('1y', 365),
+from .metrics_cache import AnalysisContext
+from .metrics_models import (
+    MetricSeriesPoint,
+    MetricWindow,
+    MetricResult,
+    SkippedResult,
+    TradeWindowData,
+    TradeSummary,
+    WindowData,
+    BenchmarkSeries
 )
-
-
-@dataclass(frozen=True, slots=True)
-class MetricSeriesPoint:
-    time: datetime
-    value: float
-
-
-@dataclass(frozen=True, slots=True)
-class MetricWindow:
-    label: str
-    start: datetime
-    end: datetime
-    value: float
-
-
-@dataclass(frozen=True, slots=True)
-class MetricResult:
-    value: Optional[float]
-    as_of: Optional[datetime]
-    windows: list[MetricWindow]
-    series: Optional[list[MetricSeriesPoint]] = None
-    notes: Optional[str] = None
-    extras: Optional[dict[str, float]] = None
-
-
-@dataclass(frozen=True, slots=True)
-class SkippedResult:
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class ReturnPoint:
-    time: datetime
-    period_return: Optional[float]
-    days: Optional[float]
-    daily_return: Optional[float]
-
-
-@dataclass(slots=True)
-class BenchmarkSeries:
-    asset: str
-    cumulative_returns: list[Optional[float]]
-    return_points: list[ReturnPoint]
-
-
-@dataclass(frozen=True, slots=True)
-class WindowData:
-    label: str
-    start_index: int
-    end_index: int
-    start_time: datetime
-    end_time: datetime
-    times: list[datetime]
-    values: list[float]
-    return_points: list[ReturnPoint]
-    period_returns: list[float]
-    daily_returns: list[float]
-    daily_weights: list[float]
-    cumulative_return: Optional[float]
-
-
-@dataclass(frozen=True, slots=True)
-class DrawdownEpisode:
-    peak_time: datetime
-    trough_time: datetime
-    recovery_time: Optional[datetime]
-    depth: float
-    duration_days: float
-
-
-@dataclass(frozen=True, slots=True)
-class DrawdownStats:
-    series: list[MetricSeriesPoint]
-    episodes: list[DrawdownEpisode]
-    max_drawdown: Optional[float]
-    avg_drawdown: Optional[float]
-    ulcer_index: Optional[float]
-    pain_index: Optional[float]
-    tuw_max_days: Optional[float]
-    tuw_avg_days: Optional[float]
-    tuw_current_days: Optional[float]
-
-
-class SeriesCache:
-    def __init__(self) -> None:
-        self.source_len: int = 0
-        self.times: list[datetime] = []
-        self.values: list[float] = []
-        self.cash_flows: list[float] = []
-        self.return_points: list[ReturnPoint] = []
-        self.cumulative_returns: list[float] = []
-        self.benchmarks: dict[str, BenchmarkSeries] = {}
-
-    def rebuild(self, snapshots: list[PerformanceSnapshot]) -> None:
-        self.source_len = 0
-        self.times = []
-        self.values = []
-        self.cash_flows = []
-        self.return_points = []
-        self.cumulative_returns = []
-        self.benchmarks = {}
-        self.extend(snapshots)
-
-    def extend(self, snapshots: list[PerformanceSnapshot]) -> None:
-        for snapshot in snapshots:
-            self._append_snapshot(snapshot)
-        self.source_len += len(snapshots)
-
-    def _append_snapshot(self, snapshot: PerformanceSnapshot) -> None:
-        time = snapshot.time
-        value = _as_float(snapshot.account_value)
-        cash_flow = _as_float(snapshot.net_cash_flow)
-
-        index = len(self.times)
-        self.times.append(time)
-        self.values.append(value)
-        self.cash_flows.append(cash_flow)
-
-        if index == 0:
-            self.cumulative_returns.append(0.0)
-        else:
-            prev_value = self.values[index - 1]
-            prev_cash = self.cash_flows[index - 1]
-            delta_cash = cash_flow - prev_cash
-            period_return = None
-            days = (time - self.times[index - 1]).total_seconds() / 86400.0
-            if prev_value > 0:
-                period_return = (value - prev_value - delta_cash) / prev_value
-            daily_return = _normalize_daily_return(period_return, days)
-            self.return_points.append(
-                ReturnPoint(
-                    time=time,
-                    period_return=period_return,
-                    days=days if days > 0 else None,
-                    daily_return=daily_return
-                )
-            )
-            prev_cum = self.cumulative_returns[index - 1]
-            if period_return is None:
-                self.cumulative_returns.append(prev_cum)
-            else:
-                self.cumulative_returns.append(
-                    (1.0 + prev_cum) * (1.0 + period_return) - 1.0
-                )
-
-        self._append_benchmarks(snapshot, index)
-
-    def _append_benchmarks(self, snapshot: PerformanceSnapshot, index: int) -> None:
-        for asset_key, series in self.benchmarks.items():
-            bench = snapshot.benchmarks.get(series.asset)
-            if bench is None:
-                series.cumulative_returns.append(None)
-            else:
-                series.cumulative_returns.append(_as_float(bench.benchmark_return))
-
-        for asset, bench in snapshot.benchmarks.items():
-            asset_key = asset.lower()
-            if asset_key in self.benchmarks:
-                continue
-            series = BenchmarkSeries(
-                asset=asset,
-                cumulative_returns=[None] * index + [_as_float(bench.benchmark_return)],
-                return_points=[
-                    ReturnPoint(
-                        time=self.times[i + 1],
-                        period_return=None,
-                        days=None,
-                        daily_return=None
-                    )
-                    for i in range(index)
-                ]
-            )
-            self.benchmarks[asset_key] = series
-
-        if index == 0:
-            return
-
-        for series in self.benchmarks.values():
-            prev_cum = series.cumulative_returns[index - 1]
-            curr_cum = series.cumulative_returns[index]
-            period_return = None
-            if prev_cum is not None and curr_cum is not None and (1.0 + prev_cum) > 0:
-                period_return = (1.0 + curr_cum) / (1.0 + prev_cum) - 1.0
-            days = (self.times[index] - self.times[index - 1]).total_seconds() / 86400.0
-            daily_return = _normalize_daily_return(period_return, days)
-            series.return_points.append(
-                ReturnPoint(
-                    time=self.times[index],
-                    period_return=period_return,
-                    days=days if days > 0 else None,
-                    daily_return=daily_return
-                )
-            )
-
-
-class AnalysisContext:
-    def __init__(self, cache: SeriesCache) -> None:
-        self._cache = cache
-        self._window_cache: dict[str, WindowData] = {}
-        self._drawdown_cache: dict[str, DrawdownStats] = {}
-
-    @property
-    def times(self) -> list[datetime]:
-        return self._cache.times
-
-    @property
-    def values(self) -> list[float]:
-        return self._cache.values
-
-    @property
-    def return_points(self) -> list[ReturnPoint]:
-        return self._cache.return_points
-
-    @property
-    def cumulative_returns(self) -> list[float]:
-        return self._cache.cumulative_returns
-
-    @property
-    def benchmarks(self) -> dict[str, BenchmarkSeries]:
-        return self._cache.benchmarks
-
-    @property
-    def end_time(self) -> Optional[datetime]:
-        return self.times[-1] if self.times else None
-
-    @property
-    def start_time(self) -> Optional[datetime]:
-        return self.times[0] if self.times else None
-
-    def full_window(self) -> Optional[WindowData]:
-        if not self.times:
-            return None
-        return self._build_window('full', 0, len(self.times) - 1)
-
-    def windows(self) -> list[WindowData]:
-        if not self.times:
-            return []
-        windows: list[WindowData] = []
-        end_time = self.times[-1]
-        for label, days in DEFAULT_WINDOWS:
-            target_start = end_time - timedelta(days=days)
-            start_index = bisect_right(self.times, target_start) - 1
-            if start_index < 0:
-                continue
-            if start_index >= len(self.times) - 1:
-                continue
-            window = self._build_window(label, start_index, len(self.times) - 1)
-            windows.append(window)
-        return windows
-
-    def window_by_label(self, label: str) -> Optional[WindowData]:
-        if label == 'full':
-            return self.full_window()
-        for window in self.windows():
-            if window.label == label:
-                return window
-        return None
-
-    def drawdown_stats(self, window: WindowData) -> DrawdownStats:
-        cached = self._drawdown_cache.get(window.label)
-        if cached is not None:
-            return cached
-        stats = compute_drawdown_stats(window.times, window.values)
-        self._drawdown_cache[window.label] = stats
-        return stats
-
-    def _build_window(self, label: str, start_index: int, end_index: int) -> WindowData:
-        cached = self._window_cache.get(label)
-        if cached is not None:
-            return cached
-        times = self.times[start_index:end_index + 1]
-        values = self.values[start_index:end_index + 1]
-        return_points = self.return_points[start_index:end_index]
-        period_returns = [
-            rp.period_return for rp in return_points
-            if rp.period_return is not None
-        ]
-        daily_returns = [
-            rp.daily_return for rp in return_points
-            if rp.daily_return is not None and rp.days is not None
-        ]
-        daily_weights = [
-            rp.days for rp in return_points
-            if rp.daily_return is not None and rp.days is not None
-        ]
-        cumulative_return = compound_returns(period_returns)
-        window = WindowData(
-            label=label,
-            start_index=start_index,
-            end_index=end_index,
-            start_time=times[0],
-            end_time=times[-1],
-            times=times,
-            values=values,
-            return_points=return_points,
-            period_returns=period_returns,
-            daily_returns=daily_returns,
-            daily_weights=daily_weights,
-            cumulative_return=cumulative_return
-        )
-        self._window_cache[label] = window
-        return window
-
-
-def compute_drawdown_stats(
-    times: list[datetime],
-    values: list[float]
-) -> DrawdownStats:
-    series: list[MetricSeriesPoint] = []
-    episodes: list[DrawdownEpisode] = []
-    if not times or not values:
-        return DrawdownStats(series, episodes, None, None, None, None, None, None, None)
-
-    peak_value = values[0]
-    peak_time = times[0]
-    in_drawdown = False
-    trough_value = values[0]
-    trough_time = times[0]
-
-    for time, value in zip(times, values):
-        drawdown = 0.0
-        if peak_value > 0:
-            drawdown = max(0.0, (peak_value - value) / peak_value)
-        series.append(MetricSeriesPoint(time=time, value=drawdown))
-
-        if value >= peak_value:
-            if in_drawdown:
-                duration = (time - peak_time).total_seconds() / 86400.0
-                depth = max(0.0, (peak_value - trough_value) / peak_value)
-                episodes.append(
-                    DrawdownEpisode(
-                        peak_time=peak_time,
-                        trough_time=trough_time,
-                        recovery_time=time,
-                        depth=depth,
-                        duration_days=duration
-                    )
-                )
-                in_drawdown = False
-            peak_value = value
-            peak_time = time
-            trough_value = value
-            trough_time = time
-            continue
-
-        if not in_drawdown:
-            in_drawdown = True
-            trough_value = value
-            trough_time = time
-        elif value < trough_value:
-            trough_value = value
-            trough_time = time
-
-    if in_drawdown:
-        duration = (times[-1] - peak_time).total_seconds() / 86400.0
-        depth = max(0.0, (peak_value - trough_value) / peak_value)
-        episodes.append(
-            DrawdownEpisode(
-                peak_time=peak_time,
-                trough_time=trough_time,
-                recovery_time=None,
-                depth=depth,
-                duration_days=duration
-            )
-        )
-
-    drawdowns = [point.value for point in series if point.value is not None]
-    max_drawdown = max(drawdowns) if drawdowns else None
-    avg_drawdown = _mean([ep.depth for ep in episodes]) if episodes else None
-    ulcer_index = sqrt(_mean([d ** 2 for d in drawdowns])) if drawdowns else None
-    pain_index = _mean(drawdowns) if drawdowns else None
-
-    durations = [ep.duration_days for ep in episodes if ep.recovery_time is not None]
-    tuw_max = max(durations) if durations else None
-    tuw_avg = _mean(durations) if durations else None
-    current_tuw = None
-    if episodes and episodes[-1].recovery_time is None:
-        current_tuw = episodes[-1].duration_days
-        if tuw_max is None:
-            tuw_max = current_tuw
-
-    return DrawdownStats(
-        series=series,
-        episodes=episodes,
-        max_drawdown=max_drawdown,
-        avg_drawdown=avg_drawdown,
-        ulcer_index=ulcer_index,
-        pain_index=pain_index,
-        tuw_max_days=tuw_max,
-        tuw_avg_days=tuw_avg,
-        tuw_current_days=current_tuw
-    )
-
-
-def _as_float(value: Decimal) -> float:
-    return float(value)
-
-
-def _normalize_daily_return(
-    period_return: Optional[float],
-    days: float
-) -> Optional[float]:
-    if period_return is None:
-        return None
-    if days <= 0:
-        return None
-    base = 1.0 + period_return
-    if base <= 0:
-        return period_return / days
-    return base ** (1.0 / days) - 1.0
-
-
-def compound_returns(returns: Iterable[float]) -> Optional[float]:
-    total = 1.0
-    has_value = False
-    for value in returns:
-        has_value = True
-        total *= (1.0 + value)
-    return total - 1.0 if has_value else None
-
-
-def annualize_from_daily(mean_daily: Optional[float], trading_days: int) -> Optional[float]:
-    if mean_daily is None:
-        return None
-    return mean_daily * trading_days
-
-
-def annualize_cagr(total_return: Optional[float], days: float, trading_days: int) -> Optional[float]:
-    if total_return is None or days <= 0:
-        return None
-    base = 1.0 + total_return
-    if base <= 0:
-        return None
-    return base ** (trading_days / days) - 1.0
-
-
-def _mean(values: Iterable[float]) -> Optional[float]:
-    values = list(values)
-    if not values:
-        return None
-    return sum(values) / len(values)
-
-
-def _weighted_mean(values: list[float], weights: list[float]) -> Optional[float]:
-    if not values or not weights or len(values) != len(weights):
-        return None
-    total_weight = sum(weights)
-    if total_weight <= 0:
-        return None
-    return sum(value * weight for value, weight in zip(values, weights)) / total_weight
-
-
-def _weighted_variance(
-    values: list[float],
-    weights: list[float],
-    ddof: float = 1.0
-) -> Optional[float]:
-    if not values or not weights or len(values) != len(weights):
-        return None
-    mean = _weighted_mean(values, weights)
-    if mean is None:
-        return None
-    total_weight = sum(weights)
-    if total_weight <= ddof:
-        return None
-    variance = sum(
-        weight * (value - mean) ** 2
-        for value, weight in zip(values, weights)
-    ) / (total_weight - ddof)
-    return variance
-
-
-def _weighted_std(values: list[float], weights: list[float]) -> Optional[float]:
-    variance = _weighted_variance(values, weights)
-    return sqrt(variance) if variance is not None else None
-
-
-def _weighted_covariance(
-    xs: list[float],
-    ys: list[float],
-    weights: list[float],
-    ddof: float = 1.0
-) -> Optional[float]:
-    if not xs or not ys or not weights:
-        return None
-    if len(xs) != len(ys) or len(xs) != len(weights):
-        return None
-    mean_x = _weighted_mean(xs, weights)
-    mean_y = _weighted_mean(ys, weights)
-    if mean_x is None or mean_y is None:
-        return None
-    total_weight = sum(weights)
-    if total_weight <= ddof:
-        return None
-    cov = sum(
-        weight * (x - mean_x) * (y - mean_y)
-        for x, y, weight in zip(xs, ys, weights)
-    ) / (total_weight - ddof)
-    return cov
-
-
-def _weighted_correlation(
-    xs: list[float],
-    ys: list[float],
-    weights: list[float]
-) -> Optional[float]:
-    cov = _weighted_covariance(xs, ys, weights)
-    if cov is None:
-        return None
-    std_x = _weighted_std(xs, weights)
-    std_y = _weighted_std(ys, weights)
-    if std_x is None or std_y is None or std_x == 0 or std_y == 0:
-        return None
-    return cov / (std_x * std_y)
-
-
-def _quantile(values: list[float], q: float) -> Optional[float]:
-    if not values:
-        return None
-    if q <= 0:
-        return min(values)
-    if q >= 1:
-        return max(values)
-    ordered = sorted(values)
-    pos = (len(ordered) - 1) * q
-    lower = int(pos)
-    upper = min(lower + 1, len(ordered) - 1)
-    if lower == upper:
-        return ordered[lower]
-    weight = pos - lower
-    return ordered[lower] * (1 - weight) + ordered[upper] * weight
-
-
-def _risk_free_daily(risk_free_rate: float, trading_days: int) -> float:
-    if trading_days <= 0:
-        return 0.0
-    return (1.0 + risk_free_rate) ** (1.0 / trading_days) - 1.0
-
-
-def _daily_threshold(value: float, trading_days: int) -> float:
-    if trading_days <= 0:
-        return value
-    return (1.0 + value) ** (1.0 / trading_days) - 1.0
-
-
-def _get_trading_days(params: Optional[Params], default: int = 252) -> int:
-    if params is None:
-        return default
-    value = getattr(params, 'trading_days', default)
-    return value if value > 0 else default
+from .metrics_stats import (
+    annualize_from_daily,
+    annualize_cagr,
+    compound_returns,
+    _mean,
+    _weighted_mean,
+    _weighted_variance,
+    _weighted_std,
+    _weighted_covariance,
+    _weighted_correlation,
+    _quantile,
+    _risk_free_daily,
+    _daily_threshold,
+    _get_trading_days
+)
 
 
 def _paired_daily_returns(
@@ -635,11 +93,55 @@ def _window_results(
     return results
 
 
+def _trade_window_results(
+    windows: list[TradeWindowData],
+    calculator: Callable[[TradeWindowData], Optional[float]]
+) -> list[MetricWindow]:
+    results: list[MetricWindow] = []
+    for window in windows:
+        value = calculator(window)
+        if value is None:
+            continue
+        results.append(
+            MetricWindow(
+                label=window.label,
+                start=window.start,
+                end=window.end,
+                value=value
+            )
+        )
+    return results
+
+
 def _total_return_series(context: AnalysisContext) -> list[MetricSeriesPoint]:
     points: list[MetricSeriesPoint] = []
     for time, value in zip(context.times, context.cumulative_returns):
         points.append(MetricSeriesPoint(time=time, value=value))
     return points
+
+
+def _trade_series(points: list) -> list[MetricSeriesPoint]:
+    return [
+        MetricSeriesPoint(time=point.time, value=point.pnl)
+        for point in points
+    ]
+
+
+def _trade_extras(summary: TradeSummary) -> Optional[dict[str, float]]:
+    extras: dict[str, float] = {
+        'trade_count': float(summary.total),
+        'win_count': float(summary.wins),
+        'loss_count': float(summary.losses)
+    }
+    if summary.avg_win is not None:
+        extras['avg_win'] = summary.avg_win
+    if summary.avg_loss is not None:
+        extras['avg_loss'] = summary.avg_loss
+    if summary.total_profit is not None:
+        extras['total_profit'] = summary.total_profit
+    if summary.total_loss is not None:
+        extras['total_loss'] = summary.total_loss
+    return extras or None
 
 
 def calc_total_return(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
@@ -730,7 +232,11 @@ def calc_downside_deviation(context: AnalysisContext, params: ParamsDownsideDevi
     if full is None:
         return MetricResult(None, None, [])
     trading_days = _get_trading_days(params)
-    threshold = _downside_threshold(params.minimum_acceptable_return, params.downside_threshold, trading_days)
+    threshold = _downside_threshold(
+        params.minimum_acceptable_return,
+        params.downside_threshold,
+        trading_days
+    )
     value = _downside_deviation(full.daily_returns, full.daily_weights, threshold, trading_days)
     windows = _window_results(
         context.windows(),
@@ -744,7 +250,11 @@ def calc_semi_variance(context: AnalysisContext, params: ParamsSemiVariance) -> 
     if full is None:
         return MetricResult(None, None, [])
     trading_days = _get_trading_days(params)
-    threshold = _downside_threshold(params.minimum_acceptable_return, params.downside_threshold, trading_days)
+    threshold = _downside_threshold(
+        params.minimum_acceptable_return,
+        params.downside_threshold,
+        trading_days
+    )
     value = _semi_variance(full.daily_returns, full.daily_weights, threshold, trading_days)
     windows = _window_results(
         context.windows(),
@@ -772,7 +282,11 @@ def calc_sortino_ratio(context: AnalysisContext, params: ParamsSortinoRatio) -> 
     if full is None:
         return MetricResult(None, None, [])
     trading_days = _get_trading_days(params)
-    threshold = _downside_threshold(params.minimum_acceptable_return, params.downside_threshold, trading_days)
+    threshold = _downside_threshold(
+        params.minimum_acceptable_return,
+        params.downside_threshold,
+        trading_days
+    )
     value = _sortino_ratio(full.daily_returns, full.daily_weights, threshold, trading_days)
     windows = _window_results(
         context.windows(),
@@ -1079,6 +593,101 @@ def calc_tracking_error(context: AnalysisContext, params: ParamsBenchmarkRelativ
         lambda w: _tracking_error(w, benchmark, params.window)
     )
     return MetricResult(value, full.end_time, windows)
+
+
+def calc_win_rate(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+    full = context.trade_full_window()
+    if full is None:
+        return MetricResult(None, None, [])
+    summary = context.trade_summary(full)
+    windows = _trade_window_results(
+        context.trade_windows(),
+        lambda w: context.trade_summary(w).win_rate
+    )
+    return MetricResult(
+        summary.win_rate,
+        full.end,
+        windows,
+        series=_trade_series(full.points),
+        notes='trade_pnl',
+        extras=_trade_extras(summary)
+    )
+
+
+def calc_payoff_ratio(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+    full = context.trade_full_window()
+    if full is None:
+        return MetricResult(None, None, [])
+    summary = context.trade_summary(full)
+    windows = _trade_window_results(
+        context.trade_windows(),
+        lambda w: context.trade_summary(w).payoff_ratio
+    )
+    return MetricResult(
+        summary.payoff_ratio,
+        full.end,
+        windows,
+        series=_trade_series(full.points),
+        notes='trade_pnl',
+        extras=_trade_extras(summary)
+    )
+
+
+def calc_expectancy(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+    full = context.trade_full_window()
+    if full is None:
+        return MetricResult(None, None, [])
+    summary = context.trade_summary(full)
+    windows = _trade_window_results(
+        context.trade_windows(),
+        lambda w: context.trade_summary(w).expectancy
+    )
+    return MetricResult(
+        summary.expectancy,
+        full.end,
+        windows,
+        series=_trade_series(full.points),
+        notes='trade_pnl',
+        extras=_trade_extras(summary)
+    )
+
+
+def calc_profit_factor(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+    full = context.trade_full_window()
+    if full is None:
+        return MetricResult(None, None, [])
+    summary = context.trade_summary(full)
+    windows = _trade_window_results(
+        context.trade_windows(),
+        lambda w: context.trade_summary(w).profit_factor
+    )
+    return MetricResult(
+        summary.profit_factor,
+        full.end,
+        windows,
+        series=_trade_series(full.points),
+        notes='trade_pnl',
+        extras=_trade_extras(summary)
+    )
+
+
+def calc_kelly_criterion(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+    full = context.trade_full_window()
+    if full is None:
+        return MetricResult(None, None, [])
+    summary = context.trade_summary(full)
+    windows = _trade_window_results(
+        context.trade_windows(),
+        lambda w: context.trade_summary(w).kelly
+    )
+    return MetricResult(
+        summary.kelly,
+        full.end,
+        windows,
+        series=_trade_series(full.points),
+        notes='trade_pnl',
+        extras=_trade_extras(summary)
+    )
 
 
 def _geometric_mean_daily(window: WindowData) -> Optional[float]:
@@ -1495,11 +1104,6 @@ UNSUPPORTED_METRICS: dict[AnalyzerType, str] = {
     AnalyzerType.TRANSACTION_COST_DRAG: 'requires fee/slippage and execution data',
     AnalyzerType.TURNOVER: 'requires trade notional to separate price moves from trades',
     AnalyzerType.SLIPPAGE_SENSITIVITY: 'requires slippage scenarios or execution data',
-    AnalyzerType.WIN_RATE: 'requires trade-level PnL data',
-    AnalyzerType.PAYOFF_RATIO: 'requires trade-level PnL data',
-    AnalyzerType.EXPECTANCY: 'requires trade-level PnL data',
-    AnalyzerType.PROFIT_FACTOR: 'requires trade-level PnL data',
-    AnalyzerType.KELLY_CRITERION: 'requires trade-level PnL data',
 }
 
 
@@ -1543,4 +1147,55 @@ METRIC_CALCULATORS: dict[
     AnalyzerType.BETA: calc_beta,
     AnalyzerType.CORRELATION: calc_correlation,
     AnalyzerType.TE: calc_tracking_error,
+    AnalyzerType.WIN_RATE: calc_win_rate,
+    AnalyzerType.PAYOFF_RATIO: calc_payoff_ratio,
+    AnalyzerType.EXPECTANCY: calc_expectancy,
+    AnalyzerType.PROFIT_FACTOR: calc_profit_factor,
+    AnalyzerType.KELLY_CRITERION: calc_kelly_criterion,
 }
+
+
+__all__ = [
+    'MetricResult',
+    'SkippedResult',
+    'calc_total_return',
+    'calc_annualized_return',
+    'calc_cagr',
+    'calc_mean_return',
+    'calc_geometric_mean_return',
+    'calc_sharpe_ratio',
+    'calc_sortino_ratio',
+    'calc_treynor_ratio',
+    'calc_information_ratio',
+    'calc_m2',
+    'calc_calmar_ratio',
+    'calc_mar_ratio',
+    'calc_upi_martin_ratio',
+    'calc_sterling_ratio',
+    'calc_burke_ratio',
+    'calc_pain_ratio',
+    'calc_volatility',
+    'calc_downside_deviation',
+    'calc_semi_variance',
+    'calc_mdd',
+    'calc_average_drawdown',
+    'calc_tuw',
+    'calc_ulcer_index',
+    'calc_var',
+    'calc_cvar',
+    'calc_skewness',
+    'calc_kurtosis',
+    'calc_tail_ratio',
+    'calc_alpha',
+    'calc_jensen_alpha',
+    'calc_beta',
+    'calc_correlation',
+    'calc_tracking_error',
+    'calc_win_rate',
+    'calc_payoff_ratio',
+    'calc_expectancy',
+    'calc_profit_factor',
+    'calc_kelly_criterion',
+    'METRIC_CALCULATORS',
+    'UNSUPPORTED_METRICS',
+]
