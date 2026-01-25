@@ -3,7 +3,8 @@ from typing import (
     Dict,
     Optional,
     Any,
-    Iterator
+    Iterator,
+    Callable
 )
 from dataclasses import dataclass
 from decimal import Decimal
@@ -102,11 +103,13 @@ class PerformanceAnalyzer:
         self,
         config: TradingConfig,
         symbols: SymbolManager,
-        balances: BalanceManager
+        balances: BalanceManager,
+        on_record: Callable[[PerformanceSnapshot], None]
     ):
         self._config = config
         self._symbols = symbols
         self._balances = balances
+        self._on_record = on_record
 
         self._cash_flows = []
         self._perf_nodes = []
@@ -243,6 +246,8 @@ class PerformanceAnalyzer:
         )
 
         self._perf_nodes.append(node)
+
+        self._on_record(node)
 
         return node
 

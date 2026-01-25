@@ -137,7 +137,8 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._perf = PerformanceAnalyzer(
             config,
             self._symbols,
-            self._balances
+            self._balances,
+            self._on_performance_snapshot_recorded
         )
 
     @property
@@ -936,6 +937,14 @@ class TradingState(EventEmitter[TradingStateEvent]):
             TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED,
             order,
             filled_quantity
+        )
+
+    def _on_performance_snapshot_recorded(
+        self,
+        snapshot: PerformanceSnapshot
+    ) -> None:
+        self.emit(
+            TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED, snapshot
         )
 
     def _check_balance_cash_flow(self, symbol_name: str) -> None:
