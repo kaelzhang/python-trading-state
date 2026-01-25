@@ -86,6 +86,40 @@ class ParamsCalmarRatio:
     risk_free_rate: float = 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class ParamsDownsideDeviation:
+    minimum_acceptable_return: float = 0.0
+    downside_threshold: float = 0.0
+    trading_days: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsSemiVariance:
+    minimum_acceptable_return: float = 0.0
+    downside_threshold: float = 0.0
+    trading_days: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsVaR:
+    confidence_level: float = 0.95
+    window: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsTailRatio:
+    quantile: float = 0.95
+    window: int = 252
+
+
+@dataclass(frozen=True, slots=True)
+class ParamsBenchmarkRelative:
+    # Same as `ParamsTreynorRatio.benchmark`
+    benchmark: str = 'btc'
+    risk_free_rate: float = 0.0
+    window: int = 252
+
+
 class AnalyzerType(Enum):
     TOTAL_RETURN = AnalyzerTypeInfo(
         name='Total Return',
@@ -156,7 +190,8 @@ class AnalyzerType(Enum):
     CALMAR_RATIO = AnalyzerTypeInfo(
         name='Calmar Ratio',
         description='Risk-adjusted return using maximum drawdown as the risk denominator (often CAGR/MaxDD)',
-        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
+        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS,
+        params=ParamsCalmarRatio
     )
 
     MAR = AnalyzerTypeInfo(
@@ -199,13 +234,15 @@ class AnalyzerType(Enum):
     DOWNSIDE_DEVIATION = AnalyzerTypeInfo(
         name='Downside Deviation',
         description='Volatility computed only for returns below a threshold (e.g., MAR)',
-        category=AnalyzerCategory.VOLATILITY_AND_DOWNSIDE_RISK
+        category=AnalyzerCategory.VOLATILITY_AND_DOWNSIDE_RISK,
+        params=ParamsDownsideDeviation
     )
 
     SEMI_VARIANCE = AnalyzerTypeInfo(
         name='Semi-variance',
         description='Variance of downside deviations only',
-        category=AnalyzerCategory.VOLATILITY_AND_DOWNSIDE_RISK
+        category=AnalyzerCategory.VOLATILITY_AND_DOWNSIDE_RISK,
+        params=ParamsSemiVariance
     )
 
     MDD = AnalyzerTypeInfo(
@@ -235,13 +272,15 @@ class AnalyzerType(Enum):
     VAR = AnalyzerTypeInfo(
         name='Value at Risk',
         description='Loss threshold not expected to be exceeded over a horizon at a given confidence level',
-        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION
+        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION,
+        params=ParamsVaR
     )
 
     CVAR = AnalyzerTypeInfo(
         name='Conditional Value at Risk',
         description='Expected loss in the tail beyond the VaR cutoff',
-        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION
+        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION,
+        params=ParamsVaR
     )
 
     SKEWNESS = AnalyzerTypeInfo(
@@ -259,37 +298,43 @@ class AnalyzerType(Enum):
     TAIL_RATIO = AnalyzerTypeInfo(
         name='Tail Ratio',
         description='Compares upside-tail magnitude to downside-tail magnitude via quantiles',
-        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION
+        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION,
+        params=ParamsTailRatio
     )
 
     ALPHA = AnalyzerTypeInfo(
         name='Alpha',
         description='Excess performance over a benchmark or model-implied return',
-        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION,
+        params=ParamsBenchmarkRelative
     )
 
     JENSEN_ALPHA = AnalyzerTypeInfo(
         name='Jensen\'s Alpha',
         description='Abnormal return above the CAPM/model-predicted return',
-        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION,
+        params=ParamsBenchmarkRelative
     )
 
     BETA = AnalyzerTypeInfo(
         name='Beta',
         description='Sensitivity of portfolio returns to the benchmark (systematic risk exposure)',
-        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION,
+        params=ParamsBenchmarkRelative
     )
 
     CORRELATION = AnalyzerTypeInfo(
         name='Correlation',
         description='Co-movement measure between two return series',
-        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION,
+        params=ParamsBenchmarkRelative
     )
 
     TE = AnalyzerTypeInfo(
         name='Tracking Error',
         description='Std dev of active returns (portfolio minus benchmark)',
-        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION,
+        params=ParamsBenchmarkRelative
     )
 
     TRANSACTION_COST_DRAG = AnalyzerTypeInfo(
