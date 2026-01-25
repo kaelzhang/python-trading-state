@@ -92,6 +92,12 @@ class AnalyzerType(Enum):
         category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
     )
 
+    M2 = AnalyzerTypeInfo(
+        name='Modigliani-Modigliani (M²)',
+        description='Risk-adjusted return scaled to benchmark volatility',
+        category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
+    )
+
     CALMAR_RATIO = AnalyzerTypeInfo(
         name='Calmar Ratio',
         description='Risk-adjusted return using maximum drawdown as the risk denominator (often CAGR/MaxDD)',
@@ -144,6 +150,138 @@ class AnalyzerType(Enum):
         name='Semi-variance',
         description='Variance of downside deviations only',
         category=AnalyzerCategory.VOLATILITY_AND_DOWNSIDE_RISK
+    )
+
+    MDD = AnalyzerTypeInfo(
+        name='Maximum Drawdown',
+        description='Largest peak-to-trough decline before a new peak',
+        category=AnalyzerCategory.DRAWDOWN_AND_PATH_RISK
+    )
+
+    AVERAGE_DRAWDOWN = AnalyzerTypeInfo(
+        name='Average Drawdown',
+        description='Average depth of drawdown episodes (as defined)',
+        category=AnalyzerCategory.DRAWDOWN_AND_PATH_RISK
+    )
+
+    TUW = AnalyzerTypeInfo(
+        name='Time Under Water',
+        description='Time from a peak to recovery above that peak',
+        category=AnalyzerCategory.DRAWDOWN_AND_PATH_RISK
+    )
+
+    UI = AnalyzerTypeInfo(
+        name='Ulcer Index',
+        description='Downside risk metric focusing on drawdown depth and duration',
+        category=AnalyzerCategory.DRAWDOWN_AND_PATH_RISK
+    )
+
+    VAR = AnalyzerTypeInfo(
+        name='Value at Risk',
+        description='Loss threshold not expected to be exceeded over a horizon at a given confidence level',
+        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION
+    )
+
+    CVAR = AnalyzerTypeInfo(
+        name='Conditional Value at Risk',
+        description='Expected loss in the tail beyond the VaR cutoff',
+        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION
+    )
+
+    SKEWNESS = AnalyzerTypeInfo(
+        name='Skewness',
+        description='Asymmetry of return distribution (negative skew implies crash-like losses)',
+        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION
+    )
+
+    KURTOSIS = AnalyzerTypeInfo(
+        name='Kurtosis',
+        description='Tail heaviness of returns (frequency of extreme outcomes)',
+        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION
+    )
+
+    TAIL_RATIO = AnalyzerTypeInfo(
+        name='Tail Ratio',
+        description='Compares upside-tail magnitude to downside-tail magnitude via quantiles',
+        category=AnalyzerCategory.TAIL_RISK_AND_DISTRIBUTION
+    )
+
+    ALPHA = AnalyzerTypeInfo(
+        name='Alpha',
+        description='Excess performance over a benchmark or model-implied return',
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+    )
+
+    JENSEN_ALPHA = AnalyzerTypeInfo(
+        name='Jensen\'s Alpha',
+        description='Abnormal return above the CAPM/model-predicted return',
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+    )
+
+    BETA = AnalyzerTypeInfo(
+        name='Beta',
+        description='Sensitivity of portfolio returns to the benchmark (systematic risk exposure)',
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+    )
+
+    CORRELATION = AnalyzerTypeInfo(
+        name='Correlation',
+        description='Co-movement measure between two return series',
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+    )
+
+    TE = AnalyzerTypeInfo(
+        name='Tracking Error',
+        description='Std dev of active returns (portfolio minus benchmark)',
+        category=AnalyzerCategory.BENCHMARK_RELATIVE_AND_ATTRIBUTION
+    )
+
+    TRANSACTION_COST_DRAG = AnalyzerTypeInfo(
+        name='Transaction Cost Drag',
+        description='Return erosion due to fees, slippage, and impact (should be included in net performance)',
+        category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
+    )
+
+    TURNOVER = AnalyzerTypeInfo(
+        name='Turnover',
+        description='Trading intensity that drives costs and capacity constraints',
+        category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
+    )
+
+    SLIPPAGE_SENSITIVITY = AnalyzerTypeInfo(
+        name='Slippage Sensitivity',
+        description='How performance changes under different slippage assumptions',
+        category=AnalyzerCategory.IMPLEMENTATION_COSTS_AND_CAPACITY
+    )
+
+    WIN_RATE = AnalyzerTypeInfo(
+        name='Win Rate',
+        description='Fraction of trades that are profitable',
+        category=AnalyzerCategory.TRADE_LEVEL_STATISTICS
+    )
+
+    PAYOFF_RATIO = AnalyzerTypeInfo(
+        name='Payoff Ratio',
+        description='Average win size divided by average loss size',
+        category=AnalyzerCategory.TRADE_LEVEL_STATISTICS
+    )
+
+    EXPECTANCY = AnalyzerTypeInfo(
+        name='Expectancy',
+        description='Expected profit per trade combining hit rate and payoff',
+        category=AnalyzerCategory.TRADE_LEVEL_STATISTICS
+    )
+
+    PROFIT_FACTOR = AnalyzerTypeInfo(
+        name='Profit Factor',
+        description='Gross profit divided by gross loss',
+        category=AnalyzerCategory.TRADE_LEVEL_STATISTICS
+    )
+
+    KELLY_CRITERION = AnalyzerTypeInfo(
+        name='Kelly Criterion',
+        description='Theoretically optimal fraction for long-run growth given hit rate and payoff odds',
+        category=AnalyzerCategory.TRADE_LEVEL_STATISTICS
     )
 
     @classmethod
