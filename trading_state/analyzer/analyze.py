@@ -17,8 +17,9 @@ from .metrics_cache import (
 )
 from .metrics_calculators import (
     METRIC_CALCULATORS,
-    UNSUPPORTED_METRICS,
+    # UNSUPPORTED_METRICS,
 )
+from .metrics_models import MetricResult
 from .metrics_models import SkippedResult
 
 
@@ -82,7 +83,7 @@ class PerformanceAnalyzer:
 
     def analyze(
         self
-    ) -> dict[AnalyzerType, Any]:
+    ) -> dict[AnalyzerType, MetricResult | SkippedResult]:
         """
         Analyze the performance snapshots and return the results according to the targets.
         """
@@ -94,11 +95,11 @@ class PerformanceAnalyzer:
         results: dict[AnalyzerType, Any] = {}
 
         for analyzer, params in self._targets:
-            if analyzer in UNSUPPORTED_METRICS:
-                results[analyzer] = SkippedResult(
-                    UNSUPPORTED_METRICS[analyzer]
-                )
-                continue
+            # if analyzer in UNSUPPORTED_METRICS:
+            #     results[analyzer] = SkippedResult(
+            #         UNSUPPORTED_METRICS[analyzer]
+            #     )
+            #     continue
             calculator = METRIC_CALCULATORS.get(analyzer)
             if calculator is None:
                 continue

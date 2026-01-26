@@ -1101,11 +1101,11 @@ def _benchmark_window(window: WindowData, benchmark: BenchmarkSeries) -> Optiona
     )
 
 
-UNSUPPORTED_METRICS: dict[AnalyzerType, str] = {
-    # AnalyzerType.TRANSACTION_COST_DRAG: 'requires fee/slippage and execution data',
-    # AnalyzerType.TURNOVER: 'requires trade notional to separate price moves from trades',
-    # AnalyzerType.SLIPPAGE_SENSITIVITY: 'requires slippage scenarios or execution data',
-}
+# UNSUPPORTED_METRICS: dict[AnalyzerType, str] = {
+#     AnalyzerType.TRANSACTION_COST_DRAG: 'requires fee/slippage and execution data',
+#     AnalyzerType.TURNOVER: 'requires trade notional to separate price moves from trades',
+#     AnalyzerType.SLIPPAGE_SENSITIVITY: 'requires slippage scenarios or execution data',
+# }
 
 
 METRIC_CALCULATORS: dict[

@@ -6,6 +6,7 @@ from stock_pandas import StockDataFrame
 from trading_state import (
     TradingStateEvent,
     TradingState,
+    TradingConfig,
     Balance,
     # Symbol,
     OrderSide,
@@ -23,6 +24,7 @@ from trading_state.common import (
 from .fixtures import (
     get_stock,
     init_state,
+    DEFAULT_CONFIG_KWARGS,
     BTC,
     USDT,
     BTCUSDT
@@ -77,6 +79,11 @@ class Trader:
                 DECIMAL_ZERO
             )
         ])
+
+        self._state.set_price(
+            BTCUSDT.name,
+            Decimal(str(self._stock['close'].iloc[0]))
+        )
 
     def _handle_orders(self) -> None:
         orders, _ = self._state.get_orders()
@@ -143,6 +150,9 @@ class Trader:
         self._stock[dead_cross]
 
         for _, row in self._stock.iterrows():
+            price = Decimal(str(row['close']))
+            self._state.set_price(BTCUSDT.name, price)
+
             buy = row[gold_cross]
             sell = row[dead_cross]
 
@@ -155,7 +165,7 @@ class Trader:
             exception, _ = self._state.expect(
                 BTCUSDT.name,
                 exposure=DECIMAL_ONE if buy else DECIMAL_ZERO,
-                price=Decimal(str(row['close'])),
+                price=price,
                 use_market_order=False
             )
 
@@ -165,6 +175,10 @@ class Trader:
 
 def test_analyzer():
     state = init_state(
+        config=TradingConfig(**{
+            **DEFAULT_CONFIG_KWARGS,
+            'benchmark_assets': (BTC,)
+        }),
         with_balances=False
     )
 
@@ -179,4 +193,6 @@ def test_analyzer():
 
     trader.go()
 
-    print(analyzer.analyze())
+    print(analyzer._snapshots[-1])
+
+    # print(analyzer.analyze()[AnalyzerType.TOTAL_RETURN])
