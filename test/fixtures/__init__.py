@@ -138,11 +138,14 @@ def init_balances(state: TradingState) -> None:
 
 def init_state(
     config: Optional[TradingConfig] = None,
+    with_balances: bool = True
 ) -> TradingState:
     state = create_state(config=config)
     init_symbols(state)
     init_prices(state)
     init_notional_limits(state)
-    init_balances(state)
+
+    if with_balances:
+        init_balances(state)
 
     return state
