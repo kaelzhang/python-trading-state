@@ -417,6 +417,9 @@ class AnalyzerType(Enum):
     def __str__(self) -> str:
         return self.value.name
 
+    def __repr__(self) -> str:
+        return self.name
+
     def params(
         self,
         *args, **kwargs

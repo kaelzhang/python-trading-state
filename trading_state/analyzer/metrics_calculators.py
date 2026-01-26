@@ -975,12 +975,12 @@ def _kurtosis(returns: list[float]) -> Optional[float]:
     return m4 / (m2 ** 2) - 3.0
 
 
-def _tail_ratio(returns: list[float], quantile: float, window: int) -> Optional[float]:
+def _tail_ratio(returns: list[float], q: float, window: int) -> Optional[float]:
     data = returns[-window:] if window > 0 else returns
     if not data:
         return None
-    upper = quantile(data, quantile)
-    lower = quantile(data, 1.0 - quantile)
+    upper = quantile(data, q)
+    lower = quantile(data, 1.0 - q)
     if upper is None or lower is None or lower == 0:
         return None
     return upper / abs(lower)
