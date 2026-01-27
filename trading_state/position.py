@@ -234,11 +234,7 @@ class PositionTracker:
         asset: str,
         quantity: Decimal
     ) -> Decimal:
-        if self._symbols.is_account_asset(asset):
-            return DECIMAL_ZERO
-
-        if quantity <= 0:
-            return DECIMAL_ZERO
+        # quantity must not be zero, no need to check
 
         position = self._positions[asset]
         if position.quantity.is_zero():

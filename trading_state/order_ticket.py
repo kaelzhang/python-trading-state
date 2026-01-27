@@ -110,10 +110,9 @@ class BaseOrderTicket:
 
         return True
 
-    def _validate_params(self) -> None:
-        # do nothing by default
-        # no extra validation is needed
-        ...
+    # do nothing by default
+    # no extra validation is needed
+    def _validate_params(self) -> None: ...
 
 
 class LimitOrderTicket(BaseOrderTicket):

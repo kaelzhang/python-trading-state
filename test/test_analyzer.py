@@ -10,7 +10,8 @@ from trading_state import (
     Balance,
     # Symbol,
     OrderSide,
-    OrderStatus
+    OrderStatus,
+    CashFlow
 )
 from trading_state.analyzer import (
     AnalyzerType,
@@ -41,6 +42,7 @@ def test_analyzer_type():
 class Trader:
     _stock: StockDataFrame
     _time: datetime
+    _cash_flowed: bool = False
 
     def __init__(
         self,
@@ -84,6 +86,16 @@ class Trader:
         self._state.set_price(
             BTCUSDT.name,
             Decimal(str(self._stock['close'].iloc[0]))
+        )
+
+    def _cash_flow(self) -> None:
+        if self._cash_flowed:
+            return
+
+        self._cash_flowed = True
+
+        self._state.set_cash_flow(
+            CashFlow(USDT, Decimal('-3000'), time=self._time)
         )
 
     def _handle_orders(self) -> None:
@@ -140,6 +152,9 @@ class Trader:
                 time
             )
         ], delta=True)
+
+        if ticket.side is OrderSide.SELL:
+            self._cash_flow()
 
         # print(
         #     f'{order.ticket.side} {order.ticket.price}',
@@ -220,7 +235,16 @@ def test_analyzer():
 
     result = analyzer.analyze()
 
-    result[AnalyzerType.TOTAL_RETURN].value
+    analyzer2 = PerformanceAnalyzer([
+        AnalyzerType.TOTAL_RETURN,
+    ])
+
+    analyzer2.add_snapshots(*state.performance())
+
+    assert (
+        analyzer2.analyze()[AnalyzerType.TOTAL_RETURN].value
+        == result[AnalyzerType.TOTAL_RETURN].value
+    )
 
     # print(analyzer.analyze()[AnalyzerType.TOTAL_RETURN])
     # print(analyzer.analyze()[AnalyzerType.SHARPE_RATIO])
