@@ -218,5 +218,9 @@ def test_analyzer():
         - calculated_account_value
     ) < Decimal('0.000001')
 
+    result = analyzer.analyze()
+
+    result[AnalyzerType.TOTAL_RETURN].value
+
     # print(analyzer.analyze()[AnalyzerType.TOTAL_RETURN])
     # print(analyzer.analyze()[AnalyzerType.SHARPE_RATIO])
