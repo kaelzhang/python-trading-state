@@ -22,8 +22,110 @@ $ pip install trading-state
 
 ## Usage
 
+Below are the most common workflows. For full parameter details, see
+the docstrings in each class.
+
+### 1) Initialize state and market data
+
 ```py
-from trading_state import TradingState
+from decimal import Decimal
+
+from trading_state import (
+    TradingConfig,
+    TradingState,
+    Symbol,
+    Balance
+)
+
+config = TradingConfig(
+    account_currency='USDT',
+    alt_account_currencies=('USDC',),
+    benchmark_assets=('BTC',)
+)
+state = TradingState(config)
+
+state.set_symbol(Symbol('BTCUSDT', 'BTC', 'USDT'))
+state.set_price('BTCUSDT', Decimal('30000'))
+state.set_notional_limit('BTC', Decimal('100000'))
+
+state.set_balances([
+    Balance('USDT', Decimal('10000'), Decimal('0'))
+])
+```
+
+### 2) Create target exposure and manage orders
+
+```py
+from trading_state import OrderStatus
+
+exception, updated = state.expect(
+    'BTCUSDT',
+    exposure=Decimal('0.2'),
+    price=Decimal('30000'),
+    use_market_order=False
+)
+assert exception is None
+
+orders, _ = state.get_orders()
+order = next(iter(orders))
+
+# Apply updates from the exchange
+state.update_order(
+    order,
+    status=OrderStatus.CREATED,
+    id='order-1',
+    filled_quantity=Decimal('0.1'),
+    quote_quantity=Decimal('3000')
+)
+
+# Update balances after fills
+# according to websocket incomming messages (maybe)
+state.set_balances([
+    Balance('BTC', Decimal('0.1'), Decimal('0'))
+])
+
+state.update_order(order, status=OrderStatus.FILLED)
+```
+
+### 3) Record performance snapshots
+
+```py
+from trading_state import TradingStateEvent, CashFlow
+from datetime import datetime
+
+def on_snapshot(snapshot):
+    print(snapshot.time, snapshot.account_value, snapshot.realized_pnl)
+
+state.on(TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED, on_snapshot)
+
+# Manual snapshot (e.g. end of day)
+snapshot = state.record()
+
+# External cash flow (deposit / withdrawal)
+state.set_cash_flow(
+    CashFlow('USDT', Decimal('1000'), datetime.utcnow())
+)
+```
+
+### 4) Analyze performance
+
+```py
+from trading_state.analyzer import PerformanceAnalyzer, AnalyzerType
+from trading_state import TradingStateEvent
+
+analyzer = PerformanceAnalyzer([
+    AnalyzerType.TOTAL_RETURN,
+    AnalyzerType.SHARPE_RATIO.params(trading_days=365),
+    AnalyzerType.MAX_DRAWDOWN
+])
+
+state.on(
+    TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED,
+    analyzer.add_snapshots
+)
+
+results = analyzer.analyze()
+total_return = results[AnalyzerType.TOTAL_RETURN].value
 ```
 
 ## License
