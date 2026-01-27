@@ -213,7 +213,7 @@ def test_pnl():
     now7 = datetime.now()
     node7 = state.record(time=now7)
 
-    assert node7.realized_pnl == Decimal('-18000')
+    assert node7.realized_pnl == Decimal('-15000')
     assert node7.unrealized_pnl == Decimal('-2500')
 
     # print(state._perf._position_tracker._positions._data)
@@ -242,7 +242,7 @@ def test_pnl():
     now8 = datetime.now()
     node8 = state.record(time=now8)
 
-    assert node8.realized_pnl == Decimal('-18500')
+    assert node8.realized_pnl == Decimal('-15500')
 
     # Decrease ETH
     # ---------------------------------------------------

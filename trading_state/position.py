@@ -44,23 +44,12 @@ class Position:
     - quantity (Decimal): the total quantity of the position
     - cost (Decimal): the total cost of the position
     - lots (List[Lot]): the lots of the position
-
-    Computed properties:
-    - avg_cost (Decimal): the average cost of the position
     """
 
     quantity: Decimal = DECIMAL_ZERO
     cost: Decimal = DECIMAL_ZERO
 
     lots: List[Lot] = field(default_factory=list)
-
-    @property
-    def avg_cost(self) -> Decimal:
-        return (
-            self.cost / self.quantity
-            if self.quantity > 0
-            else DECIMAL_ZERO
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +60,10 @@ class PositionSnapshot:
     - quantity (Decimal): the quantity of the position
     - cost (Decimal): the cost of the position
     - valuation_price (Decimal): the valuation price of the position
+
+    Computed properties:
+    - value (Decimal): the value of the position
+    - unrealized_pnl (Decimal): the unrealized PnL of the position
     """
 
     quantity: Decimal
@@ -143,52 +136,60 @@ class PositionTracker:
 
         # sum of base quantities
         bq = DECIMAL_ZERO
-        # sum of base costs
+        # sum of base costs (account currency)
         bc = DECIMAL_ZERO
         # sum of quote quantities
         qq = DECIMAL_ZERO
-        # sum of quote costs
+        # sum of quote costs (account currency)
         qc = DECIMAL_ZERO
+        # sum of commission costs (account currency)
+        cc = DECIMAL_ZERO
 
         for trade in order.trades:
             bq += trade.base_quantity
             bc += trade.base_quantity * trade.base_price
             qq += trade.quote_quantity
             qc += trade.quote_quantity * trade.quote_price
+            cc += trade.commission_cost
 
         ticket = order.ticket
         side = ticket.side
 
         symbol = ticket.symbol
-        # base asset
-        ba = symbol.base_asset
-        # quote asset
-        qa = symbol.quote_asset
+        base_asset = symbol.base_asset
+        quote_asset = symbol.quote_asset
 
-        if side is OrderSide.SELL:
-            ba, bq, bc, qa, qq, qc = qa, qq, qc, ba, bq, bc
+        if side is OrderSide.BUY:
+            increase_asset = base_asset
+            increase_qty = bq
+            increase_cost = bc
 
-        # base -> increase position
-        # quote -> decrease position
+            decrease_asset = quote_asset
+            decrease_qty = qq
+            proceeds = qc
+        else:
+            increase_asset = quote_asset
+            increase_qty = qq
+            increase_cost = qc
 
-        # Increase
-        # -------------------------------------------------
-        self.update_position(ba, bq, bc / bq)
+            decrease_asset = base_asset
+            decrease_qty = bq
+            proceeds = qc
 
-        # Should not handle
-        if self._symbols.is_account_asset(qa):
+        # Increase position (account assets are ignored)
+        if increase_qty > 0:
+            self.update_position(
+                increase_asset,
+                increase_qty,
+                increase_cost / increase_qty
+            )
+
+        if self._symbols.is_account_asset(decrease_asset):
             return realized_pnl
 
-        # Position to decrease
-        # -------------------------------------------------
-        position = self._positions[qa]
-        if position.quantity > 0:
-            avg_cost = position.avg_cost
-            cost = qq * avg_cost
-            proceeds = qq * self._symbols.valuation_price(qa)
-            realized_pnl = proceeds - cost
-
-        self.update_position(qa, - qq, qc / qq)
+        # Realized PnL for the decreased asset based on FIFO cost
+        cost = self._decrease_position(decrease_asset, decrease_qty)
+        realized_pnl = proceeds - cost - cc
 
         return realized_pnl
 
@@ -226,35 +227,54 @@ class PositionTracker:
 
         # Decrease the position
         else:
-            if position.quantity.is_zero():
-                # No position to decrease
-                return
+            self._decrease_position(asset, - quantity)
 
-            remaining_quantity = - quantity
-            new_lots = []
+    def _decrease_position(
+        self,
+        asset: str,
+        quantity: Decimal
+    ) -> Decimal:
+        if self._symbols.is_account_asset(asset):
+            return DECIMAL_ZERO
 
-            # FIFO
-            for lot in position.lots:
-                if remaining_quantity <= 0:
-                    new_lots.append(lot)
-                    continue
+        if quantity <= 0:
+            return DECIMAL_ZERO
 
-                # Sell the whole lot
-                if lot.quantity <= remaining_quantity:
-                    remaining_quantity -= lot.quantity
-                    position.cost -= lot.cost
-                    position.quantity -= lot.quantity
-                else:
-                    lot.quantity -= remaining_quantity
+        position = self._positions[asset]
+        if position.quantity.is_zero():
+            return DECIMAL_ZERO
 
-                    # Reduce the total cost and quantity of the position
-                    position.cost -= remaining_quantity * lot.price
-                    position.quantity -= remaining_quantity
-                    new_lots.append(lot)
+        remaining_quantity = quantity
+        new_lots = []
+        cost_removed = DECIMAL_ZERO
 
-                    remaining_quantity = DECIMAL_ZERO
+        # FIFO
+        for lot in position.lots:
+            if remaining_quantity <= 0:
+                new_lots.append(lot)
+                continue
 
-            position.lots = [lot for lot in new_lots if lot.quantity > 0]
+            # Sell the whole lot
+            if lot.quantity <= remaining_quantity:
+                remaining_quantity -= lot.quantity
+                position.cost -= lot.cost
+                position.quantity -= lot.quantity
+                cost_removed += lot.cost
+            else:
+                cost = remaining_quantity * lot.price
+                lot.quantity -= remaining_quantity
+
+                # Reduce the total cost and quantity of the position
+                position.cost -= cost
+                position.quantity -= remaining_quantity
+                cost_removed += cost
+                new_lots.append(lot)
+
+                remaining_quantity = DECIMAL_ZERO
+
+        position.lots = [lot for lot in new_lots if lot.quantity > 0]
+
+        return cost_removed
 
     def snapshots(self) -> PositionSnapshots:
         """Get the snapshot of all positions, including unrealized PnL, based on the account currency.
