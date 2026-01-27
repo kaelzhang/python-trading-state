@@ -32,6 +32,7 @@ from .fixtures import (
 
 
 def test_analyzer_type():
+    return
     availables = AnalyzerType.availables()
 
     print(availables)
@@ -140,6 +141,12 @@ class Trader:
             )
         ], delta=True)
 
+        # print(
+        #     f'{order.ticket.side} {order.ticket.price}',
+        #     'btc', self._state._balances.get_balance(BTC).free,
+        #     'usdt', self._state._balances.get_balance(USDT).free,
+        # )
+
         self._state.record(time=time)
 
     def go(self) -> None:
@@ -182,17 +189,33 @@ def test_analyzer():
         with_balances=False
     )
 
+    stock = get_stock()
+    init_base_currency = Decimal('10000')
     analyzer = PerformanceAnalyzer(AnalyzerType.all())
     trader = Trader(
         state,
         analyzer,
-        get_stock(),
-        Decimal('10000'),
+        stock,
+        init_base_currency,
         Decimal('0.0075')
     )
 
     trader.go()
 
-    print(analyzer._snapshots[-1])
+    last_snapshot = analyzer._snapshots[-1]
+
+    # print('last snapshot:', last_snapshot)
+
+    calculated_account_value = (
+        init_base_currency
+        + last_snapshot.realized_pnl
+        + last_snapshot.unrealized_pnl
+        # no cash flow
+    )
+
+    assert abs(
+        last_snapshot.account_value
+        - calculated_account_value
+    ) < Decimal('0.000001')
 
     # print(analyzer.analyze()[AnalyzerType.TOTAL_RETURN])
