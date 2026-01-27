@@ -219,3 +219,4 @@ def test_analyzer():
     ) < Decimal('0.000001')
 
     # print(analyzer.analyze()[AnalyzerType.TOTAL_RETURN])
+    # print(analyzer.analyze()[AnalyzerType.SHARPE_RATIO])
