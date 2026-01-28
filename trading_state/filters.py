@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from typing import (
     Optional,
     Tuple,
@@ -222,13 +222,12 @@ class QuantityFilter(BaseFilter):
     ) -> bool:
         return ticket.type != OrderType.MARKET
 
-    def apply(
+    def _apply_quantity(
         self,
         ticket: OrderTicket,
-        validate_only: bool,
-        **kwargs
-    ) -> FilterResult:
-        exception, new_quantity = apply_range(
+        validate_only: bool
+    ) -> ApplyRangeResult:
+        return apply_range(
             target=self._get_quantity(ticket),
             min_value=self.min_quantity,
             max_value=self.max_quantity,
@@ -238,10 +237,22 @@ class QuantityFilter(BaseFilter):
             name='quantity'
         )
 
+    def apply(
+        self,
+        ticket: OrderTicket,
+        validate_only: bool,
+        **kwargs
+    ) -> FilterResult:
+        exception, new_quantity = self._apply_quantity(ticket, validate_only)
+
         if exception:
             return exception, False
 
-        return None, new_quantity != ticket.quantity
+        modified = new_quantity != ticket.quantity
+        if modified:
+            ticket.quantity = new_quantity
+
+        return None, modified
 
     def _get_quantity(self, ticket: OrderTicket) -> Decimal:
         return ticket.quantity
@@ -264,7 +275,8 @@ class MarketQuantityFilter(QuantityFilter):
     def apply(
         self,
         ticket: OrderTicket,
-        *args, **kwargs
+        validate_only: bool,
+        **kwargs
     ) -> FilterResult:
         if (
             ticket.quantity_type == MarketQuantityType.QUOTE
@@ -281,7 +293,23 @@ class MarketQuantityFilter(QuantityFilter):
                 False
             )
 
-        return super().apply(ticket, *args, **kwargs)
+        exception, new_quantity = self._apply_quantity(ticket, validate_only)
+
+        if exception:
+            return exception, False
+
+        if ticket.quantity_type == MarketQuantityType.QUOTE:
+            new_quote_quantity = new_quantity * ticket.estimated_price
+            modified = new_quote_quantity != ticket.quantity
+            if modified:
+                ticket.quantity = new_quote_quantity
+            return None, modified
+
+        modified = new_quantity != ticket.quantity
+        if modified:
+            ticket.quantity = new_quantity
+
+        return None, modified
 
 
 PARAM_ICEBERG_QUANTITY = 'iceberg_quantity'
@@ -302,14 +330,26 @@ class IcebergQuantityFilter(BaseFilter):
         validate_only: bool,
         **kwargs
     ) -> FilterResult:
-        if ticket.iceberg_quantity > self.limit:
+        if ticket.iceberg_quantity <= 0:
+            return (
+                ValueError('ticket.iceberg_quantity must be greater than 0'),
+                False
+            )
+
+        parts = (
+            (ticket.quantity / ticket.iceberg_quantity)
+            .to_integral_value(rounding=ROUND_CEILING)
+        )
+
+        if parts > self.limit:
             if validate_only:
                 return (
-                    ValueError(f'ticket.iceberg_quantity {ticket.iceberg_quantity} is greater than the limit {self.limit}'),
+                    ValueError(f'iceberg parts {parts} is greater than the limit {self.limit}'),
                     False
                 )
 
-            ticket.iceberg_quantity = self.limit
+            min_iceberg = ticket.quantity / Decimal(self.limit)
+            ticket.iceberg_quantity = min_iceberg
             return None, True
 
         return None, False
@@ -419,7 +459,13 @@ class NotionalFilter(BaseFilter):
         else:
             price = ticket.price
 
-        notional = price * ticket.quantity
+        if (
+            market_order
+            and ticket.quantity_type == MarketQuantityType.QUOTE
+        ):
+            notional = ticket.quantity
+        else:
+            notional = price * ticket.quantity
 
         if notional < min_notional:
             # In this situation, we should not fix the order ticket,

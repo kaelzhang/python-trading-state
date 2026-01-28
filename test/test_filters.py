@@ -261,7 +261,7 @@ def test_quantity_filter_branches() -> None:
     )
     assert error is None
     assert modified is True
-    assert limit_step.quantity == Decimal('1.2')
+    assert limit_step.quantity == Decimal('1.0')
 
 
 def test_market_quantity_filter_branches() -> None:
@@ -300,6 +300,7 @@ def test_market_quantity_filter_branches() -> None:
     )
     assert error is None
     assert modified is True
+    assert ticket_quote_ok.quantity == Decimal('0.3')
 
     ticket_base = MarketOrderTicket(
         symbol=symbol,
@@ -312,19 +313,61 @@ def test_market_quantity_filter_branches() -> None:
         ticket_base, validate_only=False
     )
     assert error is None
+    assert modified is False
+
+    ticket_base_low = MarketOrderTicket(
+        symbol=symbol,
+        side=OrderSide.BUY,
+        quantity=Decimal('0.001'),
+        quantity_type=MarketQuantityType.BASE,
+        estimated_price=Decimal('10')
+    )
+    error, modified = market_filter.apply(
+        ticket_base_low, validate_only=False
+    )
+    assert isinstance(error, ValueError)
+    assert modified is False
+
+    ticket_base_step = MarketOrderTicket(
+        symbol=symbol,
+        side=OrderSide.BUY,
+        quantity=Decimal('0.333'),
+        quantity_type=MarketQuantityType.BASE,
+        estimated_price=Decimal('10')
+    )
+    error, modified = market_filter.apply(
+        ticket_base_step, validate_only=False
+    )
+    assert error is None
+    assert modified is True
+    assert ticket_base_step.quantity == Decimal('0.33')
 
 
 def test_iceberg_quantity_filter() -> None:
     symbol = Symbol('FOOUSD', 'FOO', 'USD')
     iceberg_filter = IcebergQuantityFilter(limit=3)
 
-    ticket = LimitOrderTicket(
+    zero_ticket = LimitOrderTicket(
         symbol=symbol,
         side=OrderSide.BUY,
         quantity=Decimal('1'),
         price=Decimal('1'),
         time_in_force=TimeInForce.GTC,
-        iceberg_quantity=Decimal('5')
+        iceberg_quantity=Decimal('0')
+    )
+    error, modified = iceberg_filter.apply(
+        zero_ticket, validate_only=False
+    )
+    assert isinstance(error, ValueError)
+    assert modified is False
+
+    ticket = LimitOrderTicket(
+        symbol=symbol,
+        side=OrderSide.BUY,
+        quantity=Decimal('9'),
+        price=Decimal('1'),
+        time_in_force=TimeInForce.GTC,
+        iceberg_quantity=Decimal('1')
     )
     assert iceberg_filter.when(ticket)
 
@@ -339,7 +382,7 @@ def test_iceberg_quantity_filter() -> None:
     )
     assert error is None
     assert modified is True
-    assert ticket.iceberg_quantity == 3
+    assert ticket.iceberg_quantity == Decimal('3')
 
     ticket_ok = LimitOrderTicket(
         symbol=symbol,
@@ -465,6 +508,21 @@ def test_notional_filter() -> None:
     assert error is None
     assert modified is False
 
+    market_quote_ticket = MarketOrderTicket(
+        symbol=symbol,
+        side=OrderSide.BUY,
+        quantity=Decimal('5'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10')
+    )
+    error, modified = min_only.apply(
+        market_quote_ticket,
+        validate_only=False,
+        get_avg_price=lambda *_: Decimal('20')
+    )
+    assert isinstance(error, ValueError)
+    assert modified is False
+
     max_only = NotionalFilter(
         min_notional=Decimal('10'),
         max_notional=Decimal('100'),
@@ -474,6 +532,20 @@ def test_notional_filter() -> None:
     )
     error, modified = max_only.apply(
         market_ticket,
+        validate_only=False,
+        get_avg_price=lambda *_: Decimal('200')
+    )
+    assert isinstance(error, ValueError)
+    assert modified is False
+
+    error, modified = max_only.apply(
+        MarketOrderTicket(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            quantity=Decimal('200'),
+            quantity_type=MarketQuantityType.QUOTE,
+            estimated_price=Decimal('10')
+        ),
         validate_only=False,
         get_avg_price=lambda *_: Decimal('200')
     )
