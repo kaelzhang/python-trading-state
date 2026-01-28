@@ -156,7 +156,10 @@ def calc_total_return(context: AnalysisContext, _params: Params | None) -> Metri
     return MetricResult(value, full.end_time, windows, series)
 
 
-def calc_annualized_return(context: AnalysisContext, params: ParamsAnnualizedReturn) -> MetricResult:
+def calc_annualized_return(
+    context: AnalysisContext,
+    params: ParamsAnnualizedReturn
+) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -228,7 +231,10 @@ def calc_volatility(context: AnalysisContext, params: ParamsAnnualizedReturn) ->
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_downside_deviation(context: AnalysisContext, params: ParamsDownsideDeviation) -> MetricResult:
+def calc_downside_deviation(
+    context: AnalysisContext,
+    params: ParamsDownsideDeviation
+) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
@@ -312,17 +318,30 @@ def calc_treynor_ratio(context: AnalysisContext, params: ParamsTreynorRatio) -> 
     return MetricResult(value, full.end_time, windows)
 
 
-def calc_information_ratio(context: AnalysisContext, params: ParamsInformationRatio) -> MetricResult:
+def calc_information_ratio(
+    context: AnalysisContext,
+    params: ParamsInformationRatio
+) -> MetricResult:
     full = context.full_window()
     if full is None:
         return MetricResult(None, None, [])
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    value = _information_ratio(full, benchmark, params.tracking_error_window, params.trading_days)
+    value = _information_ratio(
+        full,
+        benchmark,
+        params.tracking_error_window,
+        params.trading_days
+    )
     windows = _window_results(
         context.windows(),
-        lambda w: _information_ratio(w, benchmark, params.tracking_error_window, params.trading_days)
+        lambda w: _information_ratio(
+            w,
+            benchmark,
+            params.tracking_error_window,
+            params.trading_days
+        )
     )
     return MetricResult(value, full.end_time, windows)
 
@@ -453,7 +472,13 @@ def calc_tuw(context: AnalysisContext, _params: Params | None) -> MetricResult:
         extras['average_days'] = stats.tuw_avg_days
     if stats.tuw_current_days is not None:
         extras['current_days'] = stats.tuw_current_days
-    return MetricResult(stats.tuw_max_days, full.end_time, [], series=series, extras=extras or None)
+    return MetricResult(
+        stats.tuw_max_days,
+        full.end_time,
+        [],
+        series=series,
+        extras=extras or None
+    )
 
 
 def calc_ulcer_index(context: AnalysisContext, _params: Params | None) -> MetricResult:
@@ -988,7 +1013,12 @@ def _tail_ratio(returns: list[float], q: float, window: int) -> Optional[float]:
     return upper / abs(lower)
 
 
-def _alpha(window: WindowData, benchmark: BenchmarkSeries, lookback: int, trading_days: int) -> Optional[float]:
+def _alpha(
+    window: WindowData,
+    benchmark: BenchmarkSeries,
+    lookback: int,
+    trading_days: int
+) -> Optional[float]:
     port, bench, weights = _paired_daily_returns(window, benchmark)
     if lookback > 0 and len(port) > lookback:
         port = port[-lookback:]
@@ -1042,7 +1072,12 @@ def _correlation(window: WindowData, benchmark: BenchmarkSeries, lookback: int) 
     return weighted_correlation(port, bench, weights)
 
 
-def _tracking_error(window: WindowData, benchmark: BenchmarkSeries, lookback: int, trading_days: int) -> Optional[float]:
+def _tracking_error(
+    window: WindowData,
+    benchmark: BenchmarkSeries,
+    lookback: int,
+    trading_days: int
+) -> Optional[float]:
     port, bench, weights = _paired_daily_returns(window, benchmark)
     active = [p - b for p, b in zip(port, bench)]
     if lookback > 0 and len(active) > lookback:

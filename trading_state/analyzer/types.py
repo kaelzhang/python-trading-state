@@ -254,7 +254,7 @@ class AnalyzerType(Enum):
 
     PAIN_RATIO = AnalyzerTypeInfo(
         name='Pain Ratio',
-        description='Return divided by a drawdown “pain” measure (e.g., average drawdown / drawdown area)',
+        description='Return divided by a drawdown "pain" measure (e.g., average drawdown / drawdown area)',
         category=AnalyzerCategory.RISK_ADJUSTED_PERF_RATIOS
     )
 

@@ -40,7 +40,11 @@ def annualize_from_daily(mean_daily: Optional[float], trading_days: int) -> Opti
     return mean_daily * trading_days
 
 
-def annualize_cagr(total_return: Optional[float], days: float, trading_days: int) -> Optional[float]:
+def annualize_cagr(
+    total_return: Optional[float],
+    days: float,
+    trading_days: int
+) -> Optional[float]:
     if total_return is None or days <= 0:
         return None
     base = 1.0 + total_return
