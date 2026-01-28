@@ -303,11 +303,11 @@ def calc_treynor_ratio(context: AnalysisContext, params: ParamsTreynorRatio) -> 
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    rf_daily = risk_free_daily(params.risk_free_rate, 252)
-    value = _treynor_ratio(full, benchmark, rf_daily)
+    rf_daily = risk_free_daily(params.risk_free_rate, params.trading_days)
+    value = _treynor_ratio(full, benchmark, rf_daily, params.trading_days)
     windows = _window_results(
         context.windows(),
-        lambda w: _treynor_ratio(w, benchmark, rf_daily)
+        lambda w: _treynor_ratio(w, benchmark, rf_daily, params.trading_days)
     )
     return MetricResult(value, full.end_time, windows)
 
@@ -319,10 +319,10 @@ def calc_information_ratio(context: AnalysisContext, params: ParamsInformationRa
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    value = _information_ratio(full, benchmark, params.tracking_error_window)
+    value = _information_ratio(full, benchmark, params.tracking_error_window, params.trading_days)
     windows = _window_results(
         context.windows(),
-        lambda w: _information_ratio(w, benchmark, params.tracking_error_window)
+        lambda w: _information_ratio(w, benchmark, params.tracking_error_window, params.trading_days)
     )
     return MetricResult(value, full.end_time, windows)
 
@@ -527,10 +527,10 @@ def calc_alpha(context: AnalysisContext, params: ParamsBenchmarkRelative) -> Met
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    value = _alpha(full, benchmark, params.window)
+    value = _alpha(full, benchmark, params.window, params.trading_days)
     windows = _window_results(
         context.windows(),
-        lambda w: _alpha(w, benchmark, params.window)
+        lambda w: _alpha(w, benchmark, params.window, params.trading_days)
     )
     return MetricResult(value, full.end_time, windows)
 
@@ -542,11 +542,11 @@ def calc_jensen_alpha(context: AnalysisContext, params: ParamsBenchmarkRelative)
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    rf_daily = risk_free_daily(params.risk_free_rate, 252)
-    value = _jensen_alpha(full, benchmark, rf_daily, params.window)
+    rf_daily = risk_free_daily(params.risk_free_rate, params.trading_days)
+    value = _jensen_alpha(full, benchmark, rf_daily, params.window, params.trading_days)
     windows = _window_results(
         context.windows(),
-        lambda w: _jensen_alpha(w, benchmark, rf_daily, params.window)
+        lambda w: _jensen_alpha(w, benchmark, rf_daily, params.window, params.trading_days)
     )
     return MetricResult(value, full.end_time, windows)
 
@@ -588,10 +588,10 @@ def calc_tracking_error(context: AnalysisContext, params: ParamsBenchmarkRelativ
     benchmark = _benchmark_for(context, params.benchmark)
     if benchmark is None:
         return SkippedResult(f'benchmark {params.benchmark} not available')
-    value = _tracking_error(full, benchmark, params.window)
+    value = _tracking_error(full, benchmark, params.window, params.trading_days)
     windows = _window_results(
         context.windows(),
-        lambda w: _tracking_error(w, benchmark, params.window)
+        lambda w: _tracking_error(w, benchmark, params.window, params.trading_days)
     )
     return MetricResult(value, full.end_time, windows)
 
@@ -803,7 +803,8 @@ def _sortino_ratio(
 def _treynor_ratio(
     window: WindowData,
     benchmark: BenchmarkSeries,
-    rf_daily: float
+    rf_daily: float,
+    trading_days: int
 ) -> Optional[float]:
     beta = _beta(window, benchmark, 0)
     if beta is None or beta == 0:
@@ -812,13 +813,14 @@ def _treynor_ratio(
     if mean_daily is None:
         return None
     excess = mean_daily - rf_daily
-    return excess * 252 / beta
+    return excess * trading_days / beta
 
 
 def _information_ratio(
     window: WindowData,
     benchmark: BenchmarkSeries,
-    lookback: int
+    lookback: int,
+    trading_days: int
 ) -> Optional[float]:
     port, bench, weights = _paired_daily_returns(window, benchmark)
     active = [p - b for p, b in zip(port, bench)]
@@ -829,7 +831,7 @@ def _information_ratio(
     std_active = weighted_std(active, weights)
     if mean_active is None or std_active is None or std_active == 0:
         return None
-    return mean_active / std_active * sqrt(252)
+    return mean_active / std_active * sqrt(trading_days)
 
 
 def _m2(
@@ -951,7 +953,7 @@ def _skewness(returns: list[float]) -> Optional[float]:
     if len(returns) < 3:
         return None
     avg = mean(returns)
-    if mean is None:
+    if avg is None:
         return None
     diffs = [r - avg for r in returns]
     m2 = mean([d ** 2 for d in diffs])
@@ -986,7 +988,7 @@ def _tail_ratio(returns: list[float], q: float, window: int) -> Optional[float]:
     return upper / abs(lower)
 
 
-def _alpha(window: WindowData, benchmark: BenchmarkSeries, lookback: int) -> Optional[float]:
+def _alpha(window: WindowData, benchmark: BenchmarkSeries, lookback: int, trading_days: int) -> Optional[float]:
     port, bench, weights = _paired_daily_returns(window, benchmark)
     if lookback > 0 and len(port) > lookback:
         port = port[-lookback:]
@@ -996,14 +998,15 @@ def _alpha(window: WindowData, benchmark: BenchmarkSeries, lookback: int) -> Opt
     mean_bench = weighted_mean(bench, weights)
     if mean_port is None or mean_bench is None:
         return None
-    return (mean_port - mean_bench) * 252
+    return (mean_port - mean_bench) * trading_days
 
 
 def _jensen_alpha(
     window: WindowData,
     benchmark: BenchmarkSeries,
     rf_daily: float,
-    lookback: int
+    lookback: int,
+    trading_days: int
 ) -> Optional[float]:
     port, bench, weights = _paired_daily_returns(window, benchmark)
     if lookback > 0 and len(port) > lookback:
@@ -1018,7 +1021,7 @@ def _jensen_alpha(
     if mean_port is None or mean_bench is None:
         return None
     alpha_daily = (mean_port - rf_daily) - beta * (mean_bench - rf_daily)
-    return alpha_daily * 252
+    return alpha_daily * trading_days
 
 
 def _beta(window: WindowData, benchmark: BenchmarkSeries, lookback: int) -> Optional[float]:
@@ -1039,7 +1042,7 @@ def _correlation(window: WindowData, benchmark: BenchmarkSeries, lookback: int) 
     return weighted_correlation(port, bench, weights)
 
 
-def _tracking_error(window: WindowData, benchmark: BenchmarkSeries, lookback: int) -> Optional[float]:
+def _tracking_error(window: WindowData, benchmark: BenchmarkSeries, lookback: int, trading_days: int) -> Optional[float]:
     port, bench, weights = _paired_daily_returns(window, benchmark)
     active = [p - b for p, b in zip(port, bench)]
     if lookback > 0 and len(active) > lookback:
@@ -1048,7 +1051,7 @@ def _tracking_error(window: WindowData, benchmark: BenchmarkSeries, lookback: in
     std = weighted_std(active, weights)
     if std is None:
         return None
-    return std * sqrt(252)
+    return std * sqrt(trading_days)
 
 
 def _weighted_beta(xs: list[float], ys: list[float], weights: list[float]) -> Optional[float]:

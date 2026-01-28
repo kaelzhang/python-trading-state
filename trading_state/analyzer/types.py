@@ -39,13 +39,17 @@ class AnalyzerTypeInfo:
 
 @dataclass(frozen=True, slots=True)
 class ParamsAnnualizedReturn:
+    # Annualization factor: number of trading days per year
+    # (e.g., 252 = US stock market, 365 = crypto market)
     trading_days: int = 252
 
 
 @dataclass(frozen=True, slots=True)
 class ParamsSharpeRatio:
     risk_free_rate: float = 0.0
-    # Which calculates the annualization factor via sqrt(trading_days)
+    # Annualization factor: number of trading days per year
+    # The ratio is annualized by multiplying by sqrt(trading_days)
+    # (e.g., 252 = US stock market, 365 = crypto market)
     trading_days: int = 252
 
 
@@ -53,7 +57,9 @@ class ParamsSharpeRatio:
 class ParamsSortinoRatio:
     minimum_acceptable_return: float = 0.0
     downside_threshold: float = 0.0
-    # Which calculates the annualization factor via sqrt(trading_days)
+    # Annualization factor: number of trading days per year
+    # The ratio is annualized by multiplying by sqrt(trading_days)
+    # (e.g., 252 = US stock market, 365 = crypto market)
     trading_days: int = 252
 
 
@@ -63,13 +69,21 @@ class ParamsTreynorRatio:
     # i.e the key name of the `PerformanceSnapshot.benchmarks` dict
     benchmark: str = 'btc'
     risk_free_rate: float = 0.0
+    # Annualization factor: number of trading days per year for annualizing the ratio
+    # (e.g., 252 = US stock market, 365 = crypto market)
+    trading_days: int = 252
 
 
 @dataclass(frozen=True, slots=True)
 class ParamsInformationRatio:
     # Same as `ParamsTreynorRatio.benchmark`
     benchmark: str = 'btc'
+    # Lookback window: number of data points to use for tracking error calculation
+    # (e.g., 252 = use last year's data, 126 = use last 6 months' data)
     tracking_error_window: int = 252
+    # Annualization factor: number of trading days per year for annualizing the ratio
+    # (e.g., 252 = US stock market, 365 = crypto market)
+    trading_days: int = 252
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +91,8 @@ class ParamsM2:
     # Same as `ParamsTreynorRatio.benchmark`
     benchmark: str = 'btc'
     risk_free_rate: float = 0.0
-    # Same as `ParamsAnnualizedReturn.trading_days`
+    # Annualization factor: number of trading days per year for annualizing the ratio
+    # (e.g., 252 = US stock market, 365 = crypto market)
     trading_days: int = 252
 
 
@@ -90,6 +105,9 @@ class ParamsCalmarRatio:
 class ParamsDownsideDeviation:
     minimum_acceptable_return: float = 0.0
     downside_threshold: float = 0.0
+    # Annualization factor: number of trading days per year
+    # The deviation is annualized by multiplying by sqrt(trading_days)
+    # (e.g., 252 = US stock market, 365 = crypto market)
     trading_days: int = 252
 
 
@@ -97,18 +115,27 @@ class ParamsDownsideDeviation:
 class ParamsSemiVariance:
     minimum_acceptable_return: float = 0.0
     downside_threshold: float = 0.0
+    # Annualization factor: number of trading days per year
+    # The variance is annualized by multiplying by trading_days
+    # (e.g., 252 = US stock market, 365 = crypto market)
     trading_days: int = 252
 
 
 @dataclass(frozen=True, slots=True)
 class ParamsVaR:
     confidence_level: float = 0.95
+    # Lookback window: number of data points to use for VaR calculation
+    # (e.g., 252 = use last year's data, 126 = use last 6 months' data)
+    # Note: VaR is not annualized, so this is purely a data selection window
     window: int = 252
 
 
 @dataclass(frozen=True, slots=True)
 class ParamsTailRatio:
     quantile: float = 0.95
+    # Lookback window: number of data points to use for tail ratio calculation
+    # (e.g., 252 = use last year's data, 126 = use last 6 months' data)
+    # Note: Tail ratio is not annualized, so this is purely a data selection window
     window: int = 252
 
 
@@ -117,7 +144,14 @@ class ParamsBenchmarkRelative:
     # Same as `ParamsTreynorRatio.benchmark`
     benchmark: str = 'btc'
     risk_free_rate: float = 0.0
+    # Lookback window: number of data points to use for calculation
+    # (e.g., 252 = use last year's data, 126 = use last 6 months' data)
+    # Used for Alpha, Beta, Correlation, Tracking Error, Jensen Alpha
     window: int = 252
+    # Annualization factor: number of trading days per year for annualizing results
+    # (e.g., 252 = US stock market, 365 = crypto market)
+    # Used for annualizing Alpha, Jensen Alpha, and Tracking Error
+    trading_days: int = 252
 
 
 class AnalyzerType(Enum):
