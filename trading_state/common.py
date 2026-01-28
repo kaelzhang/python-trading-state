@@ -1,5 +1,4 @@
 from decimal import Decimal, ROUND_DOWN
-from datetime import datetime
 
 from typing import (
     Tuple,
@@ -166,10 +165,3 @@ class EventEmitter(Generic[K]):
 
     def off(self) -> None:
         self._listeners.clear()
-
-
-def timestamp_to_datetime(timestamp: int) -> datetime:
-    """
-    Convert a timestamp in milliseconds to a datetime object
-    """
-    return datetime.fromtimestamp(timestamp / 1000)

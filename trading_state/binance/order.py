@@ -12,10 +12,9 @@ from trading_state import (
     MarketOrderTicket,
     MarketQuantityType
 )
-from trading_state.common import (
-    DECIMAL_ZERO,
-    timestamp_to_datetime
-)
+from trading_state.common import DECIMAL_ZERO
+
+from .common import timestamp_to_datetime
 
 
 # Ref:

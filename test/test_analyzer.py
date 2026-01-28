@@ -11,7 +11,8 @@ from trading_state import (
     # Symbol,
     OrderSide,
     OrderStatus,
-    CashFlow
+    CashFlow,
+    OrderType
 )
 from trading_state.analyzer import (
     AnalyzerType,
@@ -33,7 +34,6 @@ from .fixtures import (
 
 
 def test_analyzer_type():
-    return
     availables = AnalyzerType.availables()
 
     print(availables)
@@ -114,6 +114,13 @@ class Trader:
         symbol = ticket.symbol
 
         if ticket.side is OrderSide.BUY:
+
+            assert order.ticket.is_a(OrderType.LIMIT, side=OrderSide.BUY)
+            assert not order.ticket.is_a(OrderType.LIMIT, side=OrderSide.SELL)
+            assert not order.ticket.is_a(
+                OrderType.LIMIT, stop_price=DECIMAL_ONE
+            )
+
             asset_gain, asset_used = symbol.base_asset, symbol.quote_asset
             quantity_gain = ticket.quantity * self._fee_loss
             quantity_used = ticket.quantity * ticket.price

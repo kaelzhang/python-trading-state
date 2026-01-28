@@ -1,3 +1,5 @@
+import pytest
+
 from trading_state.order_ticket import (
     LimitOrderTicket,
     MarketOrderTicket,
@@ -96,3 +98,28 @@ def test_order_ticket():
                 assert False, f'{prefix}: expected exception "{exception}" but got none'
             else:
                 assert True, f'{prefix}: passed'
+
+
+def test_stop_loss_limit_order_ticket():
+    with pytest.raises(ValueError, match='Either'):
+        StopLossLimitOrderTicket(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            quantity=Decimal('1'),
+            price=Decimal('10000'),
+            time_in_force=TimeInForce.GTC,
+            # stop_price=Decimal('10000'),
+            # trailing_delta=Decimal('0.01'),
+        )
+
+
+def test_post_only_with_time_in_force():
+    with pytest.raises(ValueError, match='post_only is not allowed with time_in_force'):
+        LimitOrderTicket(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            quantity=Decimal('1'),
+            price=Decimal('10000'),
+            time_in_force=TimeInForce.GTC,
+            post_only=True,
+        )

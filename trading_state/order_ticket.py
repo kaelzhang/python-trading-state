@@ -102,10 +102,7 @@ class BaseOrderTicket:
             return True
 
         for key, value in kwargs.items():
-            if value is None:
-                continue
-
-            if getattr(self, key) != value:
+            if not hasattr(self, key) or getattr(self, key) != value:
                 return False
 
         return True
