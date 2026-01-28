@@ -65,7 +65,11 @@ class DependencyManager:
     - its dependency symbol names for valuation purposes
     """
 
+    # It might depend on multiple symbols for calculating
+    # the valuation price of a certain asset
     _asset_symbols: Dict[str, Set[str]]
+
+    # Just a reverse mapping of _asset_symbols
     _symbol_assets: FactoryDict[str, Set[str]]
 
     def __init__(self) -> None:
@@ -83,7 +87,7 @@ class DependencyManager:
             self._symbol_assets[symbol_name].add(asset)
 
     def clear(self, asset: str) -> None:
-        symbols = self._asset_symbols.pop(asset)
+        symbols = self._asset_symbols.pop(asset, None)
 
         if symbols is None:
             return

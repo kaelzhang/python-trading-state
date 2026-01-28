@@ -950,6 +950,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
     def _check_balance_cash_flow(self, symbol_name: str) -> None:
         not_ready_assets = self._balances.not_ready_assets
 
+        # Those assets rely on the symbol to calculate the valuation price
         assets = not_ready_assets.dependents(symbol_name)
 
         if assets is None:
@@ -969,5 +970,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
             # so that the performance analyzer could get the
             # correct PnL
             success = self._perf.set_cash_flow(cf)
+
+            # The asset might still not be ready yet,
+            # which would lead to the failure of setting the cash flow
             if success:
+                # We should only clear the asset from the not ready assets
+                # if the cash flow is set successfully,
+                # otherwise, the asset will be treated as a cash flow later
                 not_ready_assets.clear(asset)

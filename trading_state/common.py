@@ -110,10 +110,10 @@ class FactoryDict(Generic[K, V]):
         self._data: Dict[K, V] = {}
         self._factory = factory
 
-    def get(self, key: K) -> Optional[V]:
+    def get(self, key: K, default: Optional[V] = None) -> Optional[V]:
         """Just get, no new creation
         """
-        return self._data.get(key)
+        return self._data.get(key, default)
 
     def __getitem__(self, key: K) -> V:
         value = self._data.get(key)
