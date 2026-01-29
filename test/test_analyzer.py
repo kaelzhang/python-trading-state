@@ -226,8 +226,6 @@ def test_analyzer():
 
     last_snapshot = analyzer._snapshots[-1]
 
-    # print('last snapshot:', last_snapshot)
-
     calculated_account_value = (
         init_base_currency
         + last_snapshot.realized_pnl
