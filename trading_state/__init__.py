@@ -1,5 +1,5 @@
 # The first alpha version
-__version__ = '1.0.0'
+__version__ = '1.0.1'
 
 from .state import (
     TradingConfig,

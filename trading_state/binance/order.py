@@ -75,8 +75,6 @@ def _decode_order_status(status_str: str) -> OrderStatus:
             return OrderStatus.CREATED
         case 'NEW':
             return OrderStatus.CREATED
-        case 'CANCELED':
-            return OrderStatus.CANCELLED
         case 'EXPIRED':
             return OrderStatus.CANCELLED
 
