@@ -1,8 +1,6 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-import pytest
-
 from trading_state.analyzer import AnalyzerType, PerformanceAnalyzer
 from trading_state.analyzer import metrics_calculators as mc
 from trading_state.analyzer.metrics_cache import AnalysisContext, SeriesCache, compute_drawdown_stats
@@ -396,3 +394,25 @@ def test_metrics_calculators_benchmark_helpers(monkeypatch):
     )
     assert mc._tracking_error(window_empty, benchmark, 0, 252) is None
     assert mc._weighted_beta([], [], []) is None
+
+    rp_none = ReturnPoint(time=base + timedelta(days=1), period_return=None, days=None, daily_return=None)
+    empty_window = make_window([rp_none], [], [], 0.0)
+    benchmark_none = BenchmarkSeries(asset='BTC', cumulative_returns=[0.0, 0.0], return_points=[rp_none])
+    assert mc._jensen_alpha(empty_window, benchmark_none, 0.0, 0, 252) is None
+
+    assert mc._weighted_beta([0.1, 0.2], [0.05, 0.05], [1.0, 1.0]) is None
+
+
+def test_trade_window_results_appends():
+    base = datetime(2024, 1, 1)
+    trade_window = TradeWindowData(
+        label='win',
+        start=base,
+        end=base + timedelta(days=1),
+        points=[TradePerformancePoint(time=base, pnl=1.0, return_pct=0.1)],
+        pnls=[1.0],
+        returns=[0.1],
+    )
+    results = mc._trade_window_results([trade_window], lambda _w: 0.5)
+    assert len(results) == 1
+    assert results[0].label == 'win'

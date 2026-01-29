@@ -10,3 +10,10 @@ def test_analyzer_types():
 
     with pytest.raises(ValueError, match='No parameters'):
         AnalyzerType.TOTAL_RETURN.params(trading_days=365)
+
+
+def test_analyzer_type_params():
+    analyzer, params = AnalyzerType.SHARPE_RATIO.params(trading_days=365, risk_free_rate=0.01)
+    assert analyzer is AnalyzerType.SHARPE_RATIO
+    assert params.trading_days == 365
+    assert params.risk_free_rate == 0.01
