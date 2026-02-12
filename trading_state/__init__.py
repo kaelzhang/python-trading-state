@@ -70,6 +70,13 @@ from .target import (
     PositionTarget
 )
 
+from .execution import (
+    ExecutionStrategy,
+    ExecutionStrategyResolver,
+    BaseExecutionStrategy,
+    DefaultExecutionStrategy
+)
+
 from .common import (
     EventEmitter
 )

@@ -62,7 +62,7 @@ exception, updated = state.expect(
     'BTCUSDT',
     exposure=Decimal('0.2'),
     price=Decimal('30000'),
-    use_market_order=False
+    urgent=False
 )
 assert exception is None
 
@@ -85,6 +85,51 @@ state.set_balances([
 ])
 
 state.update_order(order, status=OrderStatus.FILLED)
+```
+
+### 2.1) Plug in custom execution strategies (outside `expect`)
+
+```py
+from trading_state import (
+    BaseExecutionStrategy,
+    LimitOrderTicket,
+    TradingState,
+    TimeInForce
+)
+
+class MyExec(BaseExecutionStrategy):
+    def create_ticket(self, symbol, quantity, target, side):
+        return LimitOrderTicket(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=target.price,
+            time_in_force=TimeInForce.GTC
+        )
+
+    def track_order(self, order):
+        print('completed:', order.id, order.status)
+
+my_exec = MyExec()
+
+state = TradingState(
+    config,
+    execution_strategy_resolver=(
+        lambda target: (
+            my_exec
+            if target.data.get('exec') == 'my'
+            else None
+        )
+    )
+)
+
+state.expect(
+    'BTCUSDT',
+    exposure=Decimal('0.3'),
+    price=Decimal('30000'),
+    urgent=True,
+    data={'exec': 'my'}
+)
 ```
 
 ### 3) Record performance snapshots

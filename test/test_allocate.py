@@ -44,7 +44,7 @@ target = PositionTarget(
     symbol=BTCUSDT,
     # Arbitrary value, has nothing to do with the allocation
     exposure=Decimal('0.1'),
-    use_market_order=False,
+    urgent=False,
     price=price,
     data={},
 )

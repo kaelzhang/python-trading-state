@@ -132,7 +132,7 @@ def test_pnl():
         BTCUSDT.name,
         exposure=Decimal('0.5'),
         price=price,
-        use_market_order=False
+        urgent=False
     )
 
     orders, _ = state.get_orders()
@@ -194,7 +194,7 @@ def test_pnl():
         BTCUSDT.name,
         exposure=Decimal('0.025'),
         price=price2,
-        use_market_order=False
+        urgent=False
     )
 
     orders, _ = state.get_orders()
@@ -224,7 +224,7 @@ def test_pnl():
         BTCUSDT.name,
         exposure=Decimal('0.02'),
         price=price2,
-        use_market_order=False
+        urgent=False
     )
 
     orders, _ = state.get_orders()

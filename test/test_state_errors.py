@@ -72,7 +72,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         exposure=1,
         price=price,
-        use_market_order=True
+        urgent=True
     )
 
     assert isinstance(exception, SymbolNotDefinedError)
@@ -88,7 +88,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         exposure=1,
         price=price,
-        use_market_order=True
+        urgent=True
     )
 
     assert isinstance(exception, SymbolPriceNotReadyError)
@@ -99,7 +99,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         exposure=1,
         price=price,
-        use_market_order=True
+        urgent=True
     )
 
     assert isinstance(exception, NotionalLimitNotSetError)
@@ -110,7 +110,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         exposure=1,
         price=price,
-        use_market_order=True
+        urgent=True
     )
 
     assert isinstance(exception, ValuationPriceNotReadyError)
@@ -121,7 +121,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         exposure=1,
         price=price,
-        use_market_order=True
+        urgent=True
     )
 
     assert isinstance(exception, BalanceNotReadyError)
@@ -134,7 +134,7 @@ def test_trading_state_errors(test_symbols: Symbols):
         BTCUSDC,
         exposure=1,
         price=price,
-        use_market_order=False
+        urgent=False
     )
 
     assert isinstance(exception, BalanceNotReadyError)
@@ -161,7 +161,7 @@ def test_feature_not_allowed_error(test_symbols: Symbols):
         SYMBOL,
         exposure=0.2,
         price=Decimal('10000'),
-        use_market_order=True
+        urgent=True
     )
 
     assert exception is None

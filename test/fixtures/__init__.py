@@ -8,7 +8,9 @@ from trading_state import (
     Symbol,
     TradingState,
     TradingConfig,
-    Balance
+    Balance,
+    ExecutionStrategy,
+    ExecutionStrategyResolver
 )
 
 from trading_state.binance import (
@@ -90,6 +92,10 @@ DEFAULT_CONFIG_KWARGS = dict(
 
 def create_state(
     config: Optional[TradingConfig],
+    default_execution_strategy: Optional[ExecutionStrategy] = None,
+    execution_strategy_resolver: Optional[
+        ExecutionStrategyResolver
+    ] = None
 ) -> TradingState:
     if config is None:
         config = TradingConfig(
@@ -97,7 +103,9 @@ def create_state(
         )
 
     state = TradingState(
-        config=config
+        config=config,
+        default_execution_strategy=default_execution_strategy,
+        execution_strategy_resolver=execution_strategy_resolver
     )
 
     assert state.config == config
@@ -138,9 +146,17 @@ def init_balances(state: TradingState) -> None:
 
 def init_state(
     config: Optional[TradingConfig] = None,
-    with_balances: bool = True
+    with_balances: bool = True,
+    default_execution_strategy: Optional[ExecutionStrategy] = None,
+    execution_strategy_resolver: Optional[
+        ExecutionStrategyResolver
+    ] = None
 ) -> TradingState:
-    state = create_state(config=config)
+    state = create_state(
+        config=config,
+        default_execution_strategy=default_execution_strategy,
+        execution_strategy_resolver=execution_strategy_resolver
+    )
     init_symbols(state)
     init_prices(state)
     init_notional_limits(state)

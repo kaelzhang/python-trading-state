@@ -8,6 +8,8 @@ from trading_state import (
     OrderStatus,
     OrderType,
     Balance,
+    BaseExecutionStrategy,
+    LimitOrderTicket,
     PositionTargetStatus,
     TradingStateEvent,
 )
@@ -45,7 +47,7 @@ def test_trading_state():
         BTCUSDC,
         exposure=Decimal('0.2'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
     assert exception is None
     assert updated
@@ -80,7 +82,7 @@ def test_trading_state():
         BTCUSDC,
         exposure=Decimal('0.3'),
         price=Decimal('10000'),
-        use_market_order=True
+        urgent=True
     )
     assert exception is None
     assert updated
@@ -94,7 +96,7 @@ def test_trading_state():
         BTCUSDT,
         exposure=Decimal('0.3'),
         price=Decimal('10000'),
-        use_market_order=True
+        urgent=True
     )
     assert exception is None
     assert not updated
@@ -168,7 +170,7 @@ def test_order_filled():
         BTCUSDC,
         exposure=Decimal('0.2'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
     assert exception is None
     assert updated
@@ -178,7 +180,7 @@ def test_order_filled():
         BTCUSDC,
         exposure=Decimal('0.2'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
     assert exception is None
     assert not updated
@@ -245,7 +247,7 @@ def test_order_filled():
         BTCUSDC,
         exposure=Decimal('0.2'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
     assert exception is None
     assert not updated
@@ -274,7 +276,7 @@ def test_order_filled():
         BTCUSDC,
         exposure=Decimal('0.3'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
     assert exception is None
     assert not updated
@@ -286,7 +288,7 @@ def test_no_same_exposure():
         BTCUSDT,
         exposure=Decimal('0.2'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
 
     state.set_balances([
@@ -317,7 +319,7 @@ def test_alt_currencies():
         BTCUSDT,
         exposure=Decimal('0.3'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
 
     orders, orders_to_cancel = state.get_orders()
@@ -408,7 +410,7 @@ def test_alt_currencies():
         BTCUSDC,
         exposure=Decimal('0.3'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
 
     state.set_balances([
@@ -491,7 +493,7 @@ def test_allocate_sell():
         BTCUSDC,
         exposure=Decimal('0'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
 
     orders, _ = state.get_orders()
@@ -520,7 +522,7 @@ def test_alt_currencies_edge_cases():
         BTCUSDC,
         exposure=Decimal('0.10005'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
 
     orders, _ = state.get_orders()
@@ -538,7 +540,7 @@ def test_alt_currencies_edge_cases():
         BTCUSDC,
         exposure=Decimal('0.10004'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
 
     orders, _ = state.get_orders()
@@ -552,7 +554,7 @@ def test_alt_currencies_edge_cases():
         BTCUSDC,
         exposure=Decimal('0'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
 
     orders, _ = state.get_orders()
@@ -576,7 +578,7 @@ def test_allocation_not_enough_balance():
         BTCUSDC,
         exposure=Decimal('0.2'),
         price=Decimal('10000'),
-        use_market_order=False
+        urgent=False
     )
 
     state.set_balances([
@@ -603,7 +605,7 @@ def test_expect_with_no_notional_limit_and_order_trades():
         ZUSDT.name,
         exposure=Decimal('0.1'),
         price=price,
-        use_market_order=False
+        urgent=False
     )
 
     assert exception is None
@@ -643,7 +645,7 @@ def test_expect_with_no_notional_limit_and_order_trades():
         ZUSDT.name,
         exposure=DECIMAL_ZERO,
         price=price,
-        use_market_order=False
+        urgent=False
     )
 
     orders, _ = state.get_orders()
@@ -658,3 +660,72 @@ def test_expect_with_no_notional_limit_and_order_trades():
     )
 
     assert not state._expected
+
+
+def test_custom_execution_strategy_resolver_and_track_order():
+    class CustomLimitStrategy(BaseExecutionStrategy):
+        def __init__(self):
+            self._created_count = 0
+            self._tracked_orders = []
+
+        @property
+        def created_count(self):
+            return self._created_count
+
+        @property
+        def tracked_orders(self):
+            return self._tracked_orders
+
+        def create_ticket(
+            self,
+            symbol,
+            quantity,
+            target,
+            side
+        ):
+            self._created_count += 1
+            return LimitOrderTicket(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=target.price,
+                time_in_force=TimeInForce.GTC
+            )
+
+        def track_order(self, order):
+            self._tracked_orders.append(order)
+
+    strategy = CustomLimitStrategy()
+    state = init_state(
+        execution_strategy_resolver=(
+            lambda target: (
+                strategy
+                if target.data.get('execution') == 'custom'
+                else None
+            )
+        )
+    )
+
+    state.expect(
+        BTCUSDT,
+        exposure=Decimal('0.3'),
+        price=Decimal('10000'),
+        urgent=True,
+        data={'execution': 'custom'}
+    )
+
+    orders, _ = state.get_orders()
+    order = orders.pop()
+
+    # urgent=True, but custom strategy still decides to place LIMIT order
+    assert order.ticket.type == OrderType.LIMIT
+    assert strategy.created_count == 1
+
+    state.update_order(
+        order,
+        filled_quantity=order.ticket.quantity,
+        quote_quantity=order.ticket.quantity * order.target.price,
+        status=OrderStatus.FILLED
+    )
+
+    assert strategy.tracked_orders == [order]

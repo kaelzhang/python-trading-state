@@ -195,7 +195,7 @@ class Trader:
                 BTCUSDT.name,
                 exposure=DECIMAL_ONE if buy else DECIMAL_ZERO,
                 price=price,
-                use_market_order=False
+                urgent=False
             )
 
             if exception is not None:

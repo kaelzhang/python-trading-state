@@ -13,8 +13,6 @@ from datetime import datetime
 from .enums import (
     OrderStatus,
     OrderSide,
-    TimeInForce,
-    MarketQuantityType,
     TradingStateEvent,
     PositionTargetStatus
 )
@@ -36,9 +34,11 @@ from .order import (
     OrderUpdatedType,
     OrderManager
 )
-from .order_ticket import (
-    LimitOrderTicket,
-    MarketOrderTicket
+from .execution import (
+    ExecutionStrategy,
+    ExecutionStrategyResolver,
+    DefaultExecutionStrategy,
+    consumed_base_quantity
 )
 from .target import (
     PositionTarget,
@@ -114,10 +114,17 @@ class TradingState(EventEmitter[TradingStateEvent]):
     _target_orders: FactoryDict[PositionTarget, Set[Order]]
 
     _orders: OrderManager
+    _default_execution_strategy: ExecutionStrategy
+    _execution_strategy_resolver: Optional[ExecutionStrategyResolver]
+    _order_execution_strategies: Dict[Order, ExecutionStrategy]
 
     def __init__(
         self,
-        config: TradingConfig
+        config: TradingConfig,
+        default_execution_strategy: Optional[ExecutionStrategy] = None,
+        execution_strategy_resolver: Optional[
+            ExecutionStrategyResolver
+        ] = None
     ) -> None:
         super().__init__()
 
@@ -134,6 +141,14 @@ class TradingState(EventEmitter[TradingStateEvent]):
             config.max_order_history_size,
             self._symbols
         )
+        self._default_execution_strategy = (
+            default_execution_strategy
+            if default_execution_strategy is not None
+            else DefaultExecutionStrategy()
+        )
+        self._execution_strategy_resolver = execution_strategy_resolver
+        self._order_execution_strategies = {}
+
         self._perf = PerformanceTracker(
             config,
             self._symbols,
@@ -403,7 +418,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         symbol_name: str, /,
         exposure: Decimal,
         price: Decimal,
-        use_market_order: bool,
+        urgent: bool,
         data: PositionTargetMetaData = {}
     ) -> ValueOrException[bool]:
         """
@@ -412,7 +427,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         Args:
             symbol_name (str): the name of the symbol to trade with
             exposure (Decimal): the limit exposure to expect, should be between `0.0` and `1.0`. The exposure refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
-            use_market_order (bool = False): whether to execute the expectation use_market_orderly, that it will generate a market order
+            urgent (bool): whether the order should be executed urgently. When no custom strategy is selected, default strategy uses market order for urgent targets and limit order for non-urgent targets.
             price (Decimal): the price to expect. For market order, it should be the estimated average price for the expected position target.
             data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
 
@@ -444,7 +459,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
             if (
                 open_target.exposure == exposure
                 and open_target.price == price
-                and open_target.use_market_order == use_market_order
+                and open_target.urgent == urgent
             ):
                 # If the target is the same, no need to update
                 # We treat it as a success
@@ -460,7 +475,7 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._expected[asset] = PositionTarget(
             symbol=symbol,
             exposure=exposure,
-            use_market_order=use_market_order,
+            urgent=urgent,
             price=price,
             data=data
         )
@@ -838,28 +853,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
             Decimal: the remaining base quantity relative to the target quantity
         """
 
-        price = target.price
-        quote_quantity = target_quantity * price
+        strategy = self._resolve_execution_strategy(target)
 
-        ticket = (
-            MarketOrderTicket(
-                symbol=symbol,
-                side=side,
-                quantity=quote_quantity,
-                # Use quote quantity 'quoteOrderQty' for market order
-                #   to avoid -2010 error as much as possible
-                quantity_type=MarketQuantityType.QUOTE,
-                estimated_price=price
-            )
-            if target.use_market_order
-            else LimitOrderTicket(
-                symbol=symbol,
-                side=side,
-                quantity=target_quantity,
-                price=price,
-                time_in_force=TimeInForce.GTC
-            )
+        ticket = strategy.create_ticket(
+            symbol,
+            target_quantity,
+            target,
+            side
         )
+
+        if ticket is None:
+            # Strategy decides to skip this tick.
+            return target_quantity
 
         exception, _ = symbol.apply_filters(
             ticket,
@@ -888,15 +893,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
         )
 
         self._orders.add(order)
+        self._order_execution_strategies[order] = strategy
 
         # Track the order for the position target
         self._target_orders[target].add(order)
 
-        return (
-            target_quantity - ticket.quantity / price
-            if target.use_market_order
-            else target_quantity - ticket.quantity
-        )
+        return target_quantity - consumed_base_quantity(ticket)
 
     def _on_order_status_updated(
         self,
@@ -924,6 +926,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if status.completed():
             self._perf.track_order(order)
 
+            # Keep strategy association at order level, so strategy selection
+            # is fully outside expect() and target definition.
+            strategy = self._order_execution_strategies.pop(
+                order,
+                None
+            )
+            if strategy is None:
+                strategy = self._resolve_execution_strategy(
+                    order.target
+                )
+            strategy.track_order(order)
+
         # So that the caller of trading state
         # can also listen to the changes of order status
         self.emit(TradingStateEvent.ORDER_STATUS_UPDATED, order, status)
@@ -938,6 +952,22 @@ class TradingState(EventEmitter[TradingStateEvent]):
             order,
             filled_quantity
         )
+
+    def _resolve_execution_strategy(
+        self,
+        target: PositionTarget
+    ) -> ExecutionStrategy:
+        resolver = self._execution_strategy_resolver
+
+        if resolver is None:
+            return self._default_execution_strategy
+
+        strategy = resolver(target)
+
+        if strategy is None:
+            return self._default_execution_strategy
+
+        return strategy
 
     def _on_performance_snapshot_recorded(
         self,

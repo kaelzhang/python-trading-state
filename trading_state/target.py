@@ -20,7 +20,7 @@ class PositionTarget:
     Args:
         symbol (Symbol): the symbol to trade with to achieve the position
         exposure (float): should between 0 and 1
-        use_market_order (bool): whether to trade use_market_order (market order)
+        urgent (bool): whether to execute urgently (usually with market orders in default strategy)
         price (Decimal): the price to trade at. For market order, it should be the estimated average price for
         data (dict[str, Any]): the meta data of the position
 
@@ -34,7 +34,7 @@ class PositionTarget:
                 ...
             ),
             exposure=1.0,
-            use_market_order=True,
+            urgent=True,
             price=None,
             data={}
         )
@@ -45,7 +45,7 @@ class PositionTarget:
     __slots__ = (
         'symbol',
         'exposure',
-        'use_market_order',
+        'urgent',
         'price',
         'data',
         'status'
@@ -53,7 +53,7 @@ class PositionTarget:
 
     symbol: Symbol
     exposure: Decimal
-    use_market_order: bool
+    urgent: bool
     price: Decimal
     data: PositionTargetMetaData
     status: PositionTargetStatus
@@ -62,13 +62,13 @@ class PositionTarget:
         self,
         symbol: Symbol,
         exposure: Decimal,
-        use_market_order: bool,
+        urgent: bool,
         price: Decimal,
         data: PositionTargetMetaData
     ) -> None:
         self.symbol = symbol
         self.exposure = exposure
-        self.use_market_order = use_market_order
+        self.urgent = urgent
         self.price = price
         self.data = data
         self.status = PositionTargetStatus.INIT
@@ -79,7 +79,7 @@ class PositionTarget:
             main='symbol',
             keys=[
                 'exposure',
-                'use_market_order',
+                'urgent',
                 'price',
                 'status'
             ]
