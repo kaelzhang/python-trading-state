@@ -31,6 +31,7 @@ from .exceptions import (
     ValuationNotAvailableError,
     BalanceNotReadyError,
     FeatureNotAllowedError,
+    InvalidExchangeData,
 )
 
 from .filters import (

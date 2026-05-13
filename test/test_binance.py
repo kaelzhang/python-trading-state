@@ -5,6 +5,7 @@ import pytest
 
 from trading_state import (
     FeatureType,
+    InvalidExchangeData,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -43,14 +44,12 @@ from trading_state.enums import MarketQuantityType
 
 
 def test_timestamp_to_datetime_ms_epoch():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream
     timestamp_ms = 1499827319559
     expected = datetime.fromtimestamp(timestamp_ms / 1000)
     assert timestamp_to_datetime(timestamp_ms) == expected
 
 
 def test_decode_account_update_event():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream
     payload = {
         "u": 1564034571073,
         "B": [
@@ -58,7 +57,8 @@ def test_decode_account_update_event():
             {"a": "BTC", "f": "1.23456789", "l": "0.000000"},
         ],
     }
-    balances = decode_account_update_event(payload)
+    exc, balances = decode_account_update_event(payload)
+    assert exc is None
     assert len(balances) == 2
     assets = {balance.asset for balance in balances}
     assert assets == {"ETH", "BTC"}
@@ -66,17 +66,91 @@ def test_decode_account_update_event():
         assert balance.time == timestamp_to_datetime(payload["u"])
 
 
+def test_decode_account_update_event_missing_field():
+    exc, value = decode_account_update_event({"B": []})
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+    assert 'event_time' in str(exc)
+
+
+def test_decode_account_update_event_negative_free():
+    exc, value = decode_account_update_event({
+        "u": 1,
+        "B": [{"a": "ETH", "f": "-1.0", "l": "0"}],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_account_update_event_invalid_decimal():
+    exc, value = decode_account_update_event({
+        "u": 1,
+        "B": [{"a": "ETH", "f": "not-a-number", "l": "0"}],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+@pytest.mark.parametrize('drop_key', ['B', 'a', 'f', 'l'])
+def test_decode_account_update_event_missing_inner_field(drop_key):
+    base = {
+        "u": 1,
+        "B": [{"a": "ETH", "f": "1", "l": "0"}],
+    }
+    if drop_key == 'B':
+        del base['B']
+    else:
+        del base['B'][0][drop_key]
+    exc, value = decode_account_update_event(base)
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_account_update_event_invalid_locked():
+    exc, value = decode_account_update_event({
+        "u": 1,
+        "B": [{"a": "ETH", "f": "1", "l": "-2"}],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
 def test_decode_balance_update_event():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream
     payload = {"a": "BTC", "d": "100.00000000", "T": 1573200697068}
-    cash_flow = decode_balance_update_event(payload)
+    exc, cash_flow = decode_balance_update_event(payload)
+    assert exc is None
     assert cash_flow.asset == "BTC"
     assert cash_flow.quantity == Decimal("100.00000000")
     assert cash_flow.time == timestamp_to_datetime(payload["T"])
 
 
+def test_decode_balance_update_event_allows_negative_delta():
+    """d is a signed delta — negative is legal (withdrawal)."""
+    exc, cash_flow = decode_balance_update_event(
+        {"a": "BTC", "d": "-5.5", "T": 1573200697068},
+    )
+    assert exc is None
+    assert cash_flow.quantity == Decimal("-5.5")
+
+
+@pytest.mark.parametrize('drop_key', ['a', 'd', 'T'])
+def test_decode_balance_update_event_missing_field(drop_key):
+    payload = {"a": "BTC", "d": "1", "T": 1}
+    del payload[drop_key]
+    exc, value = decode_balance_update_event(payload)
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_balance_update_event_invalid_decimal():
+    exc, value = decode_balance_update_event({
+        "a": "BTC", "d": "not-a-decimal", "T": 1,
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
 def test_decode_account_info_response():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/testnet/rest-api/account-endpoints
     account_info = {
         "updateTime": 123456789,
         "balances": [
@@ -84,17 +158,54 @@ def test_decode_account_info_response():
             {"asset": "LTC", "free": "4763368.68006011", "locked": "0.00000000"},
         ],
     }
-    balances = decode_account_info_response(account_info)
+    exc, balances = decode_account_info_response(account_info)
+    assert exc is None
     assets = {balance.asset for balance in balances}
     assert assets == {"BTC", "LTC"}
     for balance in balances:
         assert balance.time == timestamp_to_datetime(account_info["updateTime"])
 
 
+def test_decode_account_info_response_missing_field():
+    exc, value = decode_account_info_response({"balances": []})
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_account_info_response_negative_locked():
+    exc, value = decode_account_info_response({
+        "updateTime": 1,
+        "balances": [{"asset": "BTC", "free": "1", "locked": "-1"}],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+@pytest.mark.parametrize('drop_key', ['balances', 'asset', 'free', 'locked'])
+def test_decode_account_info_response_missing_inner_field(drop_key):
+    base = {
+        "updateTime": 1,
+        "balances": [{"asset": "BTC", "free": "1", "locked": "0"}],
+    }
+    if drop_key == 'balances':
+        del base['balances']
+    else:
+        del base['balances'][0][drop_key]
+    exc, value = decode_account_info_response(base)
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_account_info_response_negative_free():
+    exc, value = decode_account_info_response({
+        "updateTime": 1,
+        "balances": [{"asset": "BTC", "free": "-1", "locked": "0"}],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
 def test_decode_exchange_info_response():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/testnet/rest-api/general-endpoints
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/filters
-    # Ref: https://developers.binance.info/docs/binance-spot-api-docs/CHANGELOG
     exchange_info = {
         "symbols": [
             {
@@ -168,7 +279,8 @@ def test_decode_exchange_info_response():
         ]
     }
 
-    symbols = decode_exchange_info_response(exchange_info)
+    exc, symbols = decode_exchange_info_response(exchange_info)
+    assert exc is None
     assert len(symbols) == 1
     symbol = next(iter(symbols))
     assert symbol.name == "BTCUSDT"
@@ -208,8 +320,54 @@ def test_decode_exchange_info_response():
     assert NotionalFilter in filter_types
 
 
+def test_decode_exchange_info_response_missing_symbols():
+    exc, value = decode_exchange_info_response({})
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_exchange_info_response_symbol_missing_field():
+    exc, value = decode_exchange_info_response({"symbols": [{"symbol": "X"}]})
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_exchange_info_response_precision_invalid():
+    exc, value = decode_exchange_info_response({
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "baseAsset": "BTC",
+                "quoteAsset": "USDT",
+                "baseAssetPrecision": "not-an-int",
+                "quoteAssetPrecision": 8,
+            },
+        ],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_exchange_info_response_filter_invalid():
+    exc, value = decode_exchange_info_response({
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "baseAsset": "BTC",
+                "quoteAsset": "USDT",
+                "baseAssetPrecision": 8,
+                "quoteAssetPrecision": 8,
+                "filters": [
+                    {"filterType": "PRICE_FILTER"},  # missing fields
+                ],
+            },
+        ],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
 def test_encode_order_request_limit():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
     symbol = Symbol("BTCUSDT", "BTC", "USDT")
     ticket = LimitOrderTicket(
         symbol=symbol,
@@ -218,7 +376,8 @@ def test_encode_order_request_limit():
         price=Decimal("100"),
         time_in_force=TimeInForce.GTC,
     )
-    payload = encode_order_request(ticket)
+    exc, payload = encode_order_request(ticket)
+    assert exc is None
     assert payload["symbol"] == "BTCUSDT"
     assert payload["side"] == OrderSide.BUY
     assert payload["type"] == OrderType.LIMIT
@@ -229,7 +388,6 @@ def test_encode_order_request_limit():
 
 
 def test_encode_order_request_market_base_and_quote():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
     symbol = Symbol("BTCUSDT", "BTC", "USDT")
     base_ticket = MarketOrderTicket(
         symbol=symbol,
@@ -238,7 +396,8 @@ def test_encode_order_request_market_base_and_quote():
         quantity_type=MarketQuantityType.BASE,
         estimated_price=Decimal("10000"),
     )
-    base_payload = encode_order_request(base_ticket)
+    exc, base_payload = encode_order_request(base_ticket)
+    assert exc is None
     assert "quantity" in base_payload
     assert "quoteOrderQty" not in base_payload
 
@@ -249,13 +408,13 @@ def test_encode_order_request_market_base_and_quote():
         quantity_type=MarketQuantityType.QUOTE,
         estimated_price=Decimal("10000"),
     )
-    quote_payload = encode_order_request(quote_ticket)
+    exc, quote_payload = encode_order_request(quote_ticket)
+    assert exc is None
     assert "quoteOrderQty" in quote_payload
     assert "quantity" not in quote_payload
 
 
 def test_encode_order_request_unsupported():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
     symbol = Symbol("BTCUSDT", "BTC", "USDT")
     ticket = StopLossOrderTicket(
         symbol=symbol,
@@ -263,22 +422,26 @@ def test_encode_order_request_unsupported():
         quantity=Decimal("1"),
         stop_price=Decimal("9000"),
     )
-    with pytest.raises(ValueError, match="Unsupported order ticket"):
-        encode_order_request(ticket)
+    exc, payload = encode_order_request(ticket)
+    assert payload is None
+    assert isinstance(exc, InvalidExchangeData)
+    assert 'unsupported' in str(exc).lower()
 
 
 def test_decode_order_status():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
-    assert _decode_order_status("FILLED") == OrderStatus.FILLED
-    assert _decode_order_status("CANCELED") == OrderStatus.CANCELLED
-    assert _decode_order_status("PARTIALLY_FILLED") == OrderStatus.CREATED
-    assert _decode_order_status("NEW") == OrderStatus.CREATED
-    assert _decode_order_status("EXPIRED") == OrderStatus.CANCELLED
-    assert _decode_order_status("UNKNOWN") is None
+    assert _decode_order_status("FILLED")[1] == OrderStatus.FILLED
+    assert _decode_order_status("CANCELED")[1] == OrderStatus.CANCELLED
+    assert _decode_order_status("PARTIALLY_FILLED")[1] == OrderStatus.CREATED
+    assert _decode_order_status("NEW")[1] == OrderStatus.CREATED
+    assert _decode_order_status("EXPIRED")[1] == OrderStatus.CANCELLED
+    assert _decode_order_status("REJECTED")[1] == OrderStatus.REJECTED
+
+    exc, value = _decode_order_status("UNKNOWN")
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
 
 
 def test_decode_order_create_response_without_fills():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
     response = {
         "status": "FILLED",
         "clientOrderId": "6gCrw2kRUAF9CvJDGP16IP",
@@ -287,10 +450,13 @@ def test_decode_order_create_response_without_fills():
         "cummulativeQuoteQty": "10.00000000",
         "fills": [],
     }
-    updates = decode_order_create_response(response)
+    exc, updates = decode_order_create_response(response)
+    assert exc is None
     assert updates["status"] == OrderStatus.FILLED
     assert updates["id"] == response["clientOrderId"]
-    assert updates["created_at"] == datetime.fromtimestamp(response["transactTime"] / 1000)
+    assert updates["created_at"] == datetime.fromtimestamp(
+        response["transactTime"] / 1000
+    )
     assert updates["filled_quantity"] == Decimal("10.00000000")
     assert updates["quote_quantity"] == Decimal("10.00000000")
     assert "commission_asset" not in updates
@@ -298,7 +464,6 @@ def test_decode_order_create_response_without_fills():
 
 
 def test_decode_order_create_response_with_fills():
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
     response = {
         "status": "FILLED",
         "clientOrderId": "abc123",
@@ -310,9 +475,67 @@ def test_decode_order_create_response_with_fills():
             {"commission": "0.20000000", "commissionAsset": "USDT"},
         ],
     }
-    updates = decode_order_create_response(response)
+    exc, updates = decode_order_create_response(response)
+    assert exc is None
     assert updates["commission_asset"] == "USDT"
     assert updates["commission_quantity"] == Decimal("0.30000000")
+
+
+def test_decode_order_create_response_missing_field():
+    exc, value = decode_order_create_response({"status": "FILLED"})
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_create_response_unknown_status():
+    exc, value = decode_order_create_response({
+        "status": "WTF",
+        "clientOrderId": "x",
+        "transactTime": 1,
+        "executedQty": "0",
+        "cummulativeQuoteQty": "0",
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_create_response_commission_without_asset():
+    exc, value = decode_order_create_response({
+        "status": "FILLED",
+        "clientOrderId": "x",
+        "transactTime": 1,
+        "executedQty": "1",
+        "cummulativeQuoteQty": "10",
+        "fills": [
+            {"commission": "0.5"},  # no commissionAsset
+        ],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_create_response_negative_qty():
+    exc, value = decode_order_create_response({
+        "status": "FILLED",
+        "clientOrderId": "x",
+        "transactTime": 1,
+        "executedQty": "-1",
+        "cummulativeQuoteQty": "10",
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_create_response_invalid_decimal():
+    exc, value = decode_order_create_response({
+        "status": "FILLED",
+        "clientOrderId": "x",
+        "transactTime": 1,
+        "executedQty": "1",
+        "cummulativeQuoteQty": "not-a-decimal",
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
 
 
 @pytest.mark.parametrize(
@@ -324,7 +547,6 @@ def test_decode_order_create_response_with_fills():
     ],
 )
 def test_decode_order_update_event(status, expect_status_key):
-    # Ref: https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream
     payload = {
         "X": status,
         "c": "client-1",
@@ -334,7 +556,9 @@ def test_decode_order_update_event(status, expect_status_key):
         "n": "0.00000000",
         "T": 1499405658657,
     }
-    client_id, updates = decode_order_update_event(payload)
+    exc, decoded = decode_order_update_event(payload)
+    assert exc is None
+    client_id, updates = decoded
     assert client_id == "client-1"
     assert updates["filled_quantity"] == Decimal("1.00000000")
     assert updates["quote_quantity"] == Decimal("100.00000000")
@@ -342,3 +566,119 @@ def test_decode_order_update_event(status, expect_status_key):
     assert updates["commission_quantity"] == Decimal("0.00000000")
     assert updates["updated_at"] == timestamp_to_datetime(payload["T"])
     assert ("status" in updates) is expect_status_key
+
+
+def test_decode_order_update_event_missing_field():
+    exc, value = decode_order_update_event({"X": "FILLED"})
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_update_event_unknown_status():
+    exc, value = decode_order_update_event({
+        "c": "c",
+        "X": "UNKNOWN",
+        "z": "0",
+        "Z": "0",
+        "n": "0",
+        "T": 1,
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_update_event_commission_without_asset():
+    exc, value = decode_order_update_event({
+        "c": "c",
+        "X": "FILLED",
+        "z": "1",
+        "Z": "10",
+        "N": None,
+        "n": "0.5",
+        "T": 1,
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+@pytest.mark.parametrize('drop_key', ['c', 'X', 'z', 'Z', 'n', 'T'])
+def test_decode_order_update_event_missing_each_field(drop_key):
+    payload = {
+        "c": "c",
+        "X": "FILLED",
+        "z": "1",
+        "Z": "10",
+        "N": "USDT",
+        "n": "0",
+        "T": 1,
+    }
+    del payload[drop_key]
+    exc, value = decode_order_update_event(payload)
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+@pytest.mark.parametrize('field_key,new_value', [
+    ('z', 'not-a-decimal'),
+    ('Z', 'not-a-decimal'),
+    ('n', '-0.5'),
+])
+def test_decode_order_update_event_invalid_decimals(field_key, new_value):
+    payload = {
+        "c": "c",
+        "X": "FILLED",
+        "z": "1",
+        "Z": "10",
+        "N": "USDT",
+        "n": "0",
+        "T": 1,
+    }
+    payload[field_key] = new_value
+    exc, value = decode_order_update_event(payload)
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+@pytest.mark.parametrize('drop_key', [
+    'status', 'clientOrderId', 'transactTime',
+    'executedQty', 'cummulativeQuoteQty',
+])
+def test_decode_order_create_response_missing_each_field(drop_key):
+    payload = {
+        "status": "FILLED",
+        "clientOrderId": "x",
+        "transactTime": 1,
+        "executedQty": "1",
+        "cummulativeQuoteQty": "10",
+    }
+    del payload[drop_key]
+    exc, value = decode_order_create_response(payload)
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_create_response_invalid_fill_commission():
+    exc, value = decode_order_create_response({
+        "status": "FILLED",
+        "clientOrderId": "x",
+        "transactTime": 1,
+        "executedQty": "1",
+        "cummulativeQuoteQty": "10",
+        "fills": [
+            {"commission": "not-a-decimal", "commissionAsset": "USDT"},
+        ],
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_create_response_negative_quote():
+    exc, value = decode_order_create_response({
+        "status": "FILLED",
+        "clientOrderId": "x",
+        "transactTime": 1,
+        "executedQty": "1",
+        "cummulativeQuoteQty": "-10",
+    })
+    assert value is None
+    assert isinstance(exc, InvalidExchangeData)

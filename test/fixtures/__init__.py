@@ -70,7 +70,9 @@ def get_symbols() -> Symbols:
         return symbols
 
     exchange_info = load_exchange_info()
-    for symbol in decode_exchange_info_response(exchange_info):
+    exc, decoded = decode_exchange_info_response(exchange_info)
+    assert exc is None, f'fixture exchange_info failed to decode: {exc}'
+    for symbol in decoded:
         symbols[symbol.name] = symbol
 
     return symbols

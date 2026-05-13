@@ -82,3 +82,16 @@ class FeatureNotAllowedError(Exception):
 
         self.symbol = symbol
         self.feature = feature
+
+
+class InvalidExchangeData(Exception):
+    """
+    Raised at the protocol-adapter boundary when a decoded payload
+    fails internal sanity checks (missing required field, negative
+    quantity, commission with no asset, etc.).
+
+    Never raised inside `trading_state.state`. Always carried back
+    through `ValueOrException` from `trading_state.binance.*`
+    decoders / encoders so callers cannot accidentally drop it.
+    """
+
