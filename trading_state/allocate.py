@@ -1,13 +1,21 @@
-from typing import (
-    Callable, List
-)
+"""
+Allocation algorithms used by state.allocate() to split a single base
+asset quantity across multiple account-currency symbols according to
+caller-configured weights, while respecting per-bucket free balances
+(BUY) and per-bucket exchange filters.
+
+The math is the same as before; the orchestration changed: the
+`assign` callback used to be wired into state.update_order, now it is
+"build a child ticket, run filters, append on success, return leftover
+on failure".
+"""
+
+from typing import Callable, List
 
 from bisect import bisect_left
 from decimal import Decimal
 
 from .symbol import Symbol
-from .target import PositionTarget
-from .enums import OrderSide
 from .common import DECIMAL_ZERO
 
 
@@ -23,7 +31,8 @@ class AllocationResource:
         self.weight = weight
 
 
-Assigner = Callable[[Symbol, Decimal, PositionTarget, OrderSide], Decimal]
+# (symbol, base_quantity) -> leftover_base_quantity_to_redistribute
+Assigner = Callable[[Symbol, Decimal], Decimal]
 
 
 """
@@ -38,10 +47,11 @@ Terminology:
    RVj | ret              | the volume returned by the `assign` method
 """
 
+
 def buy_allocate(
     resources: List[AllocationResource],
     take: Decimal,
-    target: PositionTarget,
+    reference_price: Decimal,
     assign: Assigner,
 ) -> None:
     n = len(resources)
@@ -72,12 +82,8 @@ def buy_allocate(
     total_cap = sum(caps_sorted)  # Σ Sj over active buckets
     total_w = sum(w_sorted)       # Σ Wj over active buckets
 
-    price = target.price
-
-    # Remaining target V (updates after each poured bucket)
-
     # `take` is for base quantity, so we need to convert it to quote quantity
-    remaining = take * price
+    remaining = take * reference_price
 
     while k < n and remaining > 0:
         # Pour all water from each bucket.
@@ -88,9 +94,7 @@ def buy_allocate(
                 assign(
                     resources[t].symbol,
                     # For BUY, must be positive
-                    caps_sorted[t] / price,
-                    target,
-                    OrderSide.BUY
+                    caps_sorted[t] / reference_price,
                 )
             break # End
 
@@ -117,10 +121,8 @@ def buy_allocate(
 
                 compensate = assign(
                     resources[t].symbol,
-                    pour / price,
-                    target,
-                    OrderSide.BUY
-                ) * price
+                    pour / reference_price,
+                ) * reference_price
 
             break # End
 
@@ -133,10 +135,8 @@ def buy_allocate(
             # Remaining target update: V := V - (Vj - RVj)
             remaining -= pour - assign(
                 resources[t].symbol,
-                pour / price,
-                target,
-                OrderSide.BUY
-            )  * price
+                pour / reference_price,
+            ) * reference_price
 
             # Remove this bucket from future rounds
             # (each bucket is poured only once).
@@ -150,7 +150,6 @@ def buy_allocate(
 def sell_allocate(
     resources: List[AllocationResource],
     take: Decimal,
-    target: PositionTarget,
     assign: Assigner,
 ) -> None:
     total_w = sum(resource.weight for resource in resources)
@@ -163,6 +162,4 @@ def sell_allocate(
             resource.symbol,
             # We do not need to check caps for SELL
             compensate + (take * resource.weight) / total_w,
-            target,
-            OrderSide.SELL
         )

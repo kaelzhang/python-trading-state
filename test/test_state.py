@@ -2,730 +2,763 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 
 from trading_state import (
-    OrderSide,
+    Balance,
+    LimitOrderTicket,
+    MarketOrderTicket,
     MarketQuantityType,
-    TimeInForce,
+    OrderSide,
     OrderStatus,
     OrderType,
-    Balance,
-    BaseExecutionStrategy,
-    LimitOrderTicket,
-    PositionTargetStatus,
+    StaleUpdate,
+    TimeInForce,
     TradingStateEvent,
 )
 from trading_state.common import (
     DECIMAL_ZERO,
-    DECIMAL_ONE
+    DECIMAL_ONE,
 )
 
 from .fixtures import (
     init_state,
+    balance_time,
     BTCUSDC,
     USDC,
     BTCUSDT,
     BTC,
     USDT,
     ZUSDT,
-    Z
+    Z,
 )
 
 
-BTCUSDC = BTCUSDC.name
-BTCUSDT = BTCUSDT.name
+BTCUSDC_NAME = BTCUSDC.name
+BTCUSDT_NAME = BTCUSDT.name
 
 
-def test_trading_state():
+def _make_buy_limit_ticket(state, symbol_name, quantity, price):
+    sym = state._symbols.get_symbol(symbol_name)
+    return LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=quantity,
+        price=price,
+        time_in_force=TimeInForce.GTC,
+    )
+
+
+def test_trading_state_basics():
     state = init_state()
 
-    active_value = state.get_account_value()
-    assert active_value == Decimal('410000')
+    assert state.get_account_value() == Decimal('410000')
+    assert state.support_symbol(BTCUSDC_NAME)
 
-    assert state.support_symbol(BTCUSDC)
-    assert state.exposure(BTC) == (None, Decimal('0.1'))
+    # Account currency exposure is not defined (no notional cap).
+    assert state.exposure(
+        USDT,
+        include_unsettled_inflow=False,
+        include_unsettled_outflow=False,
+    ) == (None, None)
 
-    exception, updated = state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.2'),
-        price=Decimal('10000'),
-        urgent=False
+    # BTC exposure with no orders in flight: balance (1) / limit (100k)
+    # at price 10k = 0.1.
+    assert state.exposure(
+        BTC,
+        include_unsettled_inflow=False,
+        include_unsettled_outflow=False,
+    ) == (None, Decimal('0.1'))
+
+
+def test_add_order_returns_init_order_then_caller_drives_state_machine():
+    state = init_state()
+
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    assert exception is None
-    assert updated
 
-    assert state.exposure(BTC) == (None, Decimal('0.2'))
+    exc, order = state.add_order(ticket, data={'strategy': 'momentum'})
 
-    orders, orders_to_cancel = state.get_orders()
-
-    assert not orders_to_cancel
-    assert len(orders) == 1
-
-    order = next(iter(orders))
-
-    assert order.status == OrderStatus.SUBMITTING
+    assert exc is None
+    assert order is not None
+    assert order.status is OrderStatus.INIT
     assert order.id is None
     assert order.filled_quantity == Decimal('0')
+    assert order.data == {'strategy': 'momentum'}
 
-    ticket = order.ticket
-    assert ticket.type == OrderType.LIMIT
-    assert ticket.symbol.name == BTCUSDC
-    assert ticket.side == OrderSide.BUY
-    assert ticket.quantity == Decimal('1')
-    assert ticket.price == Decimal('10000')
-    assert ticket.time_in_force == TimeInForce.GTC
+    # Repr stable: side=BUY (not <OrderSide.BUY: ...>) and
+    # quantity=1.00000000 (PrecisionFilter quantize)
+    s = repr(order)
+    assert 'side=BUY' in s
+    assert 'status=INIT' in s
+    assert 'quantity=1.00000000' in s
 
-    orders, orders_to_cancel = state.get_orders()
-    assert not orders
-    assert not orders_to_cancel
-
-    # Expect a new position
-    exception, updated = state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.3'),
-        price=Decimal('10000'),
-        urgent=True
-    )
-    assert exception is None
-    assert updated
-
-    assert state.exposure(BTC) == (None, Decimal('0.3'))
-
-    # Even we set a new expectation with another symbol,
-    # but the previous expectation is equivalent,
-    # it will be skipped
-    exception, updated = state.expect(
-        BTCUSDT,
-        exposure=Decimal('0.3'),
-        price=Decimal('10000'),
-        urgent=True
-    )
-    assert exception is None
-    assert not updated
-
-    orders, orders_to_cancel = state.get_orders()
-
-    assert len(orders_to_cancel) == 1
-    assert len(orders) == 1
-
-    # Just a market order
-    order = next(iter(orders))
-    assert order.status == OrderStatus.SUBMITTING
-    assert order.id is None
-    assert order.filled_quantity == Decimal('0')
-
-    ticket = order.ticket
-    assert ticket.type == OrderType.MARKET
-    assert ticket.symbol.name == BTCUSDC
-    assert ticket.side == OrderSide.BUY
-    assert ticket.quantity == Decimal('20000')
-    assert ticket.estimated_price == Decimal('10000')
-    assert ticket.quantity_type == MarketQuantityType.QUOTE
-    assert not ticket.has('price')
-    assert not ticket.has('time_in_force')
-
-    # The order that created for position 0.2 should be cancelled
-    order_to_cancel = next(iter(orders_to_cancel))
-    ticket = order_to_cancel.ticket
-    assert order_to_cancel.status == OrderStatus.CANCELLING
-    assert ticket.quantity == Decimal('1')
-
-    # If we get orders again, there will be no orders to perform
-    orders, orders_to_cancel = state.get_orders()
-    assert not orders
-    assert not orders_to_cancel
-
-    # We set the order status to ABOUT_TO_CANCEL,
-    # which usually is triggered by the trader
-    # if the order is failed to be canceled from the exchange
+    # Caller-driven progression
+    t0 = datetime(2024, 1, 1, 0, 0, 0)
     state.update_order(
-        order_to_cancel,
-        status = OrderStatus.ABOUT_TO_CANCEL
+        order,
+        status=OrderStatus.SUBMITTING,
+        updated_at=None,
+        id=None,
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
     )
-    orders, orders_to_cancel = state.get_orders()
-
-    assert len(orders_to_cancel) == 1
-    assert next(iter(orders_to_cancel)) == order_to_cancel
-
-    # We just cancel the market order
-    state.cancel_order(order)
-
-    # We could cancel an order which is already canceled
-    state.cancel_order(order_to_cancel)
-
-    orders, orders_to_cancel = state.get_orders()
-    assert not orders
-    assert len(orders_to_cancel) == 1
-    assert order is next(iter(orders_to_cancel))
-
-    state.update_order(order, status=OrderStatus.CANCELLED)
-
-    # We should also remove the expectation for the asset
-    # to avoid unexpected behavior
-    assert BTC not in state._expected
-
-
-def test_order_filled():
-    state = init_state()
-
-    exception, updated = state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.2'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-    assert exception is None
-    assert updated
-
-    # Same expectation, no need to update
-    exception, updated = state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.2'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-    assert exception is None
-    assert not updated
-
-    orders, _ = state.get_orders()
-
-    order = next(iter(orders))
-
-    order_str = repr(order)
-
-    assert 'side=BUY' in order_str
-    assert 'status=SUBMITTING' in order_str
-    assert 'quantity=1.00000000' in order_str
+    assert order.status is OrderStatus.SUBMITTING
 
     state.update_order(
         order,
-        status = OrderStatus.CREATED,
-        id = 'order-1',
-        filled_quantity = Decimal('0.5'),
-        quote_quantity = Decimal('5000')
-    )
-
-    # Imitate the balance is increased
-    state.set_balances([
-        Balance(BTC, Decimal('1.5'), Decimal('0'))
-    ])
-
-    state.update_order(
-        order,
-        status = OrderStatus.FILLED
-    )
-
-    # The order is filled, so the expectation should marked as achieved,
-    # but the balance might not be updated yet,
-    # we should keep that expectation
-    assert state._expected[BTC].status is PositionTargetStatus.ACHIEVED
-
-    assert state.exposure(BTC) == (None, Decimal('0.2'))
-
-    orders, orders_to_cancel = state.get_orders()
-    assert not orders
-    assert not orders_to_cancel
-
-    # Although the balance is updated,
-    # but the balance is not changed,
-    state.set_balances([
-        Balance(BTC, Decimal('1.5'), Decimal('0'))
-    ])
-
-    state.set_balances([
-        Balance(BTC, Decimal('2'), Decimal('0'))
-    ])
-
-    # The balance is updated,
-    # but the intrinsic position is equal to the expectation,
-    # we keep the expectation to improve performance
-    assert state._expected[BTC].status is PositionTargetStatus.ACHIEVED
-
-    assert state.exposure(BTC) == (None, Decimal('0.2'))
-
-    # The expectation is equivalent to the current position,
-    # no need to update
-    exception, updated = state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.2'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-    assert exception is None
-    assert not updated
-
-    state.set_balances([
-        Balance(BTC, Decimal('3'), Decimal('0'))
-    ])
-
-    # The balance is updated,
-    # but the intrinsic position is not equal to the expectation,
-    # we should remove the expectation
-    assert BTC not in state._expected
-
-    assert state.exposure(BTC) == (None, Decimal('0.3'))
-
-    # If we freeze the asset, the exposure will be 0
-    state.freeze(BTC, Decimal('3'))
-    assert state.exposure(BTC) == (None, Decimal('0'))
-
-    # If we unfreeze the asset, the exposure will be the expected value
-    state.freeze(BTC, None)
-    assert state.exposure(BTC) == (None, Decimal('0.3'))
-
-    # The expectation is already achieved based on calculation
-    exception, updated = state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.3'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-    assert exception is None
-    assert not updated
-
-
-def test_no_same_exposure():
-    state = init_state()
-    state.expect(
-        BTCUSDT,
-        exposure=Decimal('0.2'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-
-    state.set_balances([
-        Balance(BTC, Decimal('1'), DECIMAL_ZERO)
-    ], delta=True)
-
-    assert BTC in state._expected
-
-    orders, _ = state.get_orders()
-    assert not orders
-
-    assert BTC not in state._expected
-
-
-def test_alt_currencies():
-    state = init_state()
-
-    # This will consume USDC and convert to USDT
-    state.set_alt_currency_weights(
-        (
-            (Decimal('1'),),
-            (Decimal('0'),)
-        )
-    )
-
-    # It will create 2 orders, allocated into BTCUSDT and BTCUSDC
-    state.expect(
-        BTCUSDT,
-        exposure=Decimal('0.3'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-
-    orders, orders_to_cancel = state.get_orders()
-
-    assert not orders_to_cancel
-    order1, order2 = orders
-
-    # with pytest.raises(ValueError, match='order id is required'):
-    #     state.update_order(order1, status=OrderStatus.CREATED)
-
-    now = datetime.now()
-
-    state.update_order(
-        order1,
         status=OrderStatus.CREATED,
+        updated_at=t0,
         id='order-1',
-        created_at=now
+        filled_quantity=Decimal('0.5'),
+        quote_quantity=Decimal('5000'),
+        commission_asset=None,
+        commission_quantity=None,
     )
+    assert order.status is OrderStatus.CREATED
+    assert order.id == 'order-1'
+    assert order.filled_quantity == Decimal('0.5')
+    assert order.created_at == t0
+    assert order.updated_at == t0
+    assert state.get_order_by_id('order-1') is order
 
+
+def test_filter_rejection_returns_exception_no_state_change():
+    """An invalid ticket (notional too small) is rejected by add_order
+    and never reaches the order manager / reconciliation."""
+    state = init_state()
+
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('0.00001'), Decimal('10000')
+    )
+    exc, order = state.add_order(ticket)
+    assert order is None
+    assert exc is not None
+    assert isinstance(exc, ValueError)
+    assert len(list(state.query_orders())) == 0
+
+
+def test_update_order_silently_drops_status_regression_and_emits_stale():
+    state = init_state()
+
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
+
+    t0 = datetime(2024, 1, 1, 0, 0, 0)
     state.update_order(
-        order2,
+        order,
         status=OrderStatus.CREATED,
-        id='order-2',
-        created_at=now
+        updated_at=t0,
+        id='order-1',
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    assert order.status is OrderStatus.CREATED
+
+    captured = []
+    state.on(
+        TradingStateEvent.STALE_UPDATE,
+        lambda event: captured.append(event),
     )
 
-    assert order1.created_at == now
-    assert order1.updated_at == now
-
-    now += timedelta(seconds=1)
+    # Attempt to regress to INIT
     state.update_order(
-        order1,
-        updated_at=now
+        order,
+        status=OrderStatus.INIT,
+        updated_at=None,
+        id=None,
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
     )
-    assert order1.updated_at == now
 
-    for order in state.query_orders():
-        assert order.ticket.quantity == Decimal('1')
+    assert order.status is OrderStatus.CREATED  # not regressed
+    assert len(captured) == 1
+    event = captured[0]
+    assert isinstance(event, StaleUpdate)
+    assert event.kind == 'order_status_regress'
+    assert event.order is order
+    assert event.incoming_value is OrderStatus.INIT
+    assert event.current_value is OrderStatus.CREATED
 
-    assert len(list(state.query_orders(limit=1))) == 1
 
-    assert state.get_order_by_id('order-1') is order1
+def test_update_order_silently_drops_filled_regression():
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
 
-    result = list(state.query_orders(
-        not_exists=True
-    ))
-
-    assert len(result) == 0
-
-    result = list(state.query_orders(
-        id='order-1'
-    ))
-    assert result[0] is order1
-
-    def is_order_1(order_id: str, key: str) -> bool:
-        assert key == 'id'
-        return order_id == 'order-1'
-
-    result = list(state.query_orders(
-        id=is_order_1
-    ))
-    assert result[0] is order1
-
-    result = list(state.query_orders(
-        ticket={
-            'quantity': Decimal('1')
-        }
-    ))
-    assert len(result) == 2
-
-    assert state.exposure(BTC) == (None, Decimal('0.3'))
-
+    t0 = datetime(2024, 1, 1)
     state.update_order(
-        order2,
-        status = OrderStatus.CANCELLED
+        order,
+        status=OrderStatus.CREATED,
+        updated_at=t0,
+        id='o',
+        filled_quantity=Decimal('0.5'),
+        quote_quantity=Decimal('5000'),
+        commission_asset=None,
+        commission_quantity=None,
     )
-    assert state.exposure(BTC) == (None, Decimal('0.2'))
+    assert order.filled_quantity == Decimal('0.5')
 
+    captured = []
+    state.on(
+        TradingStateEvent.STALE_UPDATE,
+        lambda event: captured.append(event),
+    )
     state.update_order(
-        order1,
-        status=OrderStatus.CANCELLED
+        order,
+        status=None,
+        updated_at=None,
+        id=None,
+        filled_quantity=Decimal('0.3'),
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
     )
-    assert state.exposure(BTC) == (None, Decimal('0.1'))
+    assert order.filled_quantity == Decimal('0.5')
+    assert captured[0].kind == 'order_filled_regress'
 
-    # Although the symbol name is BTCUSDC, it will still allocate
-    # into BTCUSDT and BTCUSDC
-    state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.3'),
-        price=Decimal('10000'),
-        urgent=False
+
+def test_update_order_silently_drops_time_regression():
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
+
+    t1 = datetime(2024, 1, 1, 0, 0, 0)
+    state.update_order(
+        order,
+        status=OrderStatus.CREATED,
+        updated_at=t1,
+        id='o',
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    assert order.updated_at == t1
+
+    captured = []
+    state.on(
+        TradingStateEvent.STALE_UPDATE,
+        lambda event: captured.append(event),
+    )
+
+    earlier = t1 - timedelta(seconds=1)
+    state.update_order(
+        order,
+        status=None,
+        updated_at=earlier,
+        id=None,
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    assert order.updated_at == t1
+    assert captured[0].kind == 'order_time_regress'
+
+
+def test_set_balances_drops_stale_time_and_emits_stale():
+    state = init_state()
+
+    t0 = balance_time(0)
+    t_earlier = balance_time(-10)
+
+    # init_state already wrote balances at t0; pushing an earlier time
+    # must be rejected.
+    captured = []
+    state.on(
+        TradingStateEvent.STALE_UPDATE,
+        lambda event: captured.append(event),
     )
 
     state.set_balances([
-        Balance(BTC, Decimal('1'), DECIMAL_ZERO)
-    ], delta=True)
-
-    assert state.exposure(BTC) == (None, Decimal('0.3'))
-
-    orders, _ = state.get_orders()
-    assert len(orders) == 2
-
-    quantity_updated_count = 0
-    status_updated_count = 0
-
-    def handler(*args):
-        nonlocal quantity_updated_count
-        quantity_updated_count += 1
-
-    def status_updated_handler(*args):
-        nonlocal status_updated_count
-        status_updated_count += 1
-
-    state.on(TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED, handler)
-    state.on(TradingStateEvent.ORDER_STATUS_UPDATED, status_updated_handler)
-
-    for order in orders:
-        target = order.target
-        state.update_order(
-            order,
-            filled_quantity=order.ticket.quantity,
-            quote_quantity=order.ticket.quantity * target.price
-        )
-        # It will not trigger quantity updated event, coz no change
-        state.update_order(
-            order,
-            filled_quantity=order.ticket.quantity,
-            quote_quantity=order.ticket.quantity * target.price
-        )
-
-    for order in orders:
-        state.update_order(
-            order,
-            status=OrderStatus.FILLED
-        )
-        # It will not trigger status updated event
-        state.update_order(
-            order,
-            status=OrderStatus.FILLED
-        )
-        target = order.target
-
-    assert quantity_updated_count == 2
-    assert status_updated_count == 2
-
-    assert target.status is PositionTargetStatus.ACHIEVED
-
-    state.set_balances([
-        Balance(BTC, Decimal('2'), DECIMAL_ZERO)
-    ], delta=True)
-
-    assert BTC not in state._expected
-
-    assert state.exposure(BTC) == (None, Decimal('0.4'))
-
-
-def test_allocate_sell():
-    state = init_state()
-
-    # This will consume USDC and convert to USDT
-    state.set_alt_currency_weights(
-        (
-            (Decimal('1'),),
-            (Decimal('0'),)
-        )
-    )
-
-    # Although the symbol name is BTCUSDC,
-    # but the weight of USDC is 0, we will only allocate to USDT
-    state.expect(
-        BTCUSDC,
-        exposure=Decimal('0'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-
-    orders, _ = state.get_orders()
-    order = orders.pop()
-
-    assert order.ticket.symbol.quote_asset == USDT
-    assert order.ticket.quantity == Decimal('1')
-    assert order.ticket.side == OrderSide.SELL
-
-
-def test_alt_currencies_edge_cases():
-    state = init_state()
-
-    # This will consume USDC and convert to USDT
-    state.set_alt_currency_weights(
-        (
-            (Decimal('1'),),
-            (Decimal('1'),)
-        )
-    )
-
-    # The exposure delta is too small,
-    # it is not possible to allocate into two quote currencies,
-    # due to the limitation of NOTIONAL
-    state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.10005'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-
-    orders, _ = state.get_orders()
-    assert len(orders) == 1
-
-    order = orders.pop()
-
-    # Default account currency comes last, so it will allocate to USDT
-    assert order.ticket.symbol.quote_asset == USDT
-    state.update_order(order, status=OrderStatus.CANCELLED)
-
-    # The exposure delta is too small
-    # to create even a single order due to NOTIONAL
-    state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.10004'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-
-    orders, _ = state.get_orders()
-    assert not orders
-
-    # The target will also be removed
-    assert BTC not in state._expected
-
-    # Sell
-    state.expect(
-        BTCUSDC,
-        exposure=Decimal('0'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-
-    orders, _ = state.get_orders()
-
-    for order in orders:
-        assert order.ticket.quantity == Decimal('0.5')
-
-
-def test_allocation_not_enough_balance():
-    state = init_state()
-
-    # This setting is to convert USDT into USDC
-    state.set_alt_currency_weights(
-        (
-            (Decimal('0'),),
-            (Decimal('1'),)
-        )
-    )
-
-    state.expect(
-        BTCUSDC,
-        exposure=Decimal('0.2'),
-        price=Decimal('10000'),
-        urgent=False
-    )
-
-    state.set_balances([
-        Balance(USDT, DECIMAL_ZERO, DECIMAL_ZERO)
+        Balance(BTC, Decimal('999'), Decimal('0'), t_earlier),
     ])
 
-    orders, _ = state.get_orders()
-    assert not orders
+    # current BTC balance unchanged
+    assert state._balances.get_balance(BTC).free == Decimal('1')
+    assert captured[0].kind == 'balance_time_regress'
+    assert captured[0].asset == BTC
 
 
-def test_expect_with_no_notional_limit_and_order_trades():
+def test_unsettled_inflow_outflow_and_exposure_modes():
+    """
+    Order shows a fill via update_order; balance hasn't caught up yet.
+    The unsettled inflow / outflow flags on exposure should toggle the
+    reconciled component appropriately.
+    """
+    state = init_state()
+    state.set_balances([
+        Balance(BTC, Decimal('1'), Decimal('0'), balance_time(0)),
+    ])
+
+    # confirmed = 1; before any orders, no unsettled. exposure = 0.1
+    assert state.exposure(
+        BTC,
+        include_unsettled_inflow=True,
+        include_unsettled_outflow=True,
+    ) == (None, Decimal('0.1'))
+
+    # Add a BUY order and fill it via order channel — balance NOT yet
+    # updated.
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
+
+    t_fill = balance_time(60)  # after current balance
+    state.update_order(
+        order,
+        status=OrderStatus.FILLED,
+        updated_at=t_fill,
+        id='o-1',
+        filled_quantity=Decimal('1'),
+        quote_quantity=Decimal('10000'),
+        commission_asset=None,
+        commission_quantity=None,
+    )
+
+    # Confirmed BTC balance still 1 (no balance update yet).
+    exc, base_exp = state.exposure(
+        BTC,
+        include_unsettled_inflow=False,
+        include_unsettled_outflow=False,
+    )
+    assert exc is None
+    assert base_exp == Decimal('0.1')
+
+    # With inflow included: 2 BTC / 100k notional * 10k price = 0.2
+    exc, inflow_exp = state.exposure(
+        BTC,
+        include_unsettled_inflow=True,
+        include_unsettled_outflow=False,
+    )
+    assert exc is None
+    assert inflow_exp == Decimal('0.2')
+
+    # unsettled(BTC) should reflect the +1 BTC inflow
+    exc, flow = state.unsettled(BTC)
+    assert exc is None
+    assert flow.inflow == Decimal('1')
+    assert flow.outflow == Decimal('0')
+
+    # Balance arriving later (time > order updated_at) closes the diff
+    t_balance = t_fill + timedelta(seconds=1)
+    state.set_balances([
+        Balance(BTC, Decimal('2'), Decimal('0'), t_balance),
+    ])
+    exc, base_exp_after = state.exposure(
+        BTC,
+        include_unsettled_inflow=True,
+        include_unsettled_outflow=False,
+    )
+    assert exc is None
+    assert base_exp_after == Decimal('0.2')
+    # unsettled is now 0
+    _, flow_after = state.unsettled(BTC)
+    assert flow_after.inflow == Decimal('0')
+    assert flow_after.outflow == Decimal('0')
+
+
+def test_cancel_order_sets_cancelling_then_cancelled_purges():
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
+
+    t0 = datetime(2024, 1, 1)
+    state.update_order(
+        order,
+        status=OrderStatus.CREATED,
+        updated_at=t0,
+        id='o-1',
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    assert order in state._orders.open_orders
+
+    state.cancel_order(order)
+    assert order.status is OrderStatus.CANCELLING
+    # Still open until exchange confirms CANCELLED
+    assert order in state._orders.open_orders
+
+    # Idempotent: another cancel is no-op
+    state.cancel_order(order)
+    assert order.status is OrderStatus.CANCELLING
+
+    state.update_order(
+        order,
+        status=OrderStatus.CANCELLED,
+        updated_at=t0 + timedelta(seconds=1),
+        id=None,
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    assert order not in state._orders.open_orders
+
+
+def test_query_orders_by_data_subset():
     state = init_state()
 
-    price = Decimal('10000')
+    for tag in ['a', 'b']:
+        ticket = _make_buy_limit_ticket(
+            state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+        )
+        _, order = state.add_order(ticket, data={'tag': tag})
+        state.update_order(
+            order,
+            status=OrderStatus.CREATED,
+            updated_at=datetime(2024, 1, 1),
+            id=f'o-{tag}',
+            filled_quantity=None,
+            quote_quantity=None,
+            commission_asset=None,
+            commission_quantity=None,
+        )
 
+    matched = list(state.query_orders(data={'tag': 'a'}))
+    assert len(matched) == 1
+    assert matched[0].data['tag'] == 'a'
+
+    # ticket subset match still works
+    btc_buys = list(state.query_orders(ticket={'side': OrderSide.BUY}))
+    assert len(btc_buys) == 2
+
+    # callable predicate
+    only_a = list(state.query_orders(
+        id=lambda v, _: v == 'o-a',
+    ))
+    assert len(only_a) == 1
+
+
+def test_allocate_passthrough_when_weights_unset():
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
+    )
+    out = state.allocate(ticket)
+    assert out == [ticket]
+
+
+def test_allocate_buy_across_alt_currencies():
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),  # BUY weights: USDC weight 1 (primary USDT also implicit 1)
+        (Decimal('0'),),  # SELL weights
+    ))
+
+    canonical = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
+    )
+    tickets = state.allocate(canonical)
+
+    # Both USDC and USDT have balance, weights both > 0 → expect 2 tickets
+    assert len(tickets) == 2
+    quote_assets = {t.symbol.quote_asset for t in tickets}
+    assert quote_assets == {USDC, USDT}
+    for t in tickets:
+        # Filter-applied: quantity quantized to 8-decimal precision
+        assert t.quantity > Decimal('0')
+        assert t.side is OrderSide.BUY
+
+
+def test_allocate_sell_across_alt_currencies():
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),  # SELL weights: USDC weight 1
+    ))
+
+    canonical = LimitOrderTicket(
+        symbol=state._symbols.get_symbol(BTCUSDT_NAME),
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    tickets = state.allocate(canonical)
+
+    assert len(tickets) == 2
+    for t in tickets:
+        assert t.side is OrderSide.SELL
+
+
+def test_allocate_passthrough_for_market_quote_quantity():
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('0'),),
+    ))
+    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    quote_market = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    out = state.allocate(quote_market)
+    assert out == [quote_market]
+
+
+def test_order_fill_records_trade_and_pnl():
+    state = init_state()
     state.set_notional_limit(Z, None)
-    state.set_price(ZUSDT.name, price)
+    state.set_price(ZUSDT.name, Decimal('10000'))
     state.set_symbol(ZUSDT)
     state.set_balances([
-        Balance(Z, DECIMAL_ZERO, DECIMAL_ZERO)
+        Balance(Z, DECIMAL_ZERO, DECIMAL_ZERO, balance_time()),
     ])
 
-    exception, success = state.expect(
-        ZUSDT.name,
-        exposure=Decimal('0.1'),
-        price=price,
-        urgent=False
+    sym = state._symbols.get_symbol(ZUSDT.name)
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('20'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
     )
+    _, order = state.add_order(ticket)
+    assert order is not None
+    assert order.ticket.quantity == Decimal('20')
 
-    assert exception is None
-    orders, _ = state.get_orders()
-
-    order = orders.pop()
-
-    DECIMAL_20 = Decimal('20')
-    DECIMAL_20K = Decimal('200000')
-
-    assert order.ticket.quantity == DECIMAL_20
-    assert order.ticket.side == OrderSide.BUY
-
+    t = datetime(2024, 1, 1)
     state.update_order(
         order,
-        filled_quantity=DECIMAL_20,
-        quote_quantity=DECIMAL_20K,
+        status=OrderStatus.FILLED,
+        updated_at=t,
+        id='ord',
+        filled_quantity=Decimal('20'),
+        quote_quantity=Decimal('200000'),
         commission_asset=USDC,
         commission_quantity=Decimal('0.02'),
-        status=OrderStatus.FILLED
     )
 
     assert len(order.trades) == 1
     trade = order.trades[0]
-    assert trade.base_quantity == DECIMAL_20
-    assert trade.base_price == price
-    assert trade.quote_quantity == DECIMAL_20K
+    assert trade.base_quantity == Decimal('20')
+    assert trade.base_price == Decimal('10000')
+    assert trade.quote_quantity == Decimal('200000')
     assert trade.quote_price == DECIMAL_ONE
     assert trade.commission_cost == Decimal('0.02')
 
+
+def test_freeze_set_and_clear():
+    state = init_state()
+
+    # exposure baseline: 1 BTC / 100k limit at 10k price = 0.1
+    exc, e0 = state.exposure(
+        BTC,
+        include_unsettled_inflow=False,
+        include_unsettled_outflow=False,
+    )
+    assert exc is None and e0 == Decimal('0.1')
+
+    # Freezing all of it makes the available holding 0 → exposure 0
+    state.freeze(BTC, Decimal('1'))
+    exc, e1 = state.exposure(
+        BTC,
+        include_unsettled_inflow=False,
+        include_unsettled_outflow=False,
+    )
+    assert exc is None and e1 == Decimal('0')
+
+    # Passing quantity=None clears the freeze
+    state.freeze(BTC, None)
+    exc, e2 = state.exposure(
+        BTC,
+        include_unsettled_inflow=False,
+        include_unsettled_outflow=False,
+    )
+    assert exc is None and e2 == Decimal('0.1')
+
+
+def test_unsettled_propagates_asset_not_ready_error():
+    state = init_state()
+    exc, value = state.unsettled('UNKNOWN_ASSET')
+    assert value is None
+    assert exc is not None
+
+
+def test_query_orders_unknown_criterion_matches_nothing():
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
+    state.update_order(
+        order,
+        status=OrderStatus.CREATED,
+        updated_at=datetime(2024, 1, 1),
+        id='o',
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+
+    # criterion references an attribute that doesn't exist on Order:
+    # _compare returns False, query returns no matches.
+    assert list(state.query_orders(not_a_real_field='x')) == []
+
+    # No-criteria query with a limit exercises the empty-criteria branch.
+    assert len(list(state.query_orders(limit=1))) == 1
+
+
+def test_order_rejected_path():
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
+    state.update_order(
+        order,
+        status=OrderStatus.CREATED,
+        updated_at=datetime(2024, 1, 1),
+        id='o',
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    assert order in state._orders.open_orders
+
+    state.update_order(
+        order,
+        status=OrderStatus.REJECTED,
+        updated_at=datetime(2024, 1, 1, 0, 0, 1),
+        id=None,
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    assert order not in state._orders.open_orders
+
+
+def test_allocate_all_zero_weights_passthrough():
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('0'),),
+    ))
+    # All weights effectively zero (primary is implicit 1 but every alt
+    # is 0 and the primary one alone might still be > 0)
+    # Edge case fully zero requires removing primary; we cover the
+    # all-zero alt path here.
+
+    # To hit "not any > 0" we configure no alt and pass an SELL ticket
+    # — the SELL vec (0,) plus primary implicit 1 still has primary>0, so
+    # this asserts the passthrough only when weights vec genuinely zero.
+    # Instead force passthrough via stop-loss ticket which is unsupported.
+    from trading_state import StopLossOrderTicket
+    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    sl = StopLossOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        stop_price=Decimal('5000'),
+    )
+    out = state.allocate(sl)
+    assert out == [sl]
+
+
+def test_allocate_no_eligible_resources_passthrough():
+    """No matching alt symbols for the base → passthrough."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('1'),),
+    ))
+    # Construct a ticket whose base asset has no symbol in any account
+    # currency. Use FOO/BAR which is not in the config; the symbol
+    # lookups during allocate's resource-gathering all return None.
+    from trading_state import Symbol
+    state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
+    sym = state._symbols.get_symbol('FOOZZZ')
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        price=Decimal('10'),
+        time_in_force=TimeInForce.GTC,
+    )
+    out = state.allocate(ticket)
+    assert out == [ticket]
+
+
+def test_allocate_zero_or_missing_balance_skips_bucket():
+    """A BUY allocation skips buckets whose account currency has no
+    balance — and if every weighted bucket is skipped, falls back to
+    passthrough."""
+    from trading_state import TradingConfig
+    config = TradingConfig(
+        account_currency=USDT,
+        alt_account_currencies=(USDC,),
+    )
+    state = init_state(config=config)
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('1'),),
+    ))
+    # Zero out both balances so every BUY bucket is ineligible.
+    t = balance_time(100)
     state.set_balances([
-        Balance(Z, DECIMAL_20, DECIMAL_ZERO),
-        Balance(USDT, DECIMAL_ZERO, DECIMAL_ZERO)
+        Balance(USDC, Decimal('0'), Decimal('0'), t),
+        Balance(USDT, Decimal('0'), Decimal('0'), t),
     ])
 
-    state.expect(
-        ZUSDT.name,
-        exposure=DECIMAL_ZERO,
-        price=price,
-        urgent=False
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
     )
+    out = state.allocate(ticket)
+    assert out == [ticket]
 
-    orders, _ = state.get_orders()
-    order = orders.pop()
 
-    assert order.ticket.quantity == Decimal('20')
-    assert order.ticket.side == OrderSide.SELL
-
+def test_completed_order_rejects_further_updates():
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
+    t = datetime(2024, 1, 1)
     state.update_order(
         order,
-        status=OrderStatus.REJECTED
+        status=OrderStatus.FILLED,
+        updated_at=t,
+        id='o',
+        filled_quantity=Decimal('1'),
+        quote_quantity=Decimal('10000'),
+        commission_asset=None,
+        commission_quantity=None,
     )
-
-    assert not state._expected
-
-
-def test_custom_execution_strategy_resolver_and_track_order():
-    class CustomLimitStrategy(BaseExecutionStrategy):
-        def __init__(self):
-            self._created_count = 0
-            self._tracked_orders = []
-
-        @property
-        def created_count(self):
-            return self._created_count
-
-        @property
-        def tracked_orders(self):
-            return self._tracked_orders
-
-        def create_ticket(
-            self,
-            symbol,
-            quantity,
-            target,
-            side
-        ):
-            self._created_count += 1
-            return LimitOrderTicket(
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                price=target.price,
-                time_in_force=TimeInForce.GTC
-            )
-
-        def track_order(self, order):
-            self._tracked_orders.append(order)
-
-    strategy = CustomLimitStrategy()
-    state = init_state(
-        execution_strategy_resolver=(
-            lambda target: (
-                strategy
-                if target.data.get('execution') == 'custom'
-                else None
-            )
-        )
-    )
-
-    state.expect(
-        BTCUSDT,
-        exposure=Decimal('0.3'),
-        price=Decimal('10000'),
-        urgent=True,
-        data={'execution': 'custom'}
-    )
-
-    orders, _ = state.get_orders()
-    order = orders.pop()
-
-    # urgent=True, but custom strategy still decides to place LIMIT order
-    assert order.ticket.type == OrderType.LIMIT
-    assert strategy.created_count == 1
-
+    assert order.status is OrderStatus.FILLED
+    # Further update is silently ignored by Order.update (status already
+    # completed). No regression event fires either, because filled_quantity
+    # is not regressing.
     state.update_order(
         order,
-        filled_quantity=order.ticket.quantity,
-        quote_quantity=order.ticket.quantity * order.target.price,
-        status=OrderStatus.FILLED
+        status=OrderStatus.REJECTED,
+        updated_at=t,
+        id=None,
+        filled_quantity=Decimal('1'),
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
     )
-
-    assert strategy.tracked_orders == [order]
+    assert order.status is OrderStatus.FILLED

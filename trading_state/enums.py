@@ -84,32 +84,23 @@ class OrderStatus(OrderedEnum):
     # The order is partially filled
     PARTIALLY_FILLED = ('PARTIALLY_FILLED', 3)
 
-    # It is determined that the order should be cancelled
-    ABOUT_TO_CANCEL = ('ABOUT_TO_CANCEL', 4)
-
     # The order is being cancelled
-    CANCELLING = ('CANCELLING', 5)
+    CANCELLING = ('CANCELLING', 4)
 
     # The order is cancelled
-    CANCELLED = ('CANCELLED', 6)
+    CANCELLED = ('CANCELLED', 5)
 
-    # The order is filled, the status has the same status value as CANCELED,
+    # The order is filled, the status has the same status value as CANCELLED,
     # which means the order is no longer active
-    FILLED = ('FILLED', 6)
+    FILLED = ('FILLED', 5)
 
     # The order is rejected by the exchange
-    REJECTED = ('REJECTED', 7)
+    REJECTED = ('REJECTED', 6)
 
     def completed(self) -> bool:
         no = self.value[1]
 
-        return no == 6 or no == 7
-
-
-class PositionTargetStatus(OrderedEnum):
-    INIT = ('INIT', 0)
-    ALLOCATED = ('ALLOCATED', 1)
-    ACHIEVED = ('ACHIEVED', 2)
+        return no == 5 or no == 6
 
 
 class TimeInForce(StringEnum):
@@ -150,18 +141,14 @@ class FeatureType(StringEnum):
 
 
 class TradingStateEvent(Enum):
-    POSITION_TARGET_UPDATED = 'POSITION_TARGET_UPDATED'
-
-    # Ticket creation failed, which indicates it fails to create an order #
-    #   ticket according to the position target
-    TICKET_CREATE_FAILED = 'TICKET_CREATE_FAILED'
-
-    # Order creation failed, which is different from TICKET_CREATE_FAILED,
-    # this is when the order is rejected by the exchange
-    ORDER_CREATE_FAILED = 'ORDER_CREATE_FAILED'
-
     ORDER_STATUS_UPDATED = 'ORDER_STATUS_UPDATED'
     ORDER_FILLED_QUANTITY_UPDATED = 'ORDER_FILLED_QUANTITY_UPDATED'
     PRICE_UPDATED = 'PRICE_UPDATED'
     SYMBOL_ADDED = 'SYMBOL_ADDED'
     PERFORMANCE_SNAPSHOT_RECORDED = 'PERFORMANCE_SNAPSHOT_RECORDED'
+
+    # Emitted when state silently drops an update due to staleness:
+    # incoming balance.time < current; OrderStatus.lt going backward;
+    # filled_quantity / updated_at going backward. Payload is a
+    # StaleUpdate value object — see state.py.
+    STALE_UPDATE = 'STALE_UPDATE'

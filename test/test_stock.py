@@ -7,7 +7,7 @@ from trading_state import (
 
 def test_stock():
     state = TradingState(
-        config=TradingConfig(
+        TradingConfig(
             account_currency='',
         )
     )

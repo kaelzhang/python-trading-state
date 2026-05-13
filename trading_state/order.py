@@ -14,16 +14,13 @@ from datetime import datetime
 from enum import Enum
 
 from .symbol import (
-    Symbol,
     SymbolManager,
 )
 from .enums import OrderStatus
 from .order_ticket import OrderTicket
-from .target import PositionTarget
 from .common import (
     class_repr,
     DECIMAL_ZERO,
-    FactoryDict,
     EventEmitter
 )
 
@@ -57,11 +54,15 @@ class Order(EventEmitter[OrderUpdatedType]):
 
     Args:
         ticket (OrderTicket): the ticket of the order
-        target (PositionTarget): the target which the order is trying to achieve
+        data (Optional[Dict[str, Any]]): caller-supplied metadata stored
+            on the order; opaque to trading_state. Defaults to an empty
+            dict when None. A defensive copy is taken on construction so
+            mutating the dict the caller passed in (or sharing the same
+            default across orders) cannot leak across orders.
     """
 
     ticket: OrderTicket
-    target: PositionTarget
+    data: Dict[str, Any]
 
     _status: OrderStatus
     _id: Optional[str] = None
@@ -77,6 +78,7 @@ class Order(EventEmitter[OrderUpdatedType]):
     commission_quantity: Decimal = DECIMAL_ZERO
 
     created_at: Optional[datetime]
+    updated_at: Optional[datetime]
     trades: List[Trade]
 
     # Whether the order has been added to the order history
@@ -87,43 +89,62 @@ class Order(EventEmitter[OrderUpdatedType]):
             'id',
             'ticket',
             'status',
-            'target',
+            'data',
             'filled_quantity',
         ])
 
     def __init__(
         self,
         ticket: OrderTicket,
-        target: PositionTarget
+        data: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 
         self.ticket = ticket
-        self.target = target
+        # Defensive copy: callers may pass a shared dict (or fall back
+        # to the default {}); we never want order.data leakage across
+        # instances.
+        self.data = dict(data) if data else {}
 
         self._status = OrderStatus.INIT
 
         self.created_at = None
+        self.updated_at = None
         self.trades = []
 
     def update(
         self,
-        symbols: SymbolManager,
-        status: Optional[OrderStatus] = None,
-        created_at: Optional[datetime] = None,
-        updated_at: Optional[datetime] = None,
-        filled_quantity: Optional[Decimal] = None,
-        quote_quantity: Optional[Decimal] = None,
-        commission_asset: Optional[str] = None,
-        commission_quantity: Optional[Decimal] = None,
-        id: str = None
+        symbols: SymbolManager, /,
+        *,
+        status: Optional[OrderStatus],
+        updated_at: Optional[datetime],
+        id: Optional[str],
+        filled_quantity: Optional[Decimal],
+        quote_quantity: Optional[Decimal],
+        commission_asset: Optional[str],
+        commission_quantity: Optional[Decimal],
     ) -> None:
-        """see state.update_order()
+        """
+        Apply field-level updates to this order.
+
+        All keyword arguments are required (pass `None` for a field
+        that is not being updated). Stale-data detection (status /
+        filled_quantity / updated_at regression) is owned by
+        TradingState.update_order; this method assumes the caller has
+        already gated stale inputs and the values it receives are
+        monotonic for any field that is not None.
+
+        Notes:
+        - When the order transitions out of pre-CREATED state, the
+          first non-None `updated_at` is also recorded as `created_at`.
+        - A change in filled_quantity emits
+          OrderUpdatedType.FILLED_QUANTITY_UPDATED.
+        - A change in status emits OrderUpdatedType.STATUS_UPDATED.
+        - Completed orders (status.completed()) reject further updates
+          silently.
         """
 
         if self.status.completed():
-            # The order is already completed,
-            # it should not be updated any more
             return
 
         old_filled_quantity = self.filled_quantity
@@ -145,18 +166,17 @@ class Order(EventEmitter[OrderUpdatedType]):
         ):
             self.filled_quantity = filled_quantity
 
-            # Only emit the event if the status is not changed
             self.emit(
                 OrderUpdatedType.FILLED_QUANTITY_UPDATED,
                 self,
-                filled_quantity
+                filled_quantity,
             )
 
         self._update_trades(
             symbols,
             old_filled_quantity,
             old_quote_quantity,
-            old_commission_quantity
+            old_commission_quantity,
         )
 
         if id is not None and self._id is None:
@@ -164,9 +184,11 @@ class Order(EventEmitter[OrderUpdatedType]):
             self._id = id
 
         if self._status.lt(OrderStatus.CREATED):
-            # Not setting created_at is not fatal
-            self.created_at = created_at
-            self.updated_at = created_at
+            # First crossing into CREATED-or-beyond: treat the incoming
+            # `updated_at` as the order's created_at too.
+            if updated_at is not None:
+                self.created_at = updated_at
+                self.updated_at = updated_at
         else:
             if updated_at is not None:
                 self.updated_at = updated_at
@@ -242,12 +264,12 @@ class Order(EventEmitter[OrderUpdatedType]):
 
 ORDER_COMPARISON_KEYS = [
     'ticket',
-    'target'
+    'data',
 ]
 
 
 def _compare(
-    order: Order,
+    order: Any,
     key: Any,
     expected: Any
 ) -> bool:
@@ -261,7 +283,14 @@ def _compare(
         # the matcher function could test multiple attributes
         return expected(value, key)
 
-    elif key in ORDER_COMPARISON_KEYS and isinstance(expected, dict):
+    if key in ORDER_COMPARISON_KEYS and isinstance(expected, dict):
+        if isinstance(value, dict):
+            # Subset match: every expected (k, v) must be present in
+            # value with the same value. Lets callers do
+            # `query_orders(data={'strategy': 'momentum'})` without
+            # having to match the full dict exactly.
+            return all(value.get(k) == v for k, v in expected.items())
+        # Object subset match: recurse on each expected attribute.
         return all(
             _compare(value, k, v)
             for k, v in expected.items()
@@ -338,13 +367,6 @@ class OrderManager:
     _open_orders: Set[Order]
     _id_orders: Dict[str, Order]
 
-    _orders_to_cancel: Set[Order]
-
-    # Only allow one order for a single symbol
-    _symbol_orders: Dict[Symbol, Order]
-    _base_asset_orders: FactoryDict[str, Set[Order]]
-    # _quote_asset_orders: DictSet[str, Order]
-
     # Just set it as a public property for convenience
     history: OrderHistory
 
@@ -357,11 +379,7 @@ class OrderManager:
 
         self._open_orders = set[Order]()
         self._id_orders = {}
-        self._orders_to_cancel = set[Order]()
 
-        self._symbol_orders = {}
-        self._base_asset_orders = FactoryDict[str, Set[Order]](set[Order])
-        # self._quote_asset_orders = DictSet[str,Order]()
         self.history = OrderHistory(max_order_history_size)
 
     def _on_order_status_updated(
@@ -371,9 +389,8 @@ class OrderManager:
     ) -> None:
         match status:
             case OrderStatus.CREATED:
-                # When an order has an id,
-                # it means it has been created by the exchange,
-                # so we should add it to the order history
+                # When an order has been created by the exchange,
+                # add it to the order history once we see a non-None id.
                 self.history.append(order)
                 if order.id is not None:
                     self._id_orders[order.id] = order
@@ -383,12 +400,6 @@ class OrderManager:
                 self.history.append(order)
                 self._purge_order(order)
                 order.off()
-
-            case OrderStatus.ABOUT_TO_CANCEL:
-                # If the cancelation request to the server is failed,
-                # order.status should be set to ABOUT_TO_CANCEL again,
-                # so we should add the order to the cancelation list
-                self._orders_to_cancel.add(order)
 
             case OrderStatus.CANCELLED:
                 # Redudant cancellation
@@ -402,49 +413,35 @@ class OrderManager:
     def get_order_by_id(self, order_id: str) -> Optional[Order]:
         return self._id_orders.get(order_id)
 
-    def get_order_by_symbol(self, symbol: Symbol) -> Optional[Order]:
-        return self._symbol_orders.get(symbol)
-
-    def get_orders_by_base_asset(self, asset: str) -> Set[Order]:
-        return self._base_asset_orders[asset]
-
-    # def get_orders_by_quote_asset(self, asset: str) -> Set[Order]:
-    #     return self._quote_asset_orders[asset]
+    @property
+    def open_orders(self) -> Set[Order]:
+        return self._open_orders
 
     def cancel(self, order: Order) -> None:
-        # This method might be called
-        # - from outside of the state
-        # - when user cancels the order on the exchange manually and
-        #   the order status is changed by the callback of the
-        #   `executionReport` of the exchange event
-        # so we should check the status
-        if order.status.lt(OrderStatus.ABOUT_TO_CANCEL):
+        """
+        Mark `order` as being cancelled. Caller is responsible for the
+        actual cancel request to the exchange and for relaying the
+        exchange's CANCELLED confirmation back via state.update_order.
+
+        Idempotent: no-op once status >= CANCELLING.
+        """
+        if order.status.lt(OrderStatus.CANCELLING):
             order.update(
                 self._symbols,
-                status = OrderStatus.ABOUT_TO_CANCEL
+                status=OrderStatus.CANCELLING,
+                updated_at=None,
+                id=None,
+                filled_quantity=None,
+                quote_quantity=None,
+                commission_asset=None,
+                commission_quantity=None,
             )
-
-        self._purge_order(order)
 
     def _register_order(self, order: Order) -> None:
         self._open_orders.add(order)
 
-        symbol = order.ticket.symbol
-        asset = symbol.base_asset
-
-        self._symbol_orders[symbol] = order
-        self._base_asset_orders[asset].add(order)
-        # self._quote_asset_orders[symbol.quote_asset].add(order)
-
     def _purge_order(self, order: Order) -> None:
         self._open_orders.discard(order)
-
-        symbol = order.ticket.symbol
-        asset = symbol.base_asset
-
-        self._symbol_orders.pop(symbol, None)
-        self._base_asset_orders[asset].discard(order)
-        # self._quote_asset_orders[symbol.quote_asset].discard(order)
 
         if order.id is not None:
             self._id_orders.pop(order.id, None)
@@ -459,18 +456,3 @@ class OrderManager:
             OrderUpdatedType.STATUS_UPDATED,
             self._on_order_status_updated
         )
-
-    def get_orders(self) -> Tuple[
-        Set[Order],
-        Set[Order]
-    ]:
-        orders_to_cancel = self._orders_to_cancel
-        self._orders_to_cancel = set[Order]()
-
-        orders_to_create = set[Order]()
-
-        for order in self._open_orders:
-            if order.status is OrderStatus.INIT:
-                orders_to_create.add(order)
-
-        return orders_to_create, orders_to_cancel

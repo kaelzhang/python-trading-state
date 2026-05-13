@@ -1,24 +1,67 @@
+"""
+TradingState — the aggregate root of the trading_state library.
+
+Design principles (kept stable across the post-execution-strategy
+refactor):
+- Be pure. No strategies. No diff loops. The state never schedules,
+  retries, or polls.
+- Be passive. Every state change is the consequence of a caller-driven
+  write (set_price, set_symbol, set_notional_limit, set_balances,
+  set_cash_flow, add_order, update_order, cancel_order, allocate,
+  set_alt_currency_weights). The state never reaches out to an
+  exchange.
+- Be sync. All methods are synchronous; no callbacks-by-default; events
+  are diagnostic, not control-flow.
+- Be terminologically aligned with professional trading
+  (exposure / notional limit / ticket / fill / settled / unsettled).
+- No defaults on internal computation; callers must opt in or out of
+  every component explicitly. The only sanctioned-with-default arg in
+  this surface is `Order.data`, an opaque caller-metadata bag.
+
+Public flow (caller side):
+    state = TradingState(config)
+    state.set_symbol(...); state.set_price(...); state.set_notional_limit(...)
+    state.set_balances([Balance(...)])
+
+    # Build a ticket externally and (optionally) split across alt
+    # account currencies. allocate() returns filter-applied sub-tickets
+    # and is a best-effort splitter that never raises a business error
+    # — when there's nothing to split, the original ticket comes back.
+    tickets = state.allocate(canonical_ticket)
+    for t in tickets:
+        exc, order = state.add_order(t, data={...})
+        ...
+        state.update_order(order, status=..., updated_at=..., ...)
+
+    # Read paths
+    state.exposure(asset, include_unsettled_inflow=..., include_unsettled_outflow=...)
+    state.unsettled(asset)
+    state.query_orders(...)
+"""
 from typing import (
+    Any,
     Dict,
     Iterable,
-    Tuple,
-    Set,
-    Optional,
     Iterator,
-    List
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
 )
-from decimal import Decimal
+from dataclasses import dataclass, replace
 from datetime import datetime
+from decimal import Decimal
 
 from .enums import (
-    OrderStatus,
+    MarketQuantityType,
     OrderSide,
+    OrderStatus,
     TradingStateEvent,
-    PositionTargetStatus
 )
 from .symbol import (
     Symbol,
-    SymbolManager
+    SymbolManager,
 )
 from .balance import (
     Balance,
@@ -27,104 +70,102 @@ from .balance import (
 from .pnl import (
     PerformanceTracker,
     CashFlow,
-    PerformanceSnapshot
+    PerformanceSnapshot,
 )
 from .order import (
     Order,
     OrderUpdatedType,
-    OrderManager
+    OrderManager,
 )
-from .execution import (
-    ExecutionStrategy,
-    ExecutionStrategyResolver,
-    DefaultExecutionStrategy,
-    consumed_base_quantity
-)
-from .target import (
-    PositionTarget,
-    PositionTargetMetaData
+from .order_ticket import (
+    OrderTicket,
+    LimitOrderTicket,
+    MarketOrderTicket,
 )
 from .allocate import (
     AllocationResource,
     buy_allocate,
-    sell_allocate
+    sell_allocate,
 )
 from .common import (
-    DECIMAL_ZERO,
-    DECIMAL_ONE,
     DECIMAL_INF,
+    DECIMAL_ONE,
+    DECIMAL_ZERO,
+    EventEmitter,
     ValueOrException,
-    FactoryDict,
-    EventEmitter
 )
 from .config import TradingConfig
+from .reconciliation import (
+    ReconciliationManager,
+    UnsettledFlow,
+    current_impact_on_asset,
+)
+
+
+StaleKind = Literal[
+    'balance_time_regress',
+    'order_status_regress',
+    'order_filled_regress',
+    'order_time_regress',
+]
+
+
+@dataclass(frozen=True, slots=True)
+class StaleUpdate:
+    """
+    Payload of TradingStateEvent.STALE_UPDATE.
+
+    Emitted when state silently drops an update that would otherwise
+    regress a monotonic invariant (balance.time / order status / order
+    filled_quantity / order updated_at). Caller may subscribe for
+    diagnostics; the event itself does not change state behaviour.
+
+    Fields:
+        kind            one of the StaleKind literals.
+        asset           non-None for balance-side stale; None for order-side.
+        order           non-None for order-side stale; None for balance-side.
+        incoming_value  the value that was rejected.
+        current_value   the value the state currently has and kept.
+    """
+    kind: StaleKind
+    asset: Optional[str]
+    order: Optional[Order]
+    incoming_value: Any
+    current_value: Any
 
 
 AllocationWeights = Tuple[Decimal, ...]
 
 
-"""
-Logical Principles:
-- terminology aligned with professional trading
-- be pure
-- be passive, no triggers
-- no strategies, strategies should be driven by external invocations
-- suppose the initialization is done before using the state, including
-  - setting up the symbols
-  - setting up the balances
-  - setting up the symbol prices
-- do not handle position control, just proceed with position expectations
-  - the purpose of a position change could be marked in position.data
-
-Implementation Principles:
-- be sync
-- no checking for unexpected param types (according to typings)
-  - but should check unexpected values
-- no default parameters for all methods to avoid unexpected behavior
-"""
-
-
 class TradingState(EventEmitter[TradingStateEvent]):
-    """State Phase II
+    """State Phase III
 
     - support base asset limit exposure between 0 and 1
     - support multiple base assets
     - support multiple quote assets
+    - support reconciliation between order updates and balance updates;
+      exposure callers choose explicitly which "unsettled" components
+      they want to include
 
     Convention:
-    - For a certain base asset,
-      its related tickets should has the same direction
-
-    Design principle:
-    - The expectation settings are the final state that the system try to achieve.
+    - For a certain base asset, its related tickets should have the
+      same direction.
     """
 
     _config: TradingConfig
     _symbols: SymbolManager
 
-    # asset -> balance
     _balances: BalanceManager
 
     # No allocations for account currencies by default
-    _alt_currency_weights: Optional[List[Decimal]] = None
-
-    # asset -> position expectation
-    _expected: Dict[str, PositionTarget]
-    # position target -> order
-    _target_orders: FactoryDict[PositionTarget, Set[Order]]
+    _alt_currency_weights: Optional[Tuple[AllocationWeights, AllocationWeights]] = None
 
     _orders: OrderManager
-    _default_execution_strategy: ExecutionStrategy
-    _execution_strategy_resolver: Optional[ExecutionStrategyResolver]
-    _order_execution_strategies: Dict[Order, ExecutionStrategy]
+    _recon: ReconciliationManager
 
     def __init__(
         self,
-        config: TradingConfig,
-        default_execution_strategy: Optional[ExecutionStrategy] = None,
-        execution_strategy_resolver: Optional[
-            ExecutionStrategyResolver
-        ] = None
+        config: TradingConfig, /,
     ) -> None:
         super().__init__()
 
@@ -132,28 +173,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._symbols = SymbolManager(config)
         self._balances = BalanceManager(config, self._symbols)
 
-        self._expected = {}
-        self._target_orders = FactoryDict[
-            PositionTarget, Set[Order]
-        ](set[Order])
-
         self._orders = OrderManager(
             config.max_order_history_size,
-            self._symbols
+            self._symbols,
         )
-        self._default_execution_strategy = (
-            default_execution_strategy
-            if default_execution_strategy is not None
-            else DefaultExecutionStrategy()
-        )
-        self._execution_strategy_resolver = execution_strategy_resolver
-        self._order_execution_strategies = {}
+
+        self._recon = ReconciliationManager()
 
         self._perf = PerformanceTracker(
             config,
             self._symbols,
             self._balances,
-            self._on_performance_snapshot_recorded
+            self._on_performance_snapshot_recorded,
         )
 
     @property
@@ -166,14 +197,11 @@ class TradingState(EventEmitter[TradingStateEvent]):
     def set_price(
         self,
         symbol_name: str,
-        price: Decimal
+        price: Decimal,
     ) -> bool:
         """
-        Set the price of a symbol
-
-        Returns `True` if the price changes
+        Set the price of a symbol. Returns True iff the price changed.
         """
-
         updated = self._symbols.set_price(symbol_name, price)
 
         self._check_balance_cash_flow(symbol_name)
@@ -185,66 +213,54 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def set_symbol(
         self,
-        symbol: Symbol, /
+        symbol: Symbol, /,
     ) -> None:
-        """
-        Set (add or update) the symbol info for a symbol
-
-        Args:
-            symbol (Symbol): the symbol to set
-        """
-
+        """Set (add or update) the symbol info for a symbol."""
         if self._symbols.set_symbol(symbol):
             self.emit(TradingStateEvent.SYMBOL_ADDED, symbol)
 
     def set_notional_limit(self, *args, **kwargs) -> None:
         """
-        Set the notional limit for a certain asset. Pay attention that, by design, it is mandatory to set the notional limit for an asset before trading with the trading state.
-
-        The notional limit of an asset limits:
-        - the maximum quantity of the **account_currency** asset the trader could **BUY** the asset,
-        - no SELL.
-
-        Args:
-            asset (str): the asset to set the notional limit for
-            limit (Decimal | None): the maximum quantity of the account currency the trader could BUY the asset. `None` means no notional limit. `None` is not suggested in production.
+        Set the notional limit for a certain asset. Pay attention that
+        it is mandatory to set the notional limit for every non-account
+        asset before trading.
 
         For example, if::
 
             state.set_notional_limit('BTC', Decimal('35000'))
 
         - current BTC price: $7000
-        - base asset balance (USDT): $70000
+        - quote balance (USDT): $70000
 
-        Then, the trader could only buy 5 BTC,
-        although the balance is enough to buy 10 BTC
+        Then the trader can only buy 5 BTC, although the balance would
+        otherwise allow 10.
         """
-
         self._balances.set_notional_limit(*args, **kwargs)
 
     def set_alt_currency_weights(
         self,
         weights: Optional[
             Tuple[AllocationWeights, AllocationWeights]
-        ], /
+        ], /,
     ) -> None:
         """
-        Set the weights of the alternative account currencies to the account currency.
-
-        This system will use a simple approach to attempt to achieve a dynamic equilibrium.
+        Set the BUY/SELL weights of the alternative account currencies.
 
         Args:
-            weights (Tuple[AllocationWeights, AllocationWeights]): the weights of the alternative account currencies to the account currency according to the order of `config.alt_account_currencies` for BUY and SELL respectively, each of which should not less than 0.
+            weights: A pair (buy_weights, sell_weights). Each weights
+                tuple matches the order of `config.alt_account_currencies`.
+                The primary account currency's weight is implicitly 1.
 
         Usage::
 
             state.set_alt_currency_weights((
-                (Decimal('0.5'), Decimal('0.5')),
-                (Decimal('1'), Decimal('0'))
+                (Decimal('0.5'), Decimal('0.5')),  # BUY
+                (Decimal('1'),   Decimal('0')),    # SELL
             ))
-            # We want to consume the 2nd alt account currency
-        """
 
+        Passing None removes the configuration; allocate() will then
+        simply pass tickets through unchanged.
+        """
         if weights is not None:
             self._check_allocation_weights(weights[0])
             self._check_allocation_weights(weights[1])
@@ -253,726 +269,553 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def freeze(self, *args, **kwargs) -> None:
         """
-        Freeze a certain quantity of an asset. The frozen quantity will be excluded from the calculation of
-        - notional limit
-        - exposure
-        - balance
+        Freeze a certain quantity of an asset. The frozen quantity is
+        excluded from exposure and from balance available to spend.
         """
-
         self._balances.freeze(*args, **kwargs)
 
     def set_balances(
         self,
         new: Iterable[Balance], /,
-        *args, **kwargs
+        *,
+        delta: bool = False,
     ) -> None:
         """
-        Update user balances, including normal assets and quote assets
+        Update balances from an authoritative source (typically a
+        decoded exchange snapshot or WS event).
+
+        Stale data (balance.time strictly earlier than the currently
+        known balance.time for the same asset) is silently dropped and
+        a `STALE_UPDATE` event is emitted for diagnostic observers.
 
         Args:
-            new (Iterable[Balance]): the new balances to set
-            delta (bool = False): whether to update the balances as a delta, i.e. the new balances are relative to the current balances
-
-        Usage::
-
-            state.set_balances([
-                Balance('BTC', Decimal('8'), Decimal('0'))
-            ])
+            new: Iterable of Balance instances. Each Balance MUST carry
+                a non-None `time`.
+            delta: When True and a prior balance exists, the incoming
+                free/locked are added to the existing values rather
+                than replacing them. Delta mode skips the stale-time
+                check by design — deltas are not absolute snapshots.
         """
-
         for balance in new:
-            self._set_balance(balance, *args, **kwargs)
+            self._set_balance(balance, delta=delta)
 
     def set_cash_flow(
         self,
-        cash_flow: CashFlow, /
+        cash_flow: CashFlow, /,
     ) -> None:
-        """Handle external cashflow update
-        """
-
+        """Handle external cashflow update (deposit / withdrawal)."""
         self._perf.set_cash_flow(cash_flow)
 
     def get_account_value(self) -> Decimal:
-        """
-        Get the value of the account in the account currency
-        """
-
+        """Get the value of the account in the account currency."""
         return self._balances.get_account_value(False)
 
     def get_price(
         self,
-        symbol_name: str, /
-    ) -> Decimal | None:
-        """
-        Get the price of a symbol
-        """
-
+        symbol_name: str, /,
+    ) -> Optional[Decimal]:
         return self._symbols.get_price(symbol_name)
 
     def support_symbol(self, symbol_name: str, /) -> bool:
-        """
-        Check whether the symbol is supported
-        """
-
         return self._symbols.has_symbol(symbol_name)
 
     def exposure(
         self,
-        asset: str, /
+        asset: str, /,
+        *,
+        include_unsettled_inflow: bool,
+        include_unsettled_outflow: bool,
     ) -> ValueOrException[Decimal]:
         """
-        Get the current expected limit exposure or the calculated limit exposure of an asset
+        Current exposure of `asset`:
+
+            exposure = (effective_holding * valuation_price(asset))
+                        / notional_limit(asset)
+
+        where::
+
+            effective_holding =
+                  balance.free + balance.locked
+                - frozen(asset)
+                + (unsettled.inflow  if include_unsettled_inflow  else 0)
+                - (unsettled.outflow if include_unsettled_outflow else 0)
+
+        "Unsettled inflow" sums every order's confirmed-by-exchange but
+        not-yet-reflected-in-balance increase of `asset`. "Unsettled
+        outflow" is the symmetric quantity for decreases. Both are
+        managed by ReconciliationManager.
 
         Args:
-            asset (str): the asset name to get the limit exposure for
+            asset: asset name.
+            include_unsettled_inflow: must be passed; selects whether
+                unsettled increases (e.g. BUY fill that has not yet
+                hit the balance snapshot) count toward the holding.
+            include_unsettled_outflow: must be passed; selects whether
+                unsettled decreases (e.g. SELL fill not yet reflected
+                in balance) count toward the holding.
 
         Returns:
-            - Tuple[Exception, None]: the exception if the asset is not ready
-            - Tuple[None, Decimal]: the limit exposure of the asset
+            (exception, None) when the asset is not ready (see
+                check_asset_ready).
+            (None, exposure) otherwise.
         """
-
         exception = self._balances.check_asset_ready(asset)
         if exception is not None:
             return exception, None
 
-        target = self._expected.get(asset)
+        notional_limit = self._balances.get_notional_limit(asset)
+        if notional_limit is None:
+            # Account-currency exposure is not defined (no managed
+            # notional cap). Preserves the previous public surface:
+            # (None, None) signals "ready, but not calculable".
+            return None, None
 
-        if target is not None:
-            return None, target.exposure
+        holding = self._balances.get_asset_total_balance(
+            asset, DECIMAL_ZERO
+        )
+        unsettled = self._recon.unsettled_for(asset)
+        if include_unsettled_inflow:
+            holding += unsettled.inflow
+        if include_unsettled_outflow:
+            holding -= unsettled.outflow
 
-        return None, self._get_asset_exposure(asset)
+        valuation_price = self._symbols.valuation_price(asset)
+
+        return None, holding * valuation_price / notional_limit
+
+    def unsettled(
+        self,
+        asset: str, /,
+    ) -> ValueOrException[UnsettledFlow]:
+        """
+        Diagnostic view of the unsettled flow for `asset`. Not intended
+        for trading decisions — those should go through `exposure(...)`
+        with the explicit include_unsettled_* flags.
+        """
+        exception = self._balances.check_asset_ready(asset)
+        if exception is not None:
+            return exception, None
+        return None, self._recon.unsettled_for(asset)
+
+    def add_order(
+        self,
+        ticket: OrderTicket, /,
+        *,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> ValueOrException[Order]:
+        """
+        Register a caller-built ticket as a new Order in INIT status.
+
+        Behaviour:
+        - Runs the symbol's filters in normalize mode via
+          `ticket.apply_filters()`. The returned ticket may be a frozen
+          copy with adjusted fields.
+        - On filter rejection: returns `(exception, None)` and does NOT
+          touch state. Filter rejections are not emitted as events;
+          they come back through the return value so the caller cannot
+          accidentally drop them.
+        - On success: creates the Order, attaches state's listeners,
+          registers it with the order manager and reconciliation
+          manager, and returns `(None, Order)`. Caller controls the
+          state machine transitions (INIT -> SUBMITTING -> CREATED ...)
+          via subsequent `update_order` calls.
+
+        Args:
+            ticket: A constructed OrderTicket; its symbol must already
+                have been added via `set_symbol`.
+            data: Caller metadata. Copied defensively into the Order
+                so a shared default `{}` cannot leak across orders.
+
+        Returns:
+            ValueOrException[Order]:
+              (exception, None) on filter rejection.
+              (None, order) on success.
+        """
+        exception, normalized = ticket.apply_filters()
+        if exception is not None:
+            return exception, None
+
+        order = Order(ticket=normalized, data=data)
+
+        order.on(
+            OrderUpdatedType.STATUS_UPDATED,
+            self._on_order_status_updated,
+        )
+        order.on(
+            OrderUpdatedType.FILLED_QUANTITY_UPDATED,
+            self._on_order_filled_quantity_updated,
+        )
+
+        self._orders.add(order)
+        self._recon.register(order)
+
+        return None, order
+
+    def update_order(
+        self,
+        order: Order, /,
+        *,
+        status: Optional[OrderStatus],
+        updated_at: Optional[datetime],
+        id: Optional[str],
+        filled_quantity: Optional[Decimal],
+        quote_quantity: Optional[Decimal],
+        commission_asset: Optional[str],
+        commission_quantity: Optional[Decimal],
+    ) -> None:
+        """
+        Apply an exchange-driven update to `order`.
+
+        All keyword arguments are required; pass `None` for any field
+        not being updated. This enforces explicit-intent at every call
+        site (matches the library's no-default-values discipline).
+
+        Stale data is silently dropped and a `STALE_UPDATE` event is
+        emitted. "Stale" means any of:
+        - status that goes backwards under OrderedEnum.lt;
+        - filled_quantity smaller than the current filled_quantity;
+        - updated_at strictly earlier than the current updated_at.
+
+        This method never raises a business error. It does no
+        cross-field validation against the original ticket (e.g.
+        "filled_quantity exceeds ticket.quantity by more than dust");
+        that responsibility lives at the protocol-adapter boundary.
+        """
+        if status is not None and status.lt(order.status):
+            self._emit_stale(
+                'order_status_regress',
+                asset=None,
+                order=order,
+                incoming_value=status,
+                current_value=order.status,
+            )
+            return
+
+        if (
+            filled_quantity is not None
+            and filled_quantity < order.filled_quantity
+        ):
+            self._emit_stale(
+                'order_filled_regress',
+                asset=None,
+                order=order,
+                incoming_value=filled_quantity,
+                current_value=order.filled_quantity,
+            )
+            return
+
+        if (
+            updated_at is not None
+            and order.updated_at is not None
+            and updated_at < order.updated_at
+        ):
+            self._emit_stale(
+                'order_time_regress',
+                asset=None,
+                order=order,
+                incoming_value=updated_at,
+                current_value=order.updated_at,
+            )
+            return
+
+        order.update(
+            self._symbols,
+            status=status,
+            updated_at=updated_at,
+            id=id,
+            filled_quantity=filled_quantity,
+            quote_quantity=quote_quantity,
+            commission_asset=commission_asset,
+            commission_quantity=commission_quantity,
+        )
 
     def cancel_order(self, order: Order, /) -> None:
         """
-        Cancel an order from the trading state, and trigger the cancellation the next tick
-
-        The method should have no side effects if called multiple times
+        Mark `order` as being cancelled (status -> CANCELLING).
+        Idempotent: no-op once already at or past CANCELLING. The
+        actual cancel request to the exchange is the caller's job;
+        bring the CANCELLED confirmation back via `update_order`.
         """
-
         self._orders.cancel(order)
-
-        asset = order.ticket.symbol.base_asset
-
-        current_target = self._expected.get(asset)
-
-        if current_target is None:
-            return
-
-        if current_target is order.target:
-            target_orders = self._target_orders[current_target]
-            target_orders.discard(order)
-
-            if not target_orders:
-                # No more orders for the target,
-                # remove the target
-                self._expected.pop(asset, None)
-            else:
-                self._update_target_exposure(current_target)
 
     def query_orders(
         self,
         descending: bool = False,
         limit: Optional[int] = None,
-        **criteria
+        **criteria,
     ) -> Iterator[Order]:
         """
-        Query the history orders by the given criteria
+        Query the history of orders that have been confirmed by the
+        exchange (status >= CREATED). For orders still in INIT or
+        SUBMITTING (locally created but not yet acked), the caller
+        already holds a reference from `add_order`; those are not in
+        the history.
 
-        Args:
-            descending (bool = False): Whether to query the history in descending order, ie. the most recent orders first
-            limit (Optional[int]): Maximum number of orders to return. `None` means no limit.
-            **criteria: Criteria to match the orders
-
-        Returns:
-            Iterator[Order]: the matched orders
+        See OrderHistory.query for the criteria DSL — values can be
+        scalars (exact match), callables `(value, key) -> bool`, or
+        dicts (subset match on nested `ticket` / `data`).
 
         Usage::
 
             results = state.query_orders(
                 status=OrderStatus.FILLED,
-                # Callable matcher
-                created_at=lambda x: x.timestamp() > 1717171717,
+                created_at=lambda x, _: x.timestamp() > 1717171717,
             )
 
             results = state.query_orders(
                 descending=True,
                 limit=10,
-                # Dict matcher (for 'ticket' and 'target' only)
-                ticket={
-                    'side': OrderSide.BUY
-                }
+                ticket={'side': OrderSide.BUY},
+                data={'strategy': 'momentum'},
             )
         """
-
         return self._orders.history.query(
             descending=descending,
             limit=limit,
-            **criteria
+            **criteria,
         )
 
     def get_order_by_id(self, order_id: str, /) -> Optional[Order]:
         return self._orders.get_order_by_id(order_id)
 
-    def expect(
+    def allocate(
         self,
-        symbol_name: str, /,
-        exposure: Decimal,
-        price: Decimal,
-        urgent: bool,
-        data: PositionTargetMetaData = {}
-    ) -> ValueOrException[bool]:
+        ticket: OrderTicket, /,
+    ) -> List[OrderTicket]:
         """
-        Update expectation, returns whether it is successfully updated
+        Split `ticket` across the configured account currencies
+        according to `set_alt_currency_weights(...)`, returning a list
+        of filter-applied sub-tickets.
 
-        Args:
-            symbol_name (str): the name of the symbol to trade with
-            exposure (Decimal): the limit exposure to expect, should be between `0.0` and `1.0`. The exposure refers to the current holding of the base asset as a proportion of its maximum allowed notional limit
-            urgent (bool): whether the order should be executed urgently. When no custom strategy is selected, default strategy uses market order for urgent targets and limit order for non-urgent targets.
-            price (Decimal): the price to expect. For market order, it should be the estimated average price for the expected position target.
-            data (Dict[str, Any] = {}): the data attached to the expectation, which will also attached to the created order, order history for future reference.
+        Best-effort: when allocation cannot proceed (weights not
+        configured, no eligible bucket, MarketOrderTicket(QUOTE) which
+        we cannot split in base units, etc.) the original ticket is
+        returned wrapped in a single-element list — never a business
+        error. Eventual consistency is preserved: callers always get a
+        usable list of tickets to feed to `add_order`.
 
-        Returns:
-            Tuple[Optional[Exception], bool]:
-            - the reason exception if the expectation is not successfully updated
-            - whether the expectation is successfully updated
-
-        Usage::
-
-            # to all-in BTC within the notional limit
-            state.expect('BTCUSDT', 1., ...)
+        Each output ticket has already been run through its symbol's
+        filters in normalize mode. Filter rejections during allocation
+        cause that bucket's quantity to roll forward to the next
+        bucket via the existing compensate chain.
         """
+        passthrough = [ticket]
 
-        exception = self._balances.check_symbol_ready(symbol_name)
+        if self._alt_currency_weights is None:
+            return passthrough
 
-        if exception is not None:
-            return exception, None
+        side = ticket.side
+        weights_vec = self._alt_currency_weights[
+            0 if side is OrderSide.BUY else 1
+        ]
+        # alt weights first (in alt_account_currencies order), primary
+        # at the tail with implicit weight 1 — matches config.account_currencies.
+        # The primary bucket is always weight 1 (>0), so the overall
+        # "any positive weight" check is guaranteed True; the loop below
+        # filters per-bucket weights itself.
+        full_weights = (*weights_vec, DECIMAL_ONE)
 
-        symbol = self._symbols.get_symbol(symbol_name)
-        asset = symbol.base_asset
+        if isinstance(ticket, LimitOrderTicket):
+            reference_price = ticket.price
+        elif isinstance(ticket, MarketOrderTicket):
+            if ticket.quantity_type is MarketQuantityType.QUOTE:
+                # Quantity is quote-denominated; the base-unit allocate
+                # math does not apply. Passthrough is the safest move.
+                return passthrough
+            reference_price = ticket.estimated_price
+        else:
+            # Stop-loss / take-profit variants are out of scope of the
+            # current account-currency split logic.
+            return passthrough
 
-        # Normalize the exposure to be between 0 and 1
-        exposure = max(DECIMAL_ZERO, min(exposure, DECIMAL_ONE))
+        base_asset = ticket.symbol.base_asset
+        resources: List[AllocationResource] = []
+        for i, acct_cur in enumerate(self._config.account_currencies):
+            weight = full_weights[i]
+            if weight <= DECIMAL_ZERO:
+                continue
+            symbol_name = self._config.get_symbol_name(base_asset, acct_cur)
+            alt_symbol = self._symbols.get_symbol(symbol_name)
+            if alt_symbol is None:
+                continue
+            if side is OrderSide.BUY:
+                balance = self._balances.get_balance(acct_cur)
+                if balance is None or balance.free <= DECIMAL_ZERO:
+                    continue
+                free = balance.free
+            else:
+                free = DECIMAL_INF
+            resources.append(AllocationResource(alt_symbol, free, weight))
 
-        open_target = self._expected.get(asset)
+        if not resources:
+            return passthrough
 
-        if open_target is not None:
-            if (
-                open_target.exposure == exposure
-                and open_target.price == price
-                and open_target.urgent == urgent
-            ):
-                # If the target is the same, no need to update
-                # We treat it as a success
-                return None, False
+        output: List[OrderTicket] = []
 
-        calculated_exposure = self._get_asset_exposure(asset)
-
-        if calculated_exposure == exposure:
-            # If the target is the same, no need to update
-            # We treat it as a success
-            return None, False
-
-        self._expected[asset] = PositionTarget(
-            symbol=symbol,
-            exposure=exposure,
-            urgent=urgent,
-            price=price,
-            data=data
-        )
-
-        self.emit(TradingStateEvent.POSITION_TARGET_UPDATED)
-
-        return None, True
-
-    def get_orders(self) -> Tuple[
-        Set[Order],
-        Set[Order]
-    ]:
-        """
-        Diff the orders, and get all unsubmitted orders, by calling this method
-        - Orders of OrderStatus.INIT -> OrderStatus.SUBMITTING
-        - Orders of OrderStatus.ABOUT_TO_CANCEL -> OrderStatus.CANCELLING
-
-        Returns
-            tuple:
-            - a set of available orders
-            - a set of orders to cancel
-        """
-
-        self._diff()
-
-        orders, orders_to_cancel = self._orders.get_orders()
-
-        for order in orders:
-            self.update_order(order, status=OrderStatus.SUBMITTING)
-
-        for order in orders_to_cancel:
-            self.update_order(order, status=OrderStatus.CANCELLING)
-
-        return orders, orders_to_cancel
-
-    def update_order(self, order: Order, /, **kwargs) -> None:
-        """
-        Update the order
-
-        Args:
-            status (OrderStatus = None): The new status of the order
-            created_at (datetime = None): The creation time of the order
-            updated_at (datetime = None): The update time of the order
-            filled_quantity (Decimal = None): The new filled base assert quantity of the order
-            quote_quantity (Decimal = None): The cumulative quote asset transacted quantity of the order
-            commission_asset (str = None): The commission asset name
-            commission_quantity (Decimal = None): The cumulative quantity of the commission asset
-            id (str = None): The client order id
-
-        Usage::
-
-            state.update_order(
-                order,
-                filled_quantity = Decimal('0.5'),
-                quote_quantity = Decimal('1000')
+        def assign(symbol: Symbol, quantity: Decimal) -> Decimal:
+            if quantity <= DECIMAL_ZERO:
+                return DECIMAL_ZERO
+            candidate = replace(
+                ticket, symbol=symbol, quantity=quantity
             )
-        """
+            exc, normalized = candidate.apply_filters()
+            if exc is not None:
+                # Filter rejected — the entire candidate quantity rolls
+                # forward to the next bucket via the compensate chain.
+                return quantity
+            output.append(normalized)
+            return quantity - normalized.quantity
 
-        order.update(self._symbols, **kwargs)
+        if side is OrderSide.BUY:
+            buy_allocate(
+                resources, ticket.quantity, reference_price, assign
+            )
+        else:
+            sell_allocate(resources, ticket.quantity, assign)
+
+        if not output:
+            return passthrough
+
+        return output
 
     def record(self, *args, **kwargs) -> PerformanceSnapshot:
-        """
-        Record current performance snapshot
-
-        Args:
-            labels (dict = {}): List of labels to add to the snapshot
-            time (datetime = None): Timestamp of the snapshot
-
-        Returns:
-            PerformanceSnapshot: The created performance snapshot
-        """
+        """Record current performance snapshot."""
         return self._perf.record(*args, **kwargs)
 
     def performance(
         self,
-        descending: bool = False
+        descending: bool = False,
     ) -> Iterator[PerformanceSnapshot]:
-        """
-        Returns an iterator of performance snapshots
-
-        Args:
-            descending (bool = False): Whether to iterate in descending order, ie. the most recent snapshots first
-
-        Returns:
-            Iterator[PerformanceSnapshot]
-        """
-
         return self._perf.iterator(descending)
 
     # End of public methods ---------------------------------------------
 
-    def _check_allocation_weights(self, weights: AllocationWeights) -> None:
+    def _check_allocation_weights(
+        self,
+        weights: AllocationWeights,
+    ) -> None:
         for weight in weights:
             if weight < DECIMAL_ZERO:
                 raise ValueError(
-                    'The allocation weight must not less than 0')
+                    'The allocation weight must not less than 0'
+                )
 
         if len(weights) != len(self._config.alt_account_currencies):
             raise ValueError(
-                'The number of allocation weights must be equal to the number of alternative account currencies')
+                'The number of allocation weights must be equal to '
+                'the number of alternative account currencies'
+            )
 
     def _set_balance(
         self,
         balance: Balance,
-        *args, **kwargs
+        *,
+        delta: bool,
     ) -> None:
-        """
-        Set the balance of an asset
-        """
-
         asset = balance.asset
+        existing = self._balances.get_balance(asset)
 
-        old_balance, balance = self._balances.set_balance(
-            balance, *args, **kwargs
-        )
-
-        target = self._expected.get(asset)
-
-        if old_balance is None:
-            return
-
-        if old_balance.total == balance.total:
-            return
-
-        if target is None or target.status.lt(PositionTargetStatus.ACHIEVED):
-            # There is no expectation or
-            # the expectation is still being achieved,
-            # we do not need to recalculate the target
-
-            # And we actually do not know, whether the balance change is
-            # caused by the position target or not,
-            # so we just keep it.
-            return
-
-        calculated_exposure = self._get_asset_exposure(asset)
-        if calculated_exposure == target.exposure:
-            # The exposure is the same, no need to update
-            return
-
-        # We need to remove the expectation,
-        # so that self.exposure() will return the recalculated exposure
-        self._expected.pop(asset, None)
-
-    def _get_asset_exposure(self, asset: str) -> Optional[Decimal]:
-        """
-        Get the calculated limit exposure of an asset
-
-        Should only be called after `asset_ready`
-
-        Returns:
-            Decimal: the calculated limit exposure of the asset
-        """
-
-        balance = self._get_asset_expected_balance(asset)
-        price = self._symbols.valuation_price(asset)
-        limit = self._balances.get_notional_limit(asset)
-
-        if limit is None:
-            # If no notional limit, then the exposure is not calculable
-            return None
-
-        return balance * price / limit
-
-    def _get_asset_expected_balance(self, asset: str) -> Decimal:
-        extra = DECIMAL_ZERO
-
-        for order in self._orders.get_orders_by_base_asset(asset):
-            # For BUY orders, the balance will increase
-            if order.ticket.side is OrderSide.BUY:
-                extra += order.ticket.quantity - order.filled_quantity
-
-        return self._balances.get_asset_total_balance(asset, extra)
-
-    def _diff(self) -> None:
-        """
-        Diff the position expectations
-        """
-
-        for asset, target in list(self._expected.items()):
-            self._create_order_from_position_target(target)
-
-            if target.status is PositionTargetStatus.INIT:
-                # If there are orders created
-                if self._target_orders[target]:
-                    target.status = PositionTargetStatus.ALLOCATED
-
-                    # Update the exposure to the actual exposure
-                    self._update_target_exposure(target)
-                else:
-                    # We'd better remove the expectation to avoid
-                    # unexpected behavior later on, such as
-                    # - we can't meet the expectation, but after a long time,
-                    #   the balance suddenly updated, and trigger an unexpected
-                    #   new order creation
-                    self._expected.pop(asset, None)
-
-    def _update_target_exposure(self, target: PositionTarget) -> None:
-        target.exposure = self._get_asset_exposure(
-            target.symbol.base_asset
-        )
-
-    def _create_order_from_position_target(
-        self,
-        target: PositionTarget
-    ) -> None:
-        """
-        Create a order from an asset position target.
-
-        Actually it is always called after `symbol_ready`
-        because of `self.expect(...)`
-        """
-
-        if target.status is not PositionTargetStatus.INIT:
-            return
-
-        symbol = target.symbol
-
-        existing_order = self._orders.get_order_by_symbol(symbol)
-
-        # We only keep one order for a single symbol
-        if existing_order is not None:
-            self.cancel_order(existing_order)
-
-        # Calculate the eventual valuation value of the asset
-        # --------------------------------------------------------
-        asset = symbol.base_asset
-        balance = self._get_asset_expected_balance(asset)
-        valuation_price = self._symbols.valuation_price(asset)
-        value = balance * valuation_price
-
-        limit = self._balances.get_notional_limit(asset)
-
-        if limit is not None:
-            value_delta = Decimal(str(target.exposure)) * limit - value
-            quantity = value_delta / valuation_price
-
-            if quantity.is_zero():
-                # Usually, it won't be zero,
-                # but the balance might changed after `.expect()`
-                return
-
-            side = OrderSide.BUY
-            if quantity < DECIMAL_ZERO:
-                side = OrderSide.SELL
-                quantity = - quantity
-        else:
-            # If no notional limit, then all in or all out
-            quantity = DECIMAL_INF
-            side = (
-                OrderSide.BUY
-                if target.exposure > DECIMAL_ZERO
-                else OrderSide.SELL
-            )
-
+        # Stale-time guard only applies to absolute snapshots. Delta
+        # writes are increments, not authoritative snapshots, and have
+        # no meaningful time ordering against existing absolute state.
         if (
-            # No allocation weights
-            self._alt_currency_weights is None
-            # No alternative account currencies
-            or not self._config.alt_account_currencies
-            # Not an account currency, we do not need to do allocation,
-            # Example: BTCBNB
-            or symbol.quote_asset not in self._config.account_currencies
+            not delta
+            and existing is not None
+            and balance.time < existing.time
         ):
-            self._check_balance_and_create_order(
-                symbol, quantity, target, side
+            self._emit_stale(
+                'balance_time_regress',
+                asset=asset,
+                order=None,
+                incoming_value=balance.time,
+                current_value=existing.time,
             )
             return
 
-        weights = self._alt_currency_weights[
-            0 if side is OrderSide.BUY else 1
+        self._balances.set_balance(balance, delta=delta)
+
+        self._recon.on_balance_set(asset, balance.time)
+
+        self._purge_fully_settled_completed_orders()
+
+    def _purge_fully_settled_completed_orders(self) -> None:
+        """
+        After a balance update, drop tracking for any order that has
+        already reached a terminal status AND whose current impact on
+        every involved asset matches the settled value. This keeps the
+        recon dict bounded without losing fidelity: while a completed
+        order still has unsettled fills, it stays tracked so
+        `unsettled(...)` continues to reflect them.
+        """
+        # Snapshot first to avoid mutating during iteration.
+        to_check = [
+            o for o in list(self._recon._orders)
+            if o.status.completed()
         ]
+        for order in to_check:
+            if self._is_fully_settled(order):
+                self._recon.purge(order)
 
-        self._balance_account_currencies_and_create_orders(
-            asset,
-            quantity,
-            (*weights, DECIMAL_ONE),
-            target,
-            side
-        )
+    def _is_fully_settled(self, order: Order) -> bool:
+        symbol = order.ticket.symbol
+        assets: Set[str] = {symbol.base_asset, symbol.quote_asset}
+        if order.commission_asset is not None:
+            assets.add(order.commission_asset)
+        for asset in assets:
+            settled = self._recon._settled.get(order, {}).get(
+                asset, DECIMAL_ZERO
+            )
+            current = current_impact_on_asset(order, asset)
+            if settled != current:
+                return False
+        return True
 
-    def _balance_account_currencies_and_create_orders(
+    def _emit_stale(
         self,
-        # The base asset to trade
-        asset: str,
-        # The quantity of the base asset to trade
-        quantity: Decimal,
-        weights: AllocationWeights,
-        target: PositionTarget,
-        side: OrderSide
+        kind: StaleKind,
+        *,
+        asset: Optional[str],
+        order: Optional[Order],
+        incoming_value: Any,
+        current_value: Any,
     ) -> None:
-        resources = list[AllocationResource](
-            AllocationResource(symbol, balance.free, weight)
-            for i, quote_asset in enumerate(
-                self._config.account_currencies
-            )
-            if (
-                (
-                    symbol := self._symbols.get_symbol(
-                        self._config.get_symbol_name(asset, quote_asset)
-                    )
-                ) is not None
-                and (
-                    # For BUY: balance must be positive
-                    (
-                        balance := self._balances.get_balance(quote_asset)
-                    ) is not None and balance.free > 0
-                    # For SELL, allow the balance of a quote asset to be 0
-                    or side is OrderSide.SELL
-
-                # For both BUY and SELL, the weight must be positive
-                ) and (weight := weights[i]) > 0
-            )
+        self.emit(
+            TradingStateEvent.STALE_UPDATE,
+            StaleUpdate(
+                kind=kind,
+                asset=asset,
+                order=order,
+                incoming_value=incoming_value,
+                current_value=current_value,
+            ),
         )
-
-        if not resources:
-            # No available account currencies
-            return
-
-        if len(resources) == 1:
-            # Only one account currency available,
-            # we do not need to do allocation
-            self._check_balance_and_create_order(
-                resources[0].symbol, quantity, target, side
-            )
-            return
-
-        if side is OrderSide.BUY:
-            buy_allocate(
-                resources,
-                quantity,
-                target,
-                self._create_order
-            )
-        else:
-            sell_allocate(
-                resources,
-                quantity,
-                target,
-                self._create_order
-            )
-
-    def _check_balance_and_create_order(
-        self,
-        symbol: Symbol,
-        quantity: Decimal,
-        target: PositionTarget,
-        side: OrderSide
-    ) -> None:
-        if side is OrderSide.BUY:
-            quantity = min(
-                quantity,
-                # We need to check the available balance of the quote asset
-                self._balances.get_balance(
-                    symbol.quote_asset
-                ).free / target.price
-            )
-        else:
-            quantity = min(
-                quantity,
-                # We need to check the available balance of the base asset
-                self._balances.get_balance(symbol.base_asset).free
-            )
-
-        self._create_order(symbol, quantity, target, side)
-
-    def _create_order(
-        self,
-        symbol: Symbol,
-        target_quantity: Decimal,
-        target: PositionTarget,
-        side: OrderSide
-    ) -> Decimal:
-        """
-        Returns:
-            Decimal: the remaining base quantity relative to the target quantity
-        """
-
-        strategy = self._resolve_execution_strategy(target)
-
-        ticket = strategy.create_ticket(
-            symbol,
-            target_quantity,
-            target,
-            side
-        )
-
-        if ticket is None:
-            # Strategy decides to skip this tick.
-            return target_quantity
-
-        exception, normalized = symbol.apply_filters(
-            ticket,
-            validate_only=False,
-        )
-
-        if exception is not None:
-            self.emit(TradingStateEvent.TICKET_CREATE_FAILED, exception)
-            # The quantity consuming task is not finished
-            return target_quantity
-
-        ticket = normalized
-
-        order = Order(
-            ticket=ticket,
-            target=target
-        )
-
-        order.on(
-            OrderUpdatedType.STATUS_UPDATED,
-            self._on_order_status_updated
-        )
-
-        order.on(
-            OrderUpdatedType.FILLED_QUANTITY_UPDATED,
-            self._on_order_filled_quantity_updated
-        )
-
-        self._orders.add(order)
-        self._order_execution_strategies[order] = strategy
-
-        # Track the order for the position target
-        self._target_orders[target].add(order)
-
-        return target_quantity - consumed_base_quantity(ticket)
 
     def _on_order_status_updated(
         self,
         order: Order,
-        status: OrderStatus
+        status: OrderStatus,
     ) -> None:
-        match status:
-            case OrderStatus.REJECTED:
-                self.cancel_order(order)
-
-            case OrderStatus.CANCELLED:
-                self.cancel_order(order)
-
-            case OrderStatus.FILLED:
-                target = order.target
-                target_orders = self._target_orders[target]
-
-                # All orders are filled
-                if all(
-                    order.status is OrderStatus.FILLED
-                    for order in target_orders
-                ):
-                    target.status = PositionTargetStatus.ACHIEVED
-
         if status.completed():
             self._perf.track_order(order)
 
-            # Keep strategy association at order level, so strategy selection
-            # is fully outside expect() and target definition.
-            strategy = self._order_execution_strategies.pop(
-                order,
-                None
-            )
-            if strategy is None:
-                strategy = self._resolve_execution_strategy(
-                    order.target
-                )
-            strategy.track_order(order)
-
-        # So that the caller of trading state
-        # can also listen to the changes of order status
+        # So that the caller of trading state can also listen to the
+        # changes of order status.
         self.emit(TradingStateEvent.ORDER_STATUS_UPDATED, order, status)
 
     def _on_order_filled_quantity_updated(
         self,
         order: Order,
-        filled_quantity: Decimal
+        filled_quantity: Decimal,
     ) -> None:
         self.emit(
             TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED,
             order,
-            filled_quantity
+            filled_quantity,
         )
-
-    def _resolve_execution_strategy(
-        self,
-        target: PositionTarget
-    ) -> ExecutionStrategy:
-        resolver = self._execution_strategy_resolver
-
-        if resolver is None:
-            return self._default_execution_strategy
-
-        strategy = resolver(target)
-
-        if strategy is None:
-            return self._default_execution_strategy
-
-        return strategy
 
     def _on_performance_snapshot_recorded(
         self,
-        snapshot: PerformanceSnapshot
+        snapshot: PerformanceSnapshot,
     ) -> None:
         self.emit(
             TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED, snapshot
@@ -980,32 +823,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
     def _check_balance_cash_flow(self, symbol_name: str) -> None:
         not_ready_assets = self._balances.not_ready_assets
-
-        # Those assets rely on the symbol to calculate the valuation price
         assets = not_ready_assets.dependents(symbol_name)
 
         if assets is None:
             return
 
-        # `assets` might be modified during the iteration,
-        # so assets -> list(assets)
         for asset in list(assets):
             balance = self._balances.get_balance(asset)
             cf = CashFlow(
                 asset=asset,
                 quantity=balance.total,
-                time=datetime.now()
+                time=datetime.now(),
             )
-
-            # We treat the balance as a cash flow to the account,
-            # so that the performance analyzer could get the
-            # correct PnL
             success = self._perf.set_cash_flow(cf)
-
-            # The asset might still not be ready yet,
-            # which would lead to the failure of setting the cash flow
             if success:
-                # We should only clear the asset from the not ready assets
-                # if the cash flow is set successfully,
-                # otherwise, the asset will be treated as a cash flow later
                 not_ready_assets.clear(asset)

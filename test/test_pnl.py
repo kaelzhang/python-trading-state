@@ -5,17 +5,19 @@ from trading_state import (
     TradingConfig,
     Balance,
     CashFlow,
+    LimitOrderTicket,
     OrderSide,
     OrderStatus,
-    # PerformanceSnapshot
+    TimeInForce,
 )
 
 from trading_state.common import (
-    DECIMAL_ZERO
+    DECIMAL_ZERO,
 )
 
 from .fixtures import (
     init_state,
+    balance_time,
     BTC,
     ETH,
     USDT,
@@ -25,42 +27,63 @@ from .fixtures import (
     ZUSDT,
     BTCUSDT,
     ETHUSDT,
-    DEFAULT_CONFIG_KWARGS
+    DEFAULT_CONFIG_KWARGS,
 )
+
+
+def _buy_limit(state, symbol_name, quantity, price):
+    sym = state._symbols.get_symbol(symbol_name)
+    return LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=quantity,
+        price=price,
+        time_in_force=TimeInForce.GTC,
+    )
+
+
+def _sell_limit(state, symbol_name, quantity, price):
+    sym = state._symbols.get_symbol(symbol_name)
+    return LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=quantity,
+        price=price,
+        time_in_force=TimeInForce.GTC,
+    )
 
 
 def test_pnl():
     config = TradingConfig(
         benchmark_assets=(BTC, ETH),
-        **DEFAULT_CONFIG_KWARGS
+        **DEFAULT_CONFIG_KWARGS,
     )
     state = init_state(config=config)
 
     state.set_symbol(ZUSDT)
 
     now = datetime.now()
+    t = balance_time(0)
 
-    # Cash flow before balance is set and before init, skip
+    # Cash flow before balance is set and before init: skip
     cash_flow_z = CashFlow(Z, Decimal('0.5'), now)
     state.set_cash_flow(cash_flow_z)
 
     state.set_balances([
         # invalid balance, asset not found
-        Balance('invalid', Decimal('1'), Decimal('0'), now),
+        Balance('invalid', Decimal('1'), Decimal('0'), t),
         # Zero balance, which is actually invalid
-        Balance(X, DECIMAL_ZERO, DECIMAL_ZERO, now)
+        Balance(X, DECIMAL_ZERO, DECIMAL_ZERO, t),
     ])
 
-    # Initial record
-    # BTC: $10000
-    # ---------------------------------------------------
+    # Initial record (BTC: $10000)
     node = state.record(time=now)
 
     # Cash flow before balance is set, skip
     state.set_cash_flow(cash_flow_z)
 
     state.set_balances([
-        Balance(Z, Decimal('1'), Decimal('0'), time=now),
+        Balance(Z, Decimal('1'), Decimal('0'), t),
     ])
 
     # Set the same cash flow before price is ready, skip
@@ -71,11 +94,10 @@ def test_pnl():
     assert node.unrealized_pnl == DECIMAL_ZERO
 
     assert BTC in node.positions
-
     # Price not ready yet
     assert Z not in node.positions
 
-    # Account currencies
+    # Account currencies don't have positions
     assert USDT not in node.positions
     assert USDC not in node.positions
 
@@ -87,7 +109,6 @@ def test_pnl():
     assert node.unrealized_pnl == DECIMAL_ZERO
 
     # Price increased => unrealized PnL increased
-    # ---------------------------------------------------
     price = Decimal('20000')
     state.set_price(BTCUSDT.name, price)
 
@@ -98,17 +119,16 @@ def test_pnl():
     assert node2.unrealized_pnl == Decimal('10000')
 
     now3 = datetime.now()
+    t3 = balance_time(60)
 
-    # Cash Flow of BTC, + $20000
-    # ---------------------------------------------------
+    # Cash flow of BTC, + $20000
     state.set_balances([
-        Balance(BTC, Decimal('1'), Decimal('0'), time=now3)
+        Balance(BTC, Decimal('1'), Decimal('0'), t3),
     ], delta=True)
 
     cash_flow = CashFlow(BTC, Decimal('1'), now3)
     state.set_cash_flow(cash_flow)
-
-    # Set the same cash flow multiple times
+    # Same cash flow again -> ignored
     state.set_cash_flow(cash_flow)
 
     assert 'CashFlow(BTC' in repr(cash_flow)
@@ -116,47 +136,40 @@ def test_pnl():
     node3 = state.record(time=now3)
 
     BTC_position3 = node3.positions[BTC]
-
     assert BTC_position3.quantity == Decimal('2')
     assert BTC_position3.cost == Decimal('30000')
     assert node3.unrealized_pnl == Decimal('10000')
     assert node3.net_cash_flow == Decimal('20000')
 
-    _, exposure = state.exposure(BTC)
-
+    _, exposure = state.exposure(
+        BTC,
+        include_unsettled_inflow=False,
+        include_unsettled_outflow=False,
+    )
     assert exposure == Decimal('0.4')
 
-    # Expect a buy order
-    # ---------------------------------------------------
-    state.expect(
-        BTCUSDT.name,
-        exposure=Decimal('0.5'),
-        price=price,
-        urgent=False
-    )
-
-    orders, _ = state.get_orders()
-    assert len(orders) == 1
-
-    order = orders.pop()
-    ticket = order.ticket
-    assert ticket.symbol.name == BTCUSDT.name
-    assert ticket.side == OrderSide.BUY
-    assert ticket.quantity == Decimal('0.5')
-    assert ticket.price == Decimal('20000')
-
-    now3 = datetime.now()
+    # Buy via add_order
+    ticket = _buy_limit(state, BTCUSDT.name, Decimal('0.5'), price)
+    _, order = state.add_order(ticket)
+    assert order is not None
+    assert order.ticket.symbol.name == BTCUSDT.name
+    assert order.ticket.side is OrderSide.BUY
+    assert order.ticket.quantity == Decimal('0.5')
+    assert order.ticket.price == Decimal('20000')
 
     state.update_order(
         order,
+        status=OrderStatus.FILLED,
+        updated_at=datetime.now(),
+        id='buy-1',
         filled_quantity=Decimal('0.5'),
         # The USDT used is less than the expected quote quantity
         quote_quantity=Decimal('5000'),
-        status=OrderStatus.FILLED,
+        commission_asset=None,
+        commission_quantity=None,
     )
 
-    # But price decreased significantly
-    # ---------------------------------------------------
+    # Price decreased significantly
     price2 = Decimal('5000')
     state.set_price(BTCUSDT.name, price2)
 
@@ -172,9 +185,7 @@ def test_pnl():
     assert BTC_position5.quantity == Decimal('2.5')
     assert node5.unrealized_pnl == Decimal('-22500')
 
-    # Set price of Z
-    # The balance of Z should be treated as a cash flow
-    # ---------------------------------------------------
+    # Set price of Z; balance of Z should be treated as cash flow.
     state.set_price(ZUSDT.name, Decimal('10000'))
 
     now6 = datetime.now()
@@ -189,25 +200,19 @@ def test_pnl():
     assert ETH_benchmark6.asset == ETH
 
     # Sell
-    # ---------------------------------------------------
-    state.expect(
-        BTCUSDT.name,
-        exposure=Decimal('0.025'),
-        price=price2,
-        urgent=False
-    )
-
-    orders, _ = state.get_orders()
-    assert len(orders) == 1
-
-    order = orders.pop()
-
+    ticket = _sell_limit(state, BTCUSDT.name, Decimal('2'), price2)
+    _, order = state.add_order(ticket)
+    assert order is not None
     state.update_order(
         order,
+        status=OrderStatus.FILLED,
+        updated_at=datetime.now(),
+        id='sell-1',
         filled_quantity=Decimal('2'),
         # The USDT used is less than the expected quote quantity
         quote_quantity=Decimal('15000'),
-        status=OrderStatus.FILLED,
+        commission_asset=None,
+        commission_quantity=None,
     )
 
     now7 = datetime.now()
@@ -216,27 +221,19 @@ def test_pnl():
     assert node7.realized_pnl == Decimal('-15000')
     assert node7.unrealized_pnl == Decimal('-2500')
 
-    # print(state._perf._position_tracker._positions._data)
-
     # Sell more
-    # ---------------------------------------------------
-    state.expect(
-        BTCUSDT.name,
-        exposure=Decimal('0.02'),
-        price=price2,
-        urgent=False
-    )
-
-    orders, _ = state.get_orders()
-    assert len(orders) == 1
-    order = orders.pop()
-
+    ticket = _sell_limit(state, BTCUSDT.name, Decimal('0.1'), price2)
+    _, order = state.add_order(ticket)
+    assert order is not None
     state.update_order(
         order,
-        filled_quantity=Decimal('0.1'),
-        # The USDT used is less than the expected quote quantity
-        quote_quantity=Decimal('500'),
         status=OrderStatus.FILLED,
+        updated_at=datetime.now(),
+        id='sell-2',
+        filled_quantity=Decimal('0.1'),
+        quote_quantity=Decimal('500'),
+        commission_asset=None,
+        commission_quantity=None,
     )
 
     now8 = datetime.now()
@@ -244,18 +241,15 @@ def test_pnl():
 
     assert node8.realized_pnl == Decimal('-15500')
 
-    # Decrease ETH
-    # ---------------------------------------------------
+    # External cash flow for Z (withdrawal)
     state.set_cash_flow(
         CashFlow(Z, Decimal('-2'), datetime.now())
     )
-
-    # This should not happen, however we should handle it to prevent dirty data
+    # Out-of-order cash flow: ignored
     state.set_cash_flow(
         CashFlow(Z, Decimal('-1'), datetime.now())
     )
-
-    # Zero cash flow, which is invalid
+    # Zero cash flow: invalid in practice but state should swallow it
     state.set_cash_flow(
         CashFlow(Z, Decimal('0'), datetime.now())
     )

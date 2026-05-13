@@ -2,6 +2,7 @@ from typing import Optional
 import json
 from pathlib import Path
 from typing import Dict
+from datetime import datetime
 from decimal import Decimal
 
 from trading_state import (
@@ -9,8 +10,6 @@ from trading_state import (
     TradingState,
     TradingConfig,
     Balance,
-    ExecutionStrategy,
-    ExecutionStrategyResolver
 )
 
 from trading_state.binance import (
@@ -63,6 +62,7 @@ ETHUSDT = Symbol(ETH + USDT, ETH, USDT)
 Symbols = Dict[str, Symbol]
 symbols: Symbols = {}
 
+
 def get_symbols() -> Symbols:
     global symbols
 
@@ -83,23 +83,27 @@ DEFAULT_CONFIG_KWARGS = dict(
 )
 
 
+# A fixed-but-monotonic time fountain so balance updates can be ordered
+# deterministically across tests without sleeping or pulling
+# datetime.now() (which fluctuates per run).
+_BALANCE_TIME_BASE = datetime(2024, 1, 1, 0, 0, 0)
+
+
+def balance_time(offset_seconds: int = 0) -> datetime:
+    return datetime.fromtimestamp(
+        _BALANCE_TIME_BASE.timestamp() + offset_seconds
+    )
+
+
 def create_state(
-    config: Optional[TradingConfig],
-    default_execution_strategy: Optional[ExecutionStrategy] = None,
-    execution_strategy_resolver: Optional[
-        ExecutionStrategyResolver
-    ] = None
+    config: Optional[TradingConfig] = None,
 ) -> TradingState:
     if config is None:
         config = TradingConfig(
             **DEFAULT_CONFIG_KWARGS
         )
 
-    state = TradingState(
-        config=config,
-        default_execution_strategy=default_execution_strategy,
-        execution_strategy_resolver=execution_strategy_resolver
-    )
+    state = TradingState(config)
 
     assert state.config == config
     return state
@@ -130,26 +134,19 @@ def init_notional_limits(state: TradingState) -> None:
 
 
 def init_balances(state: TradingState) -> None:
+    t = balance_time()
     state.set_balances([
-        Balance(BTC, Decimal('1'), Decimal('0')),
-        Balance(USDC, Decimal('200000'), Decimal('0')),
-        Balance(USDT, Decimal('200000'), Decimal('0')),
+        Balance(BTC, Decimal('1'), Decimal('0'), t),
+        Balance(USDC, Decimal('200000'), Decimal('0'), t),
+        Balance(USDT, Decimal('200000'), Decimal('0'), t),
     ])
 
 
 def init_state(
     config: Optional[TradingConfig] = None,
     with_balances: bool = True,
-    default_execution_strategy: Optional[ExecutionStrategy] = None,
-    execution_strategy_resolver: Optional[
-        ExecutionStrategyResolver
-    ] = None
 ) -> TradingState:
-    state = create_state(
-        config=config,
-        default_execution_strategy=default_execution_strategy,
-        execution_strategy_resolver=execution_strategy_resolver
-    )
+    state = create_state(config=config)
     init_symbols(state)
     init_prices(state)
     init_notional_limits(state)

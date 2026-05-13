@@ -4,23 +4,24 @@ from decimal import Decimal
 from stock_pandas import StockDataFrame
 
 from trading_state import (
+    LimitOrderTicket,
     TradingStateEvent,
     TradingState,
     TradingConfig,
     Balance,
-    # Symbol,
     OrderSide,
     OrderStatus,
+    OrderType,
     CashFlow,
-    OrderType
+    TimeInForce,
 )
 from trading_state.analyzer import (
     AnalyzerType,
-    PerformanceAnalyzer
+    PerformanceAnalyzer,
 )
 from trading_state.common import (
     DECIMAL_ZERO,
-    DECIMAL_ONE
+    DECIMAL_ONE,
 )
 
 from .fixtures import (
@@ -29,13 +30,12 @@ from .fixtures import (
     DEFAULT_CONFIG_KWARGS,
     BTC,
     USDT,
-    BTCUSDT
+    BTCUSDT,
 )
 
 
 def test_analyzer_type():
     availables = AnalyzerType.availables()
-
     print(availables)
 
 
@@ -50,7 +50,7 @@ class Trader:
         analyzer: PerformanceAnalyzer,
         stock: StockDataFrame,
         init_base_currency: Decimal,
-        fee: Decimal
+        fee: Decimal,
     ):
         self._state = state
         self._analyzer = analyzer
@@ -60,120 +60,123 @@ class Trader:
 
         self._state.on(
             TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED,
-            self._analyzer.add_snapshots
-        )
-
-        self._state.on(
-            TradingStateEvent.POSITION_TARGET_UPDATED,
-            self._handle_orders
+            self._analyzer.add_snapshots,
         )
 
         self._state.set_notional_limit(BTC, None)
 
+        # Initial balances — time must be set on every Balance.
         self._state.set_balances([
-            Balance(
-                USDT,
-                init_base_currency,
-                DECIMAL_ZERO
-            ),
-            Balance(
-                BTC,
-                DECIMAL_ZERO,
-                DECIMAL_ZERO
-            )
+            Balance(USDT, init_base_currency, DECIMAL_ZERO, self._time),
+            Balance(BTC, DECIMAL_ZERO, DECIMAL_ZERO, self._time),
         ])
 
         self._state.set_price(
             BTCUSDT.name,
-            Decimal(str(self._stock['close'].iloc[0]))
+            Decimal(str(self._stock['close'].iloc[0])),
         )
 
     def _cash_flow(self) -> None:
         if self._cash_flowed:
             return
-
         self._cash_flowed = True
-
         self._state.set_cash_flow(
-            CashFlow(USDT, Decimal('-3000'), time=self._time)
+            CashFlow(USDT, Decimal('-3000'), time=self._time),
         )
 
-    def _handle_orders(self) -> None:
-        orders, _ = self._state.get_orders()
-
-        # In replayer mode, no orders need to be canceled
-
-        if len(orders) == 0:
+    def _buy(self, price: Decimal) -> None:
+        usdt = self._state._balances.get_balance(USDT).free
+        if usdt <= DECIMAL_ZERO:
+            return
+        quantity = usdt / price
+        sym = self._state._symbols.get_symbol(BTCUSDT.name)
+        ticket = LimitOrderTicket(
+            symbol=sym,
+            side=OrderSide.BUY,
+            quantity=quantity,
+            price=price,
+            time_in_force=TimeInForce.GTC,
+        )
+        exc, order = self._state.add_order(ticket)
+        if exc is not None or order is None:
             return
 
-        # In replayer, for now, we only support one symbol at a time
-        order = orders.pop()
+        assert order.ticket.is_a(OrderType.LIMIT, side=OrderSide.BUY)
+        assert not order.ticket.is_a(
+            OrderType.LIMIT, side=OrderSide.SELL
+        )
+        assert not order.ticket.is_a(
+            OrderType.LIMIT, stop_price=DECIMAL_ONE
+        )
 
-        time = self._time
-        ticket = order.ticket
-        symbol = ticket.symbol
+        quantity_gain = order.ticket.quantity * self._fee_loss
+        quantity_used = order.ticket.quantity * order.ticket.price
 
-        if ticket.side is OrderSide.BUY:
-
-            assert order.ticket.is_a(OrderType.LIMIT, side=OrderSide.BUY)
-            assert not order.ticket.is_a(OrderType.LIMIT, side=OrderSide.SELL)
-            assert not order.ticket.is_a(
-                OrderType.LIMIT, stop_price=DECIMAL_ONE
-            )
-
-            asset_gain, asset_used = symbol.base_asset, symbol.quote_asset
-            quantity_gain = ticket.quantity * self._fee_loss
-            quantity_used = ticket.quantity * ticket.price
-
-            self._state.update_order(
-                order,
-                status=OrderStatus.FILLED,
-                created_at=time,
-                filled_quantity=quantity_gain,
-                quote_quantity=quantity_used,
-            )
-        else:
-            asset_gain, asset_used = symbol.quote_asset, symbol.base_asset
-            quantity_gain = ticket.quantity * ticket.price * self._fee_loss
-            quantity_used = ticket.quantity
-
-            self._state.update_order(
-                order,
-                status=OrderStatus.FILLED,
-                created_at=time,
-                filled_quantity=quantity_used,
-                quote_quantity=quantity_gain,
-            )
+        self._state.update_order(
+            order,
+            status=OrderStatus.FILLED,
+            updated_at=self._time,
+            id=None,
+            filled_quantity=quantity_gain,
+            quote_quantity=quantity_used,
+            commission_asset=None,
+            commission_quantity=None,
+        )
 
         self._state.set_balances([
-            Balance(
-                asset_gain,
-                quantity_gain,
-                DECIMAL_ZERO,
-                time
-            ),
-            Balance(
-                asset_used,
-                - quantity_used,
-                DECIMAL_ZERO,
-                time
-            )
+            Balance(BTC, quantity_gain, DECIMAL_ZERO, self._time),
+            Balance(USDT, -quantity_used, DECIMAL_ZERO, self._time),
         ], delta=True)
 
-        if ticket.side is OrderSide.SELL:
-            self._cash_flow()
+        self._state.record(time=self._time)
 
-        # print(
-        #     f'{order.ticket.side} {order.ticket.price}',
-        #     'btc', self._state._balances.get_balance(BTC).free,
-        #     'usdt', self._state._balances.get_balance(USDT).free,
-        # )
+    def _sell(self, price: Decimal) -> None:
+        btc = self._state._balances.get_balance(BTC).free
+        if btc <= DECIMAL_ZERO:
+            return
+        sym = self._state._symbols.get_symbol(BTCUSDT.name)
+        ticket = LimitOrderTicket(
+            symbol=sym,
+            side=OrderSide.SELL,
+            quantity=btc,
+            price=price,
+            time_in_force=TimeInForce.GTC,
+        )
+        exc, order = self._state.add_order(ticket)
+        if exc is not None or order is None:
+            return
 
-        self._state.record(time=time)
+        quantity_gain = (
+            order.ticket.quantity * order.ticket.price * self._fee_loss
+        )
+        quantity_used = order.ticket.quantity
+
+        self._state.update_order(
+            order,
+            status=OrderStatus.FILLED,
+            updated_at=self._time,
+            id=None,
+            filled_quantity=quantity_used,
+            quote_quantity=quantity_gain,
+            commission_asset=None,
+            commission_quantity=None,
+        )
+
+        self._state.set_balances([
+            Balance(USDT, quantity_gain, DECIMAL_ZERO, self._time),
+            Balance(BTC, -quantity_used, DECIMAL_ZERO, self._time),
+        ], delta=True)
+
+        self._cash_flow()
+        self._state.record(time=self._time)
 
     def go(self) -> None:
-        gold_cross = StockDataFrame.directive_stringify('macd // macd.signal')
-        dead_cross = StockDataFrame.directive_stringify('macd \\ macd.signal')
+        gold_cross = StockDataFrame.directive_stringify(
+            'macd // macd.signal'
+        )
+        dead_cross = StockDataFrame.directive_stringify(
+            'macd \\ macd.signal'
+        )
 
         self._stock[gold_cross]
         self._stock[dead_cross]
@@ -187,28 +190,21 @@ class Trader:
 
             self._time = row.name
 
-            if not buy and not sell:
+            if buy:
+                self._buy(price)
+            elif sell:
+                self._sell(price)
+            else:
                 self._state.record(time=row.name)
-                continue
-
-            exception, _ = self._state.expect(
-                BTCUSDT.name,
-                exposure=DECIMAL_ONE if buy else DECIMAL_ZERO,
-                price=price,
-                urgent=False
-            )
-
-            if exception is not None:
-                raise exception
 
 
 def test_analyzer():
     state = init_state(
         config=TradingConfig(**{
             **DEFAULT_CONFIG_KWARGS,
-            'benchmark_assets': (BTC,)
+            'benchmark_assets': (BTC,),
         }),
-        with_balances=False
+        with_balances=False,
     )
 
     stock = get_stock()
@@ -219,7 +215,7 @@ def test_analyzer():
         analyzer,
         stock,
         init_base_currency,
-        Decimal('0.0075')
+        Decimal('0.0075'),
     )
 
     trader.go()
@@ -250,6 +246,3 @@ def test_analyzer():
         analyzer2.analyze()[AnalyzerType.TOTAL_RETURN].value
         == result[AnalyzerType.TOTAL_RETURN].value
     )
-
-    # print(analyzer.analyze()[AnalyzerType.TOTAL_RETURN])
-    # print(analyzer.analyze()[AnalyzerType.SHARPE_RATIO])

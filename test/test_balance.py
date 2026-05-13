@@ -7,23 +7,26 @@ from trading_state import (
     Balance,
     TradingConfig,
     TradingState,
-    Symbol
+    Symbol,
 )
 
-from .fixtures import BTC
+from .fixtures import BTC, balance_time
 
 
 def test_balance():
     balance = Balance(
         asset=BTC,
         free=Decimal('1.0'),
-        locked=Decimal('0.0')
+        locked=Decimal('0.0'),
+        time=balance_time(),
     )
 
     assert repr(balance) == 'Balance(BTC free=1.0, locked=0.0)'
 
 
-def test_dependency_manager_clear_when_symbols_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dependency_manager_clear_when_symbols_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config = TradingConfig(account_currency='USDT')
     state = TradingState(config)
 
@@ -31,7 +34,7 @@ def test_dependency_manager_clear_when_symbols_missing(monkeypatch: pytest.Monke
     state.set_symbol(Symbol('BTCUSDT', 'BTC', 'USDT'))
 
     state.set_balances([
-        Balance('X', Decimal('1'), Decimal('0'))
+        Balance('X', Decimal('1'), Decimal('0'), balance_time()),
     ])
 
     # First snapshot: both XBTC and BTCUSDT prices missing
@@ -56,7 +59,8 @@ def test_dependency_manager_clear_when_symbols_missing(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(state_module, 'datetime', FakeDateTime)
 
-    # Now BTCUSDT becomes ready, cash flow is recorded and clear() removes asset symbols
+    # Now BTCUSDT becomes ready, cash flow is recorded and clear()
+    # removes asset symbols.
     state.set_price('BTCUSDT', Decimal('30000'))
 
     dm = state._balances.not_ready_assets

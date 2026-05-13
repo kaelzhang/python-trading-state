@@ -21,10 +21,8 @@ from .exceptions import (
     BalanceNotReadyError,
     NotionalLimitNotSetError,
     AssetNotDefinedError,
-    SymbolNotDefinedError,
     ValuationNotAvailableError,
     ValuationPriceNotReadyError,
-    SymbolPriceNotReadyError
 )
 from .config import TradingConfig
 
@@ -33,14 +31,14 @@ class Balance:
     asset: str
     free: Decimal
     locked: Decimal
-    time: Optional[datetime]
+    time: datetime
 
     def __init__(
         self,
         asset: str,
         free: Decimal,
         locked: Decimal,
-        time: Optional[datetime] = None
+        time: datetime,
     ):
         self.asset = asset
         self.free = free
@@ -131,7 +129,6 @@ class BalanceManager:
     # asset -> notional limit
     _notional_limits: Dict[str, Decimal]
 
-    _checked_symbol_names: Set[str]
     _checked_asset_names: Set[str]
     not_ready_assets: DependencyManager
 
@@ -147,7 +144,6 @@ class BalanceManager:
         self._frozen = {}
         self._notional_limits = {}
 
-        self._checked_symbol_names = set[str]()
         self._checked_asset_names = set[str]()
 
         self.not_ready_assets = DependencyManager()
@@ -259,37 +255,6 @@ class BalanceManager:
             total - self._frozen.get(asset, DECIMAL_ZERO),
             DECIMAL_ZERO
         )
-
-    def check_symbol_ready(self, symbol_name: str) -> SuccessOrException:
-        """
-        Check whether the given symbol name is ready to trade
-
-        Prerequisites:
-        - the symbol is defined: for example: `BNBBTC`
-        - the notional limit of `BNB` is set
-        - the valuation price of `BNB`, i.e the price of `BNBUSDT` is ready
-        """
-
-        if symbol_name in self._checked_symbol_names:
-            return
-
-        symbol = self._symbols.get_symbol(symbol_name)
-
-        if symbol is None:
-            return SymbolNotDefinedError(symbol_name)
-
-        if self._symbols.get_price(symbol_name) is None:
-            return SymbolPriceNotReadyError(symbol_name)
-
-        exception = self.check_asset_ready(symbol.base_asset)
-        if exception is not None:
-            return exception
-
-        exception = self.check_asset_ready(symbol.quote_asset)
-        if exception is not None:
-            return exception
-
-        self._checked_symbol_names.add(symbol_name)
 
     def check_asset_ready(self, asset: str) -> SuccessOrException:
         """
