@@ -267,6 +267,31 @@ def test_quantity_filter_branches() -> None:
     assert new_ticket.quantity == Decimal('1.0')
 
 
+def test_market_quantity_filter_quote_no_change_branch() -> None:
+    """QUOTE-quantity MARKET ticket where step-size snap recomposes the
+    quote value identically (1 BTC @ 10 USDT/BTC = 10 USDT either way)."""
+    symbol = Symbol('FOOUSD', 'FOO', 'USD')
+    symbol.allow(FeatureType.QUOTE_ORDER_QUANTITY, True)
+    market_filter = MarketQuantityFilter(
+        min_quantity=Decimal('0.01'),
+        max_quantity=Decimal('100'),
+        step_size=Decimal('0.1'),
+    )
+
+    ticket = MarketOrderTicket(
+        symbol=symbol,
+        side=OrderSide.BUY,
+        quantity=Decimal('10'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10'),
+    )
+    # base derived = 10/10 = 1.0 → step-size 0.1 → 1.0 (unchanged)
+    # quote = 1.0 * 10 = 10 → matches input quantity → no replacement
+    error, new_ticket = market_filter.apply(ticket, validate_only=False)
+    assert error is None
+    assert new_ticket is None
+
+
 def test_market_quantity_filter_branches() -> None:
     symbol = Symbol('FOOUSD', 'FOO', 'USD')
     market_filter = MarketQuantityFilter(

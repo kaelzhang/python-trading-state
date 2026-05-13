@@ -10,6 +10,7 @@ from trading_state import (
     OrderStatus,
     OrderType,
     StaleUpdate,
+    Symbol,
     TimeInForce,
     TradingStateEvent,
 )
@@ -725,6 +726,206 @@ def test_allocate_zero_or_missing_balance_skips_bucket():
 
     ticket = _make_buy_limit_ticket(
         state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
+    )
+    out = state.allocate(ticket)
+    assert out == [ticket]
+
+
+def test_unsettled_outflow_from_sell_fill():
+    """SELL fill ahead of balance update produces outflow on the base
+    asset."""
+    state = init_state()
+
+    # Pre-existing balance: 1 BTC. Then a SELL of 0.5 BTC is filled but
+    # the balance update reflecting the decrease hasn't landed yet.
+    sym = state._symbols.get_symbol(BTCUSDC_NAME)
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('0.5'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    _, order = state.add_order(ticket)
+    t_fill = balance_time(60)
+    state.update_order(
+        order,
+        status=OrderStatus.FILLED,
+        updated_at=t_fill,
+        id='sell-1',
+        filled_quantity=Decimal('0.5'),
+        quote_quantity=Decimal('5000'),
+        commission_asset=None,
+        commission_quantity=None,
+    )
+
+    _, flow = state.unsettled(BTC)
+    assert flow.inflow == Decimal('0')
+    assert flow.outflow == Decimal('0.5')
+
+
+def test_unsettled_handles_commission_asset_and_unrelated_balance_update():
+    """An order with a commission paid in a third asset (BNB-style)
+    creates an unsettled outflow on that third asset; balance updates
+    on unrelated assets exercise the order_touches=False branches."""
+    state = init_state()
+
+    BNB = 'BNB'
+    BNBUSDT = 'BNBUSDT'
+    BNBUSDC = 'BNBUSDC'
+    state.set_symbol(Symbol(BNBUSDT, BNB, USDT))
+    state.set_symbol(Symbol(BNBUSDC, BNB, USDC))
+    state.set_price(BNBUSDT, Decimal('500'))
+    state.set_price(BNBUSDC, Decimal('500'))
+    state.set_notional_limit(BNB, Decimal('5000'))
+    state.set_balances([
+        Balance(BNB, Decimal('10'), Decimal('0'), balance_time(0)),
+    ])
+
+    # Add a BUY order on BTCUSDC; commission paid in BNB.
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000'),
+    )
+    _, order = state.add_order(ticket)
+    state.update_order(
+        order,
+        status=OrderStatus.FILLED,
+        updated_at=balance_time(60),
+        id='o',
+        filled_quantity=Decimal('1'),
+        quote_quantity=Decimal('10000'),
+        commission_asset=BNB,
+        commission_quantity=Decimal('0.05'),
+    )
+
+    # BNB unsettled outflow reflects the commission, even though BNB is
+    # neither base nor quote of the ticket.
+    _, bnb_flow = state.unsettled(BNB)
+    assert bnb_flow.outflow == Decimal('0.05')
+    assert bnb_flow.inflow == Decimal('0')
+
+    # A balance update on a totally unrelated asset traverses both the
+    # on_balance_set and the implicit unsettled paths without touching
+    # this order (order_touches returns False for ETHUSDT-base 'ETH').
+    state.set_symbol(Symbol('ETHUSDT', 'ETH', USDT))
+    state.set_price('ETHUSDT', Decimal('3000'))
+    state.set_notional_limit('ETH', Decimal('30000'))
+    state.set_balances([
+        Balance('ETH', Decimal('1'), Decimal('0'), balance_time(120)),
+    ])
+
+    # unsettled for ETH yields zero flows — no order touches it.
+    exc, eth_flow = state.unsettled('ETH')
+    assert exc is None
+    assert eth_flow.inflow == Decimal('0')
+    assert eth_flow.outflow == Decimal('0')
+
+
+def test_purge_fully_settled_after_balance_catches_up_with_commission():
+    """After a balance update reflects the full fill (including
+    commission), the order is purged from the reconciliation manager."""
+    state = init_state()
+    BNB = 'BNB'
+    state.set_symbol(Symbol('BNBUSDT', BNB, USDT))
+    state.set_symbol(Symbol('BNBUSDC', BNB, USDC))
+    state.set_price('BNBUSDT', Decimal('500'))
+    state.set_price('BNBUSDC', Decimal('500'))
+    state.set_notional_limit(BNB, Decimal('5000'))
+    state.set_balances([
+        Balance(BNB, Decimal('10'), Decimal('0'), balance_time(0)),
+    ])
+
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000'),
+    )
+    _, order = state.add_order(ticket)
+    t_fill = balance_time(60)
+    state.update_order(
+        order,
+        status=OrderStatus.FILLED,
+        updated_at=t_fill,
+        id='o',
+        filled_quantity=Decimal('1'),
+        quote_quantity=Decimal('10000'),
+        commission_asset=BNB,
+        commission_quantity=Decimal('0.05'),
+    )
+    assert order in state._recon._orders
+
+    # Land balance updates that reflect every leg of the fill at or
+    # after the order's update time → the order is fully settled and
+    # the recon manager drops it.
+    t_settle = t_fill
+    state.set_balances([
+        Balance(BTC, Decimal('2'), Decimal('0'), t_settle),
+    ])
+    state.set_balances([
+        Balance(USDC, Decimal('190000'), Decimal('0'), t_settle),
+    ])
+    state.set_balances([
+        Balance(BNB, Decimal('9.95'), Decimal('0'), t_settle),
+    ])
+
+    assert order not in state._recon._orders
+
+
+def test_allocate_with_market_base_ticket():
+    """MarketOrderTicket with BASE quantity_type goes through the
+    normal allocate path — estimated_price is used as reference."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('0'),),
+    ))
+    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        quantity_type=MarketQuantityType.BASE,
+        estimated_price=Decimal('10000'),
+    )
+    out = state.allocate(ticket)
+    assert len(out) >= 1
+    for t in out:
+        assert isinstance(t, MarketOrderTicket)
+
+
+def test_allocate_skips_zero_weight_bucket():
+    state = init_state()
+    # USDC weight 0, primary USDT implicit 1 -> only USDT bucket used
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('0'),),
+    ))
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('1'), Decimal('10000'),
+    )
+    out = state.allocate(ticket)
+    # Only the primary bucket got a sub-ticket
+    assert len(out) == 1
+    assert out[0].symbol.quote_asset == USDT
+
+
+def test_allocate_filter_rejection_rolls_forward_or_passthroughs():
+    """A bucket whose filter rejects (e.g. quantity below MinNotional)
+    rolls its quantity forward to the next bucket. With only one
+    eligible bucket and a too-small total, every assignment is
+    rejected → allocate returns the single passthrough fallback."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('0'),),
+    ))
+    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    # Quantity intentionally too small to clear the symbol's NOTIONAL
+    # filter so every candidate gets rejected.
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('0.0000001'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
     )
     out = state.allocate(ticket)
     assert out == [ticket]
