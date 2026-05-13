@@ -905,6 +905,28 @@ def test_allocate_skips_zero_weight_bucket():
     assert out[0].symbol.quote_asset == USDT
 
 
+def test_allocate_sell_zero_quantity_hits_assign_guard():
+    """sell_allocate is a non-conditional for-loop; with a SELL ticket
+    whose total quantity is 0, every bucket's pour is 0 and the
+    assign() callback's `quantity <= 0 -> return DECIMAL_ZERO` guard
+    fires. No sub-ticket gets emitted -> passthrough fallback."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),
+    ))
+    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('0'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    out = state.allocate(ticket)
+    assert out == [ticket]
+
+
 def test_allocate_filter_rejection_rolls_forward_or_passthroughs():
     """A bucket whose filter rejects (e.g. quantity below MinNotional)
     rolls its quantity forward to the next bucket. With only one
