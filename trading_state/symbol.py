@@ -14,7 +14,7 @@ from decimal import Decimal
 from dataclasses import dataclass
 from collections import deque
 
-from .filters import BaseFilter, FilterResult
+from .filters import BaseFilter
 from .enums import (
     FeatureType
 )
@@ -119,37 +119,45 @@ class Symbol:
         self,
         ticket: OrderTicket,
         validate_only: bool,
-        **kwargs
-    ) -> FilterResult:
+    ) -> Tuple[Optional[Exception], OrderTicket]:
         """
-        Apply the filter to the order ticket, and try to fix the ticket if possible if `validate_only` is `False`.
+        Run every filter against the ticket.
+
+        Tickets are immutable; when a filter normalizes the ticket it
+        returns a frozen copy, and this method threads that copy through
+        the remaining filters so each filter sees the most recent
+        normalization.
 
         Args:
-            ticket: (OrderTicket) the order ticket to apply the filter to
-            validate_only: (Optional[bool]=False) whether only to validate the ticket. If `True`, the filter will NOT try to fix the ticket and return an exception even for a tiny mismatch against the filter.
+            ticket: the order ticket to evaluate
+            validate_only: if True, any deviation from a filter constraint
+                produces an exception rather than a normalized copy
 
-        Returns a tuple of
-        - Optional[Exception]: the exception if the filter is not successfully applied
-        - bool: whether the ticket has been modified
+        Returns:
+            (None, final_ticket)        — all filters passed; `final_ticket`
+                                          is the input itself when nothing
+                                          changed, otherwise the
+                                          accumulated normalization
+            (exception, latest_ticket)  — a filter rejected; `latest_ticket`
+                                          is the most recent normalization
+                                          up to the rejection point
         """
 
-        modified = False
+        current = ticket
 
         for filter in self._filters:
-            if not filter.when(ticket):
+            if not filter.when(current):
                 continue
 
-            exception, new_modified = filter.apply(
-                ticket, validate_only, **kwargs
-            )
+            exception, new_ticket = filter.apply(current, validate_only)
 
-            if new_modified:
-                modified = True
+            if exception is not None:
+                return exception, current
 
-            if exception:
-                return exception, modified
+            if new_ticket is not None:
+                current = new_ticket
 
-        return None, modified
+        return None, current
 
 
 @dataclass(frozen=True, slots=True)

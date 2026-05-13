@@ -4,8 +4,6 @@ from dataclasses import (
 )
 from typing import (
     Tuple,
-    Dict,
-    Any,
     Callable
 )
 
@@ -29,13 +27,10 @@ class TradingConfig:
         get_symbol_name (Callable[[str, str], str]): a function to get the name of a symbol from its base and quote assets
 
         benchmark_assets (Tuple[str, ...]): the assets to benchmark the performance of the strategy
-
-        symbols (Tuple[str, ...]): the list of symbols to take into account. If not provided, then all the symbols will be taken into account.
     """
     account_currency: str
     alt_account_currencies: Tuple[str, ...] = field(default_factory=tuple)
 
-    context: Dict[str, Any] = field(default_factory=dict)
     max_order_history_size: int = 10000
     get_symbol_name: Callable[[str, str], str] = DEFAULT_GET_SYMBOL_NAME
 

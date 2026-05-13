@@ -866,16 +866,17 @@ class TradingState(EventEmitter[TradingStateEvent]):
             # Strategy decides to skip this tick.
             return target_quantity
 
-        exception, _ = symbol.apply_filters(
+        exception, normalized = symbol.apply_filters(
             ticket,
             validate_only=False,
-            **self._config.context
         )
 
         if exception is not None:
             self.emit(TradingStateEvent.TICKET_CREATE_FAILED, exception)
             # The quantity consuming task is not finished
             return target_quantity
+
+        ticket = normalized
 
         order = Order(
             ticket=ticket,

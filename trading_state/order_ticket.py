@@ -2,193 +2,182 @@
 # https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints
 
 from __future__ import annotations
-from typing import (
-    List, Optional, Union, Any,
-    TYPE_CHECKING
-)
-from enum import Enum
 
+from dataclasses import dataclass, fields
 from decimal import Decimal
-
-from .enums import (
-    OrderSide, OrderType, TimeInForce, MarketQuantityType, STPMode
+from enum import Enum
+from typing import (
+    ClassVar,
+    Optional,
+    TYPE_CHECKING,
+    Union,
 )
 
-from .common import (
-    class_repr
+from .common import ValueOrException
+from .enums import (
+    MarketQuantityType,
+    OrderSide,
+    OrderType,
+    STPMode,
+    TimeInForce,
 )
 
 if TYPE_CHECKING:
     from .symbol import Symbol
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class BaseOrderTicket:
     """
-    An order ticket contains the necessary information to create an order,
-    but order ticket is not an order
+    Common base for all order ticket value objects.
+
+    Tickets are frozen — once constructed they are immutable. Filters
+    produce normalized variants via `dataclasses.replace(ticket, ...)`,
+    not by mutating the input.
+
+    `type` is declared as ClassVar so it is bound at the subclass level
+    and is NOT a dataclass field.
     """
 
-    type: OrderType
+    type: ClassVar[OrderType]
 
-    BASE_MANDOTORY_PARAMS: List[str] = ['symbol', 'side', 'quantity']
-    ADDITIONAL_MANDOTORY_PARAMS: List[str] = []
-
-    symbol: Symbol
+    symbol: 'Symbol'
     side: OrderSide
     quantity: Decimal
-
-    BASE_OPTIONAL_PARAMS: List[str] = ['stp']
-    ADDITIONAL_OPTIONAL_PARAMS: List[str] = []
-
-    stp: STPMode | None = None
-
-    @property
-    def REQUIRED_PARAMS(self) -> List[str]:
-        return (
-            self.BASE_MANDOTORY_PARAMS + self.ADDITIONAL_MANDOTORY_PARAMS
-        )
-
-    @property
-    def OPTIONAL_PARAMS(self) -> List[str]:
-        return (
-            self.BASE_OPTIONAL_PARAMS + self.ADDITIONAL_OPTIONAL_PARAMS
-        )
-
-    @property
-    def PARAMS(self) -> List[str]:
-        return (
-            self.REQUIRED_PARAMS + self.OPTIONAL_PARAMS
-        )
-
-    others: dict[str, Any]
+    stp: Optional[STPMode] = None
 
     def __repr__(self) -> str:
-        return class_repr(self, keys=['type', *self.PARAMS])
-
-    def __init__(
-        self,
-        **kwargs
-    ) -> None:
-        for param in self.REQUIRED_PARAMS:
-            if param not in kwargs:
-                raise ValueError(f'"{param}" is a required parameter for Order')
-
-            setattr(self, param, kwargs[param])
-            del kwargs[param]
-
-        for param in self.OPTIONAL_PARAMS:
-            if param in kwargs:
-                setattr(self, param, kwargs[param])
-                del kwargs[param]
-
-        self.others = kwargs
-        self._validate_params()
+        # Uses `str()` for each field value, not `repr()`, so that
+        # StringEnum subclasses (OrderSide, TimeInForce, …) render as
+        # 'BUY' / 'GTC' / … and Decimals render without the
+        # `Decimal('…')` wrapper. Keeps the surface stable for tests
+        # and operator-facing logs.
+        cls = type(self)
+        parts = [f'type={self.type}']
+        for f in fields(self):
+            parts.append(f'{f.name}={getattr(self, f.name)}')
+        return f'{cls.__name__}({", ".join(parts)})'
 
     def has(self, param: str) -> bool:
-        return (
-            param in self.PARAMS
-            and getattr(self, param) is not None
-        )
+        """
+        True when the ticket has `param` as an attribute AND its value is
+        not None.
+        """
+        return getattr(self, param, None) is not None
 
     def is_a(
         self,
         order_type: OrderType,
-        **kwargs
+        **kwargs,
     ) -> bool:
-        if self.type != order_type:
+        """
+        True iff self.type matches `order_type` and every kwarg matches
+        the corresponding attribute on self.
+        """
+        if self.type is not order_type:
             return False
-
-        if not kwargs:
-            return True
-
         for key, value in kwargs.items():
-            if not hasattr(self, key) or getattr(self, key) != value:
+            if getattr(self, key, None) != value:
                 return False
-
         return True
 
-    # do nothing by default
-    # no extra validation is needed
-    def _validate_params(self) -> None: ...
+    def apply_filters(
+        self,
+    ) -> ValueOrException['BaseOrderTicket']:
+        """
+        Run all of self.symbol's filters in normalize mode and return the
+        (possibly new) filter-applied ticket.
+
+        Returns:
+            (None, self)        — no filter changed anything
+            (None, new_ticket)  — normalized; a frozen copy with adjusted fields
+            (exc, None)         — a filter rejected
+        """
+        return self.symbol.apply_filters(self, validate_only=False)
+
+    def validate(self) -> Optional[Exception]:
+        """
+        Strict-validate against self.symbol's filters. No normalization.
+
+        Returns:
+            None       — passes all filters as-is
+            Exception  — some filter rejected
+        """
+        exc, _ = self.symbol.apply_filters(self, validate_only=True)
+        return exc
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class LimitOrderTicket(BaseOrderTicket):
-    type = OrderType.LIMIT
-
-    ADDITIONAL_MANDOTORY_PARAMS = ['price', 'time_in_force']
+    type: ClassVar[OrderType] = OrderType.LIMIT
 
     price: Decimal
     time_in_force: TimeInForce
-
-    ADDITIONAL_OPTIONAL_PARAMS = ['post_only', 'iceberg_quantity']
-
     post_only: bool = False
     iceberg_quantity: Optional[Decimal] = None
 
-    def _validate_params(self) -> None:
-        if (
-            self.time_in_force is not None
-            and self.post_only
-        ):
-            raise ValueError('post_only is not allowed with time_in_force')
+    def __post_init__(self) -> None:
+        # Preserves the previous BaseOrderTicket._validate_params behavior:
+        # the LIMIT_MAKER variant (post_only=True) is mutually exclusive
+        # with explicit time_in_force.
+        if self.post_only and self.time_in_force is not None:
+            raise ValueError(
+                'post_only is not allowed with time_in_force'
+            )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class MarketOrderTicket(BaseOrderTicket):
-    type = OrderType.MARKET
-
-    ADDITIONAL_MANDOTORY_PARAMS = ['quantity_type', 'estimated_price']
+    type: ClassVar[OrderType] = OrderType.MARKET
 
     quantity_type: MarketQuantityType
 
-    # We introduced a special parameter for market order
-    # to estimate the quantity for MARKET_LOT_SIZE filter
+    # Estimated average fill price; used by MARKET_LOT_SIZE math and by
+    # NotionalFilter's local approximation of the exchange's lastPrice
+    # average (the exchange's authoritative check still happens server-side).
     estimated_price: Decimal
 
 
-def validate_stop_price_and_trailing_delta(self) -> None:
-    if self.stop_price is None and self.trailing_delta is None:
-        raise ValueError('Either stop_price or trailing_delta must be set')
+def _require_stop_price_or_trailing_delta(
+    stop_price: Optional[Decimal],
+    trailing_delta: Optional[Decimal],
+) -> None:
+    if stop_price is None and trailing_delta is None:
+        raise ValueError(
+            'Either stop_price or trailing_delta must be set'
+        )
 
-    # stop_price and trailing_delta could be combined together
 
-
-PARAMS_STOP_PRICE_AND_TRAILING_DELTA = ['stop_price', 'trailing_delta']
-PARAMS_ST_AND_ICEBERG_QUANTITY = [
-    *PARAMS_STOP_PRICE_AND_TRAILING_DELTA,
-    'iceberg_quantity'
-]
-
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class StopLossOrderTicket(BaseOrderTicket):
-    type = OrderType.STOP_LOSS
-
-    ADDITIONAL_OPTIONAL_PARAMS = PARAMS_STOP_PRICE_AND_TRAILING_DELTA
+    type: ClassVar[OrderType] = OrderType.STOP_LOSS
 
     stop_price: Optional[Decimal] = None
     trailing_delta: Optional[Decimal] = None
 
-    _validate_params = validate_stop_price_and_trailing_delta
+    def __post_init__(self) -> None:
+        _require_stop_price_or_trailing_delta(
+            self.stop_price, self.trailing_delta
+        )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class StopLossLimitOrderTicket(StopLossOrderTicket):
-    type = OrderType.STOP_LOSS_LIMIT
-
-    ADDITIONAL_MANDOTORY_PARAMS = ['price', 'time_in_force']
+    type: ClassVar[OrderType] = OrderType.STOP_LOSS_LIMIT
 
     price: Decimal
     time_in_force: TimeInForce
-
-    ADDITIONAL_OPTIONAL_PARAMS = PARAMS_ST_AND_ICEBERG_QUANTITY
-
     iceberg_quantity: Optional[Decimal] = None
 
 
-# At the rest API level, they are structurally identical
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class TakeProfitOrderTicket(StopLossOrderTicket):
-    type = OrderType.TAKE_PROFIT
+    type: ClassVar[OrderType] = OrderType.TAKE_PROFIT
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class TakeProfitLimitOrderTicket(StopLossLimitOrderTicket):
-    type = OrderType.TAKE_PROFIT_LIMIT
+    type: ClassVar[OrderType] = OrderType.TAKE_PROFIT_LIMIT
 
 
 OrderTicket = Union[
@@ -197,7 +186,7 @@ OrderTicket = Union[
     StopLossOrderTicket,
     StopLossLimitOrderTicket,
     TakeProfitOrderTicket,
-    TakeProfitLimitOrderTicket
+    TakeProfitLimitOrderTicket,
 ]
 
 
