@@ -8,7 +8,6 @@ from trading_state import (
     MarketQuantityType,
     OrderSide,
     OrderStatus,
-    OrderType,
     StaleUpdate,
     Symbol,
     TimeInForce,
@@ -271,11 +270,10 @@ def test_update_order_silently_drops_time_regression():
 def test_set_balances_drops_stale_time_and_emits_stale():
     state = init_state()
 
-    t0 = balance_time(0)
     t_earlier = balance_time(-10)
 
-    # init_state already wrote balances at t0; pushing an earlier time
-    # must be rejected.
+    # init_state already wrote balances at balance_time(0); pushing an
+    # earlier time must be rejected.
     captured = []
     state.on(
         TradingStateEvent.STALE_UPDATE,
