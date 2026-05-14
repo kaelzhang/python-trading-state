@@ -1097,6 +1097,51 @@ def test_allocate_buy_exceeding_notional_limit_returns_error():
     assert exc.notional_limit == Decimal('100000')
 
 
+def test_user_order_listener_survives_terminal_status():
+    """A listener the user attached directly to the Order should keep
+    firing as long as the order continues to receive updates — the
+    library's own internal cleanup at terminal status must only
+    detach the library's own subscription, not the user's."""
+    from trading_state.order import OrderUpdatedType
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
+    )
+    _, order = state.add_order(ticket)
+
+    seen_statuses = []
+    order.on(
+        OrderUpdatedType.STATUS_UPDATED,
+        lambda _o, s: seen_statuses.append(s),
+    )
+
+    t = datetime(2024, 1, 1)
+    state.update_order(
+        order,
+        status=OrderStatus.CREATED,
+        updated_at=t,
+        id='o',
+        filled_quantity=None,
+        quote_quantity=None,
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    state.update_order(
+        order,
+        status=OrderStatus.FILLED,
+        updated_at=t,
+        id=None,
+        filled_quantity=Decimal('1'),
+        quote_quantity=Decimal('10000'),
+        commission_asset=None,
+        commission_quantity=None,
+    )
+    # Both transitions reached the user listener — the prior blanket
+    # `order.off()` at FILLED would have left it with just the CREATED
+    # entry.
+    assert seen_statuses == [OrderStatus.CREATED, OrderStatus.FILLED]
+
+
 def test_exposure_infinity_notional_limit_yields_zero_ratio():
     """Decimal('Infinity') as notional_limit is the documented escape
     hatch for "no effective cap"; the ratio collapses to 0 and

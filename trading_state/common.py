@@ -134,8 +134,16 @@ class FactoryDict(Generic[K, V]):
 
 class EventEmitter(Generic[K]):
     """
-    An simple event emitter implementation which does
-    not ensure execution order of listeners
+    A simple event emitter that does not guarantee listener execution
+    order. `off()` supports three call shapes:
+
+      off()                  — drop every listener for every event.
+      off(event)             — drop every listener for `event`.
+      off(event, listener)   — drop only `listener` from `event`.
+
+    Per-listener removal lets a subscriber unhook itself without
+    forfeiting unrelated listeners attached by other parts of the
+    system (which the blanket clear used to do).
     """
 
     _listeners: FactoryDict[K, List[Callable]]
@@ -159,9 +167,35 @@ class EventEmitter(Generic[K]):
         if listeners is None:
             return
 
-        # Regenerate the list to avoid .off() during iteration
+        # Snapshot so listeners that call off(...) during dispatch
+        # cannot mutate the list we're iterating over.
         for listener in list(listeners):
             listener(*args)
 
-    def off(self) -> None:
-        self._listeners.clear()
+    def off(
+        self,
+        event: Optional[K] = None,
+        listener: Optional[Callable] = None,
+    ) -> None:
+        if event is None:
+            if listener is not None:
+                raise TypeError(
+                    'off(listener=...) requires an explicit event'
+                )
+            self._listeners.clear()
+            return
+
+        listeners = self._listeners.get(event)
+        if listeners is None:
+            return
+
+        if listener is None:
+            listeners.clear()
+            return
+
+        try:
+            listeners.remove(listener)
+        except ValueError:
+            # Idempotent: removing a listener that was never attached
+            # (or already removed) is a no-op.
+            pass

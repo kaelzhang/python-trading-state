@@ -398,16 +398,30 @@ class OrderManager:
                 # The order might be filled directly
                 self.history.append(order)
                 self._purge_order(order)
-                order.off()
+                # Detach only OUR subscription. Listeners that the user
+                # or other library components attached to this order
+                # stay live — they simply won't fire again because
+                # Order.update silently drops further updates once
+                # status is completed.
+                order.off(
+                    OrderUpdatedType.STATUS_UPDATED,
+                    self._on_order_status_updated,
+                )
 
             case OrderStatus.CANCELLED:
                 # Redudant cancellation
                 self._purge_order(order)
-                order.off()
+                order.off(
+                    OrderUpdatedType.STATUS_UPDATED,
+                    self._on_order_status_updated,
+                )
 
             case OrderStatus.REJECTED:
                 self._purge_order(order)
-                order.off()
+                order.off(
+                    OrderUpdatedType.STATUS_UPDATED,
+                    self._on_order_status_updated,
+                )
 
     def get_order_by_id(self, order_id: str) -> Optional[Order]:
         return self._id_orders.get(order_id)
