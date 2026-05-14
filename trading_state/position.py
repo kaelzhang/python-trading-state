@@ -119,9 +119,31 @@ class PositionTracker:
 
     def track_order(self, order: Order) -> Decimal:
         """
-        Track the order and update the position of the account
+        Track the order and update the position of the account.
 
         It should only track the order if the order is filled or cancelled.
+
+        Commission overlap rules — what `commission_asset` does to each
+        side:
+
+        - If `commission_asset == increase_asset`, the exchange
+          delivers (gross − commission) of that asset, so the tracked
+          increase shrinks by `commission_quantity`. The cost basis
+          stays at gross-account-currency / kept-quantity (i.e. the
+          per-unit cost goes up because we paid the same money for
+          fewer units).
+        - If `commission_asset == decrease_asset` and that asset is
+          FIFO-tracked (non-account), the FIFO removal widens by
+          `commission_quantity`; realized PnL is taken from the wider
+          cost basis and no separate `cc` is subtracted.
+        - If `commission_asset == decrease_asset` but the decrease is
+          an account currency (so no FIFO runs), `cc` is folded into
+          the new position's cost basis instead — otherwise the fee
+          would vanish from PnL accounting.
+        - If commission is in a third asset (BNB-style), `cc` is added
+          to the cost basis of the new position when there is one to
+          track, or subtracted from realized PnL on disposal when the
+          increase is account-tracked.
 
         Returns:
             Decimal: the realized PnL of the order
@@ -158,6 +180,8 @@ class PositionTracker:
         symbol = ticket.symbol
         base_asset = symbol.base_asset
         quote_asset = symbol.quote_asset
+        comm_asset = order.commission_asset
+        comm_qty = order.commission_quantity
 
         if side is OrderSide.BUY:
             increase_asset = base_asset
@@ -166,6 +190,11 @@ class PositionTracker:
 
             decrease_asset = quote_asset
             decrease_qty = qq
+            # `proceeds` here is the value of the buy in account currency
+            # — it is the inflow on the increase side. The variable
+            # name is preserved for symmetry with SELL where it really
+            # is the proceeds; the realized-PnL formula below uses it
+            # identically in both directions.
             proceeds = qc
         else:
             increase_asset = quote_asset
@@ -176,20 +205,70 @@ class PositionTracker:
             decrease_qty = bq
             proceeds = qc
 
-        # Increase position (account assets are ignored)
+        commission_overlaps_increase = comm_asset == increase_asset
+        commission_overlaps_decrease = comm_asset == decrease_asset
+
+        # Commission consumed from the increase asset: tracked
+        # increase is gross − commission.
+        if commission_overlaps_increase:
+            increase_qty -= comm_qty
+
+        # Commission consumed from the decrease asset: FIFO removal
+        # widens by the commission amount (only meaningful when the
+        # decrease is non-account-tracked; the widened decrease_qty
+        # is silently ignored for account-asset decreases below).
+        if commission_overlaps_decrease:
+            decrease_qty += comm_qty
+
+        # Fold cc into the increase cost basis when the commission was
+        # not already absorbed by the increase-side shrinkage AND
+        # cannot be absorbed by FIFO on the decrease side (because the
+        # decrease is account-tracked, so _decrease_position is
+        # skipped). Third-asset commissions always hit this branch.
+        increase_cost_total = increase_cost
+        if (
+            comm_asset is not None
+            and not commission_overlaps_increase
+            and (
+                not commission_overlaps_decrease
+                or self._symbols.is_account_asset(decrease_asset)
+            )
+        ):
+            increase_cost_total += cc
+
         if increase_qty > 0:
             self.update_position(
                 increase_asset,
                 increase_qty,
-                increase_cost / increase_qty
+                increase_cost_total / increase_qty,
             )
 
         if self._symbols.is_account_asset(decrease_asset):
             return realized_pnl
 
-        # Realized PnL for the decreased asset based on FIFO cost
+        # Realized PnL for the decreased asset based on FIFO cost.
         cost = self._decrease_position(decrease_asset, decrease_qty)
-        realized_pnl = proceeds - cost - cc
+
+        # `cc` is only subtracted separately from realized PnL when it
+        # was neither absorbed via the widened FIFO (decrease overlap)
+        # nor via the shrunken increase (increase overlap). The
+        # increase-overlap absorption is only effective when the
+        # increase is itself FIFO-tracked (non-account); when the
+        # increase is account-tracked, the shrinkage has no PnL effect
+        # so cc still needs to be deducted here.
+        if (
+            comm_asset is None
+            or commission_overlaps_decrease
+            or (
+                commission_overlaps_increase
+                and not self._symbols.is_account_asset(increase_asset)
+            )
+        ):
+            pnl_commission = DECIMAL_ZERO
+        else:
+            pnl_commission = cc
+
+        realized_pnl = proceeds - cost - pnl_commission
 
         return realized_pnl
 
