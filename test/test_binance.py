@@ -379,12 +379,46 @@ def test_encode_order_request_limit():
     exc, payload = encode_order_request(ticket)
     assert exc is None
     assert payload["symbol"] == "BTCUSDT"
-    assert payload["side"] == OrderSide.BUY
-    assert payload["type"] == OrderType.LIMIT
-    assert payload["timeInForce"] == TimeInForce.GTC
-    assert payload["quantity"] == Decimal("0.5")
+    assert payload["side"] == "BUY"
+    assert payload["type"] == "LIMIT"
+    assert payload["timeInForce"] == "GTC"
+    assert payload["quantity"] == "0.5"
     assert payload["price"] == "100"
     assert payload["newOrderRespType"] == "FULL"
+
+
+def test_encode_order_request_formats_decimals_as_fixed_point():
+    # Quantities that round-trip via Decimal can land in scientific
+    # notation (e.g. Decimal('1E-8')); Binance rejects those. The
+    # encoder must emit fixed-point regardless.
+    symbol = Symbol("BTCUSDT", "BTC", "USDT")
+    ticket = LimitOrderTicket(
+        symbol=symbol,
+        side=OrderSide.BUY,
+        quantity=Decimal("1E-8"),
+        price=Decimal("1.23E+4"),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, payload = encode_order_request(ticket)
+    assert exc is None
+    assert payload["quantity"] == "0.00000001"
+    assert payload["price"] == "12300"
+
+
+def test_encode_order_request_payload_is_json_serializable():
+    import json
+    symbol = Symbol("BTCUSDT", "BTC", "USDT")
+    ticket = LimitOrderTicket(
+        symbol=symbol,
+        side=OrderSide.BUY,
+        quantity=Decimal("0.5"),
+        price=Decimal("100"),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, payload = encode_order_request(ticket)
+    assert exc is None
+    # Will raise TypeError if any Decimal/enum slipped through.
+    json.dumps(payload)
 
 
 def test_encode_order_request_market_base_and_quote():
@@ -398,7 +432,7 @@ def test_encode_order_request_market_base_and_quote():
     )
     exc, base_payload = encode_order_request(base_ticket)
     assert exc is None
-    assert "quantity" in base_payload
+    assert base_payload["quantity"] == "1"
     assert "quoteOrderQty" not in base_payload
 
     quote_ticket = MarketOrderTicket(
@@ -410,7 +444,7 @@ def test_encode_order_request_market_base_and_quote():
     )
     exc, quote_payload = encode_order_request(quote_ticket)
     assert exc is None
-    assert "quoteOrderQty" in quote_payload
+    assert quote_payload["quoteOrderQty"] == "1000"
     assert "quantity" not in quote_payload
 
 

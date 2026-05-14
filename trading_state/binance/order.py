@@ -26,6 +26,14 @@ from trading_state.common import DECIMAL_ZERO, ValueOrException
 from .common import timestamp_to_datetime
 
 
+def _format_decimal(value: Decimal) -> str:
+    # Binance rejects scientific notation in numeric fields; format 'f'
+    # always emits fixed-point and preserves the Decimal's precision
+    # (so a quantity already quantised by PrecisionFilter renders with
+    # the right number of trailing zeros).
+    return format(value, 'f')
+
+
 # Ref:
 # https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints#new-order-trade
 def encode_order_request(
@@ -33,7 +41,9 @@ def encode_order_request(
 ) -> ValueOrException[dict]:
     """
     Encode an OrderTicket to the Binance REST `POST /api/v3/order`
-    request body.
+    request body. All numeric and enum values are serialised to the
+    plain strings Binance expects on the wire — the returned dict is
+    directly json-serialisable.
 
     Returns:
         (None, dict)  — encoded payload ready for the HTTP layer.
@@ -43,23 +53,23 @@ def encode_order_request(
         case LimitOrderTicket():
             kwargs = dict(
                 symbol=ticket.symbol.name,
-                side=ticket.side,
-                type=ticket.type,
-                timeInForce=ticket.time_in_force,
-                quantity=ticket.quantity,
-                price=str(ticket.price),
+                side=str(ticket.side),
+                type=str(ticket.type),
+                timeInForce=str(ticket.time_in_force),
+                quantity=_format_decimal(ticket.quantity),
+                price=_format_decimal(ticket.price),
             )
         case MarketOrderTicket():
             kwargs = dict(
                 symbol=ticket.symbol.name,
-                side=ticket.side,
-                type=ticket.type,
+                side=str(ticket.side),
+                type=str(ticket.type),
             )
 
             if ticket.quantity_type == MarketQuantityType.BASE:
-                kwargs['quantity'] = ticket.quantity
+                kwargs['quantity'] = _format_decimal(ticket.quantity)
             else:
-                kwargs['quoteOrderQty'] = ticket.quantity
+                kwargs['quoteOrderQty'] = _format_decimal(ticket.quantity)
         case _:
             # Stop-loss / take-profit families aren't wired into the
             # encoder yet. Surface this as a protocol-side error rather
