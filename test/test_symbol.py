@@ -30,6 +30,18 @@ def test_support_order_type():
     assert symbol_BTCUSDT.support(FeatureType.ORDER_TYPE, OrderType.TAKE_PROFIT_LIMIT)
 
 
+def test_order_type_values_match_binance_spot():
+    # Binance Spot uses 'STOP_LOSS' / 'TAKE_PROFIT'; Futures uses
+    # 'STOP_MARKET'. Encoder will serialise `.value` straight back to
+    # the wire, so a regression here breaks order placement silently.
+    assert OrderType.LIMIT.value == 'LIMIT'
+    assert OrderType.MARKET.value == 'MARKET'
+    assert OrderType.STOP_LOSS.value == 'STOP_LOSS'
+    assert OrderType.STOP_LOSS_LIMIT.value == 'STOP_LOSS_LIMIT'
+    assert OrderType.TAKE_PROFIT.value == 'TAKE_PROFIT'
+    assert OrderType.TAKE_PROFIT_LIMIT.value == 'TAKE_PROFIT_LIMIT'
+
+
 # def _test_valuation_path():
 #     state = init_state()
 #     longest = None

@@ -19,8 +19,10 @@ class OrderType(StringEnum):
     # Stop Loss Orders
     # ----------------------------------------------
 
-    # Stop market order
-    STOP_LOSS = 'STOP_MARKET'
+    # Stop-market order on Binance Spot. The Binance Spot enum value is
+    # 'STOP_LOSS'; 'STOP_MARKET' belongs to USDⓈ-M Futures and is wrong
+    # for the spot endpoints this package targets.
+    STOP_LOSS = 'STOP_LOSS'
 
     # Stop limit order
     STOP_LOSS_LIMIT = 'STOP_LOSS_LIMIT'
