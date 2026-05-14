@@ -15,10 +15,7 @@ from .metrics_cache import (
     AnalysisContext,
     SeriesCache,
 )
-from .metrics_calculators import (
-    METRIC_CALCULATORS,
-    # UNSUPPORTED_METRICS,
-)
+from .calculators import METRIC_CALCULATORS
 from .metrics_models import MetricResult
 from .metrics_models import SkippedResult
 

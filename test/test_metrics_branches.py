@@ -2,7 +2,13 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from trading_state.analyzer import AnalyzerType, PerformanceAnalyzer
-from trading_state.analyzer import metrics_calculators as mc
+from trading_state.analyzer import calculators as mc
+# Monkeypatching the post-split helpers requires hitting the actual
+# call site (the per-category submodule), not the back-compat alias
+# on `mc` — the alias is a reference copy and patching it has no
+# effect on the function body's name lookup.
+from trading_state.analyzer.calculators import tail as _tail
+from trading_state.analyzer.calculators import benchmark as _benchmark
 from trading_state.analyzer.metrics_cache import AnalysisContext, SeriesCache, compute_drawdown_stats
 from trading_state.analyzer.metrics_models import (
     BenchmarkSeries,
@@ -325,14 +331,14 @@ def test_metrics_calculators_helper_branches(monkeypatch):
 
 def test_metrics_calculators_var_cvar_branches(monkeypatch):
     assert mc._var_metric([], 0.95, 0) is None
-    monkeypatch.setattr(mc, 'quantile', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_tail, 'quantile', lambda *_args, **_kwargs: None)
     assert mc._var_metric([0.1], 0.95, 0) is None
 
     assert mc._cvar_metric([], 0.95, 0) is None
-    monkeypatch.setattr(mc, 'quantile', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_tail, 'quantile', lambda *_args, **_kwargs: None)
     assert mc._cvar_metric([0.1], 0.95, 0) is None
 
-    monkeypatch.setattr(mc, 'quantile', lambda data, _q: min(data) - 1.0)
+    monkeypatch.setattr(_tail, 'quantile', lambda data, _q: min(data) - 1.0)
     assert mc._cvar_metric([0.1, 0.2], 0.95, 0) is None
 
 
@@ -340,15 +346,15 @@ def test_metrics_calculators_distribution_branches(monkeypatch):
     assert mc._skewness([1.0, 2.0]) is None
     assert mc._skewness([1.0, 1.0, 1.0]) is None
 
-    original_mean = mc.mean
-    monkeypatch.setattr(mc, 'mean', lambda *_args, **_kwargs: None)
+    original_mean = _tail.mean
+    monkeypatch.setattr(_tail, 'mean', lambda *_args, **_kwargs: None)
     assert mc._skewness([1.0, 2.0, 3.0]) is None
 
     assert mc._kurtosis([1.0, 2.0, 3.0]) is None
-    monkeypatch.setattr(mc, 'mean', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_tail, 'mean', lambda *_args, **_kwargs: None)
     assert mc._kurtosis([1.0, 2.0, 3.0, 4.0]) is None
 
-    monkeypatch.setattr(mc, 'mean', original_mean)
+    monkeypatch.setattr(_tail, 'mean', original_mean)
     assert mc._kurtosis([1.0, 1.0, 1.0, 1.0]) is None
     assert mc._tail_ratio([], 0.5, 0) is None
     assert mc._tail_ratio([0.0, 1.0], 1.0, 0) is None
@@ -383,7 +389,7 @@ def test_metrics_calculators_benchmark_helpers(monkeypatch):
     ]
     window_points = make_window(bench_points, [0.01, 0.02], [1.0, 1.0], 0.02)
     benchmark = BenchmarkSeries(asset='BTC', cumulative_returns=[0.0, 0.01, 0.03], return_points=bench_points)
-    monkeypatch.setattr(mc, 'weighted_mean', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_benchmark, 'weighted_mean', lambda *_args, **_kwargs: None)
     assert mc._jensen_alpha(window_points, benchmark, 0.0, 0, 252) is None
 
     window_empty = make_window(

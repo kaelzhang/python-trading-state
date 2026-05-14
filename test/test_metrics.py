@@ -5,13 +5,14 @@ import math
 import pytest
 
 from trading_state.analyzer import AnalyzerType, PerformanceAnalyzer
-from trading_state.analyzer import metrics_calculators, metrics_cache
+from trading_state.analyzer import calculators as metrics_calculators
+from trading_state.analyzer import metrics_cache
 from trading_state.analyzer.metrics_cache import (
     AnalysisContext,
     SeriesCache,
     compute_drawdown_stats,
 )
-from trading_state.analyzer.metrics_calculators import (
+from trading_state.analyzer.calculators import (
     calc_annualized_return,
     calc_alpha,
     calc_beta,
