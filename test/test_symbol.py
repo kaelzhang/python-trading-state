@@ -101,6 +101,28 @@ def test_valuation_path_primary_account_currency():
         ValuationPathStep(ZUSDT, True),
     ]
 
+def test_set_symbol_invalidates_cached_unreachable_path():
+    """A previously cached "no path" verdict must be reconsidered once
+    a new symbol that completes the path is registered."""
+    state = init_state()
+
+    state.set_symbol(XY)
+    state.set_symbol(ZY)
+
+    # No symbol yet connects Z to an account currency → no path.
+    assert state._symbols.valuation_path(X) is None
+
+    # Register the missing leg; the cache must be reset by set_symbol
+    # so the path becomes discoverable without manual cache busting.
+    state.set_symbol(ZUSDT)
+    path = state._symbols.valuation_path(X)
+    assert path == [
+        ValuationPathStep(XY, True),
+        ValuationPathStep(ZY, False),
+        ValuationPathStep(ZUSDT, True),
+    ]
+
+
 def test_valuation_price_info():
     state = init_state()
 

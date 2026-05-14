@@ -222,8 +222,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self,
         symbol: Symbol, /,
     ) -> None:
-        """Set (add or update) the symbol info for a symbol."""
+        """Set (add or update) the symbol info for a symbol.
+
+        Registering a new symbol can shorten a cached valuation path
+        for some other asset, or unlock readiness for an asset whose
+        prior `check_asset_ready` failed because its valuation path
+        was incomplete. Both caches are flushed here — the cost is
+        O(asset_count) and `set_symbol` is typically session-startup
+        rather than a hot path, so this is cheap in practice.
+        """
         if self._symbols.set_symbol(symbol):
+            self._symbols.invalidate_paths()
+            self._balances.invalidate_readiness()
             self.emit(TradingStateEvent.SYMBOL_ADDED, symbol)
 
     def set_notional_limit(self, asset: str, limit: Decimal) -> None:

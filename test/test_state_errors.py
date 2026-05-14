@@ -202,9 +202,8 @@ def test_valuation_path_not_available(test_symbols: Symbols):
 
     state.set_symbol(ZUSDT)
 
-    # Clean the cached valuation path (testing-only)
-    del state._symbols._valuation_paths[X]
-
+    # set_symbol invalidates the valuation-path cache, so the
+    # previously-None entry for X is reconsidered on the next call.
     path = state._symbols.valuation_path(X)
     assert path == [
         ValuationPathStep(XY, True),

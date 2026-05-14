@@ -211,6 +211,23 @@ class BalanceManager:
                 f"notional_limit for '{asset}' must be > 0, got {limit}"
             )
         self._notional_limits[asset] = limit
+        # `_checked_asset_names` is a positive cache of "passed every
+        # readiness precondition once". A cached entry was correct
+        # under the prior notional_limit; under the new one it stays
+        # correct only because the limit is still set. The discard is
+        # a defensive reset so that any future invariant-tightening
+        # (e.g. rejecting Decimal('Infinity')) automatically re-runs
+        # the full check on next access.
+        self._checked_asset_names.discard(asset)
+
+    def invalidate_readiness(self) -> None:
+        """
+        Drop the cached "this asset is ready to trade" verdict for
+        every asset. Called after a `set_symbol` that may have
+        unlocked previously-not-ready assets by completing their
+        valuation path or by introducing a new tradable asset.
+        """
+        self._checked_asset_names.clear()
 
     def get_notional_limit(self, asset: str) -> Optional[Decimal]:
         return self._notional_limits.get(asset)

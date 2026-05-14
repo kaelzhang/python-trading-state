@@ -344,12 +344,21 @@ class SymbolManager:
         if path is not None:
             self._use_primary_account_currency(path)
 
-        # If path is None, we still cache the result,
-        # because Symbols need to be initialized
-        # at the beginning of the trading session,
+        # Cache the result (including None) so subsequent queries are
+        # O(1). `invalidate_paths()` clears this cache whenever a new
+        # symbol is registered, so a None recorded under an incomplete
+        # symbol set is automatically reconsidered.
         self._valuation_paths[asset] = path
 
         return path
+
+    def invalidate_paths(self) -> None:
+        """
+        Drop the cached valuation paths. Called after a `set_symbol`
+        that may have shortened a path or made a previously-unreachable
+        asset reachable.
+        """
+        self._valuation_paths.clear()
 
     def _use_primary_account_currency(self, path: ValuationPath) -> None:
         """
