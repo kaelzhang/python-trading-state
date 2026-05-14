@@ -112,17 +112,23 @@ class LimitOrderTicket(BaseOrderTicket):
     type: ClassVar[OrderType] = OrderType.LIMIT
 
     price: Decimal
-    time_in_force: TimeInForce
+    # Required for a plain LIMIT order; must be omitted (None) for
+    # post_only=True (the Binance Spot LIMIT_MAKER variant has no
+    # timeInForce).
+    time_in_force: Optional[TimeInForce] = None
     post_only: bool = False
     iceberg_quantity: Optional[Decimal] = None
 
     def __post_init__(self) -> None:
-        # Preserves the previous BaseOrderTicket._validate_params behavior:
-        # the LIMIT_MAKER variant (post_only=True) is mutually exclusive
-        # with explicit time_in_force.
-        if self.post_only and self.time_in_force is not None:
+        if self.post_only:
+            if self.time_in_force is not None:
+                raise ValueError(
+                    'post_only is not allowed with time_in_force'
+                )
+        elif self.time_in_force is None:
             raise ValueError(
-                'post_only is not allowed with time_in_force'
+                'time_in_force is required for a LIMIT order when '
+                'post_only is False'
             )
 
 

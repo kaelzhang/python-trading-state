@@ -50,6 +50,17 @@ def encode_order_request(
         (exc, None)   — when the ticket type is not yet supported.
     """
     match ticket:
+        case LimitOrderTicket() if ticket.post_only:
+            # Binance Spot's LIMIT_MAKER variant: type changes to
+            # 'LIMIT_MAKER' and timeInForce must NOT be sent (the
+            # order-side validation enforces time_in_force is None).
+            kwargs = dict(
+                symbol=ticket.symbol.name,
+                side=str(ticket.side),
+                type='LIMIT_MAKER',
+                quantity=_format_decimal(ticket.quantity),
+                price=_format_decimal(ticket.price),
+            )
         case LimitOrderTicket():
             kwargs = dict(
                 symbol=ticket.symbol.name,

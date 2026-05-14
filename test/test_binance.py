@@ -387,6 +387,24 @@ def test_encode_order_request_limit():
     assert payload["newOrderRespType"] == "FULL"
 
 
+def test_encode_order_request_post_only_emits_limit_maker():
+    symbol = Symbol("BTCUSDT", "BTC", "USDT")
+    ticket = LimitOrderTicket(
+        symbol=symbol,
+        side=OrderSide.SELL,
+        quantity=Decimal("0.5"),
+        price=Decimal("100"),
+        post_only=True,
+    )
+    exc, payload = encode_order_request(ticket)
+    assert exc is None
+    assert payload["type"] == "LIMIT_MAKER"
+    # LIMIT_MAKER must not carry a timeInForce field.
+    assert "timeInForce" not in payload
+    assert payload["quantity"] == "0.5"
+    assert payload["price"] == "100"
+
+
 def test_encode_order_request_formats_decimals_as_fixed_point():
     # Quantities that round-trip via Decimal can land in scientific
     # notation (e.g. Decimal('1E-8')); Binance rejects those. The

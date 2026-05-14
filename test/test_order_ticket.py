@@ -125,6 +125,30 @@ def test_post_only_with_time_in_force():
         )
 
 
+def test_post_only_without_time_in_force_constructs():
+    # The LIMIT_MAKER variant: time_in_force MUST be omitted.
+    ticket = LimitOrderTicket(
+        symbol=symbol,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        price=Decimal('10000'),
+        post_only=True,
+    )
+    assert ticket.post_only is True
+    assert ticket.time_in_force is None
+
+
+def test_plain_limit_requires_time_in_force():
+    # Without post_only, time_in_force is required.
+    with pytest.raises(ValueError, match='time_in_force is required'):
+        LimitOrderTicket(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            quantity=Decimal('1'),
+            price=Decimal('10000'),
+        )
+
+
 def test_ticket_apply_filters_and_validate():
     """Tickets route apply_filters / validate through their bound symbol."""
     from trading_state.filters import PrecisionFilter
