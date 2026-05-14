@@ -304,25 +304,17 @@ def decode_order_update_event(
         return exc, None
     updated_at = timestamp_to_datetime(transact_time)
 
+    exc, status = _decode_order_status(order_status_raw)
+    if exc is not None:
+        return exc, None
+
     update_kwargs = {
+        'status': status,
         'filled_quantity': filled_quantity,
         'quote_quantity': quote_quantity,
         'updated_at': updated_at,
         'commission_asset': commission_asset,
         'commission_quantity': commission_quantity,
     }
-
-    if order_status_raw == 'CANCELED':
-        update_kwargs['status'] = OrderStatus.CANCELLED
-    elif order_status_raw == 'FILLED':
-        update_kwargs['status'] = OrderStatus.FILLED
-    elif order_status_raw not in _BINANCE_ORDER_STATUS_MAP:
-        return (
-            InvalidExchangeData(
-                f'unknown order status in executionReport: '
-                f'{order_status_raw!r}'
-            ),
-            None,
-        )
 
     return None, (client_order_id, update_kwargs)

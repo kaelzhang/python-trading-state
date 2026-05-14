@@ -539,16 +539,19 @@ def test_decode_order_create_response_invalid_decimal():
 
 
 @pytest.mark.parametrize(
-    "status,expect_status_key",
+    "status_raw,expected_status",
     [
-        ("CANCELED", True),
-        ("FILLED", True),
-        ("NEW", False),
+        ("CANCELED", OrderStatus.CANCELLED),
+        ("FILLED", OrderStatus.FILLED),
+        ("EXPIRED", OrderStatus.CANCELLED),
+        ("REJECTED", OrderStatus.REJECTED),
+        ("NEW", OrderStatus.CREATED),
+        ("PARTIALLY_FILLED", OrderStatus.CREATED),
     ],
 )
-def test_decode_order_update_event(status, expect_status_key):
+def test_decode_order_update_event(status_raw, expected_status):
     payload = {
-        "X": status,
+        "X": status_raw,
         "c": "client-1",
         "z": "1.00000000",
         "Z": "100.00000000",
@@ -565,7 +568,7 @@ def test_decode_order_update_event(status, expect_status_key):
     assert updates["commission_asset"] is None
     assert updates["commission_quantity"] == Decimal("0.00000000")
     assert updates["updated_at"] == timestamp_to_datetime(payload["T"])
-    assert ("status" in updates) is expect_status_key
+    assert updates["status"] is expected_status
 
 
 def test_decode_order_update_event_missing_field():
