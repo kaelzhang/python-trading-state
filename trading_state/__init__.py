@@ -23,6 +23,8 @@ from .enums import (
 )
 
 from .exceptions import (
+    AccountAssetHasNoExposureError,
+    AllocationWeightsNotSetError,
     AssetNotDefinedError,
     SymbolNotDefinedError,
     SymbolPriceNotReadyError,
@@ -31,7 +33,13 @@ from .exceptions import (
     ValuationNotAvailableError,
     BalanceNotReadyError,
     FeatureNotAllowedError,
+    InsufficientFreeBalanceError,
     InvalidExchangeData,
+    NotionalLimitExceededError,
+)
+
+from .exposure import (
+    Exposure,
 )
 
 from .filters import (

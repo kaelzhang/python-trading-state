@@ -192,16 +192,24 @@ class BalanceManager:
     def set_notional_limit(
         self,
         asset: str,
-        limit: Optional[Decimal]
+        limit: Decimal,
     ) -> None:
         """
-        See state.set_notional_limit()
+        See state.set_notional_limit().
+
+        `limit` must be a positive Decimal. Use `Decimal('Infinity')`
+        to express "no effective cap" while still satisfying the
+        always-set invariant.
         """
-
-        if limit is not None and limit < DECIMAL_ZERO:
-            limit = None
-
-        # Just set the notional limit
+        if not isinstance(limit, Decimal):
+            raise TypeError(
+                f"notional_limit for '{asset}' must be a Decimal, "
+                f'got {type(limit).__name__}'
+            )
+        if limit <= DECIMAL_ZERO:
+            raise ValueError(
+                f"notional_limit for '{asset}' must be > 0, got {limit}"
+            )
         self._notional_limits[asset] = limit
 
     def get_notional_limit(self, asset: str) -> Optional[Decimal]:

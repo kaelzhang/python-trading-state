@@ -146,7 +146,7 @@ def test_pnl():
         include_unsettled_inflow=False,
         include_unsettled_outflow=False,
     )
-    assert exposure == Decimal('0.4')
+    assert exposure.ratio == Decimal('0.4')
 
     # Buy via add_order
     ticket = _buy_limit(state, BTCUSDT.name, Decimal('0.5'), price)

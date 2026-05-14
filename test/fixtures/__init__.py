@@ -129,9 +129,6 @@ def init_prices(state: TradingState) -> None:
 
 
 def init_notional_limits(state: TradingState) -> None:
-    # 10 BTC
-    state.set_notional_limit(BTC, Decimal('-1'))
-    state.set_notional_limit(BTC, None)
     state.set_notional_limit(BTC, Decimal('100000'))
 
 

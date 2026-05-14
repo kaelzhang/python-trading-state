@@ -47,25 +47,39 @@ def _make_buy_limit_ticket(state, symbol_name, quantity, price):
 
 
 def test_trading_state_basics():
+    from trading_state import AccountAssetHasNoExposureError
+
     state = init_state()
 
     assert state.get_account_value() == Decimal('410000')
     assert state.support_symbol(BTCUSDC_NAME)
 
-    # Account currency exposure is not defined (no notional cap).
-    assert state.exposure(
+    # Account currencies have no exposure (they are the unit of
+    # measurement, not a position).
+    exc, exp = state.exposure(
         USDT,
         include_unsettled_inflow=False,
         include_unsettled_outflow=False,
-    ) == (None, None)
+    )
+    assert exp is None
+    assert isinstance(exc, AccountAssetHasNoExposureError)
+    assert exc.asset == USDT
 
     # BTC exposure with no orders in flight: balance (1) / limit (100k)
     # at price 10k = 0.1.
-    assert state.exposure(
+    exc, exp = state.exposure(
         BTC,
         include_unsettled_inflow=False,
         include_unsettled_outflow=False,
-    ) == (None, Decimal('0.1'))
+    )
+    assert exc is None
+    assert exp.ratio == Decimal('0.1')
+    assert exp.holding == Decimal('1')
+    assert exp.valuation_price == Decimal('10000')
+    assert exp.notional_limit == Decimal('100000')
+    assert exp.notional_value == Decimal('10000')
+    assert exp.headroom_notional == Decimal('90000')
+    assert exp.headroom_quantity == Decimal('9')
 
 
 def test_add_order_returns_init_order_then_caller_drives_state_machine():
@@ -302,11 +316,13 @@ def test_unsettled_inflow_outflow_and_exposure_modes():
     ])
 
     # confirmed = 1; before any orders, no unsettled. exposure = 0.1
-    assert state.exposure(
+    exc, exp = state.exposure(
         BTC,
         include_unsettled_inflow=True,
         include_unsettled_outflow=True,
-    ) == (None, Decimal('0.1'))
+    )
+    assert exc is None
+    assert exp.ratio == Decimal('0.1')
 
     # Add a BUY order and fill it via order channel — balance NOT yet
     # updated.
@@ -334,7 +350,7 @@ def test_unsettled_inflow_outflow_and_exposure_modes():
         include_unsettled_outflow=False,
     )
     assert exc is None
-    assert base_exp == Decimal('0.1')
+    assert base_exp.ratio == Decimal('0.1')
 
     # With inflow included: 2 BTC / 100k notional * 10k price = 0.2
     exc, inflow_exp = state.exposure(
@@ -343,7 +359,7 @@ def test_unsettled_inflow_outflow_and_exposure_modes():
         include_unsettled_outflow=False,
     )
     assert exc is None
-    assert inflow_exp == Decimal('0.2')
+    assert inflow_exp.ratio == Decimal('0.2')
 
     # unsettled(BTC) should reflect the +1 BTC inflow
     exc, flow = state.unsettled(BTC)
@@ -362,7 +378,7 @@ def test_unsettled_inflow_outflow_and_exposure_modes():
         include_unsettled_outflow=False,
     )
     assert exc is None
-    assert base_exp_after == Decimal('0.2')
+    assert base_exp_after.ratio == Decimal('0.2')
     # unsettled is now 0
     _, flow_after = state.unsettled(BTC)
     assert flow_after.inflow == Decimal('0')
@@ -445,13 +461,16 @@ def test_query_orders_by_data_subset():
     assert len(only_a) == 1
 
 
-def test_allocate_passthrough_when_weights_unset():
+def test_allocate_requires_weights_to_be_set():
+    from trading_state import AllocationWeightsNotSetError
+
     state = init_state()
     ticket = _make_buy_limit_ticket(
         state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
     )
-    out = state.allocate(ticket)
-    assert out == [ticket]
+    exc, out = state.allocate(ticket)
+    assert out is None
+    assert isinstance(exc, AllocationWeightsNotSetError)
 
 
 def test_allocate_buy_across_alt_currencies():
@@ -464,9 +483,10 @@ def test_allocate_buy_across_alt_currencies():
     canonical = _make_buy_limit_ticket(
         state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
     )
-    tickets = state.allocate(canonical)
+    exc, tickets = state.allocate(canonical)
 
     # Both USDC and USDT have balance, weights both > 0 → expect 2 tickets
+    assert exc is None
     assert len(tickets) == 2
     quote_assets = {t.symbol.quote_asset for t in tickets}
     assert quote_assets == {USDC, USDT}
@@ -490,8 +510,9 @@ def test_allocate_sell_across_alt_currencies():
         price=Decimal('10000'),
         time_in_force=TimeInForce.GTC,
     )
-    tickets = state.allocate(canonical)
+    exc, tickets = state.allocate(canonical)
 
+    assert exc is None
     assert len(tickets) == 2
     for t in tickets:
         assert t.side is OrderSide.SELL
@@ -511,13 +532,16 @@ def test_allocate_passthrough_for_market_quote_quantity():
         quantity_type=MarketQuantityType.QUOTE,
         estimated_price=Decimal('10000'),
     )
-    out = state.allocate(quote_market)
+    exc, out = state.allocate(quote_market)
+    assert exc is None
     assert out == [quote_market]
 
 
 def test_order_fill_records_trade_and_pnl():
     state = init_state()
-    state.set_notional_limit(Z, None)
+    # Use Decimal('Infinity') to say "no effective cap" while still
+    # satisfying the always-set invariant on notional_limit.
+    state.set_notional_limit(Z, Decimal('Infinity'))
     state.set_price(ZUSDT.name, Decimal('10000'))
     state.set_symbol(ZUSDT)
     state.set_balances([
@@ -566,7 +590,7 @@ def test_freeze_set_and_clear():
         include_unsettled_inflow=False,
         include_unsettled_outflow=False,
     )
-    assert exc is None and e0 == Decimal('0.1')
+    assert exc is None and e0.ratio == Decimal('0.1')
 
     # Freezing all of it makes the available holding 0 → exposure 0
     state.freeze(BTC, Decimal('1'))
@@ -575,7 +599,7 @@ def test_freeze_set_and_clear():
         include_unsettled_inflow=False,
         include_unsettled_outflow=False,
     )
-    assert exc is None and e1 == Decimal('0')
+    assert exc is None and e1.ratio == Decimal('0')
 
     # Passing quantity=None clears the freeze
     state.freeze(BTC, None)
@@ -584,7 +608,7 @@ def test_freeze_set_and_clear():
         include_unsettled_inflow=False,
         include_unsettled_outflow=False,
     )
-    assert exc is None and e2 == Decimal('0.1')
+    assert exc is None and e2.ratio == Decimal('0.1')
 
 
 def test_unsettled_propagates_asset_not_ready_error():
@@ -650,21 +674,15 @@ def test_order_rejected_path():
     assert order not in state._orders.open_orders
 
 
-def test_allocate_all_zero_weights_passthrough():
+def test_allocate_stop_loss_passes_through_with_weights_set():
     state = init_state()
     state.set_alt_currency_weights((
         (Decimal('0'),),
         (Decimal('0'),),
     ))
-    # All weights effectively zero (primary is implicit 1 but every alt
-    # is 0 and the primary one alone might still be > 0)
-    # Edge case fully zero requires removing primary; we cover the
-    # all-zero alt path here.
-
-    # To hit "not any > 0" we configure no alt and pass an SELL ticket
-    # — the SELL vec (0,) plus primary implicit 1 still has primary>0, so
-    # this asserts the passthrough only when weights vec genuinely zero.
-    # Instead force passthrough via stop-loss ticket which is unsupported.
+    # Stop-loss / take-profit families are out of scope of the
+    # account-currency split logic; allocate passes them through as a
+    # single sub-ticket without running the exposure pre-check.
     from trading_state import StopLossOrderTicket
     sym = state.get_symbol(BTCUSDT_NAME)
     sl = StopLossOrderTicket(
@@ -673,21 +691,21 @@ def test_allocate_all_zero_weights_passthrough():
         quantity=Decimal('1'),
         stop_price=Decimal('5000'),
     )
-    out = state.allocate(sl)
+    exc, out = state.allocate(sl)
+    assert exc is None
     assert out == [sl]
 
 
-def test_allocate_no_eligible_resources_passthrough():
-    """No matching alt symbols for the base → passthrough."""
+def test_allocate_buy_unset_notional_limit_propagates_exposure_error():
+    """A BUY whose base asset has no notional_limit set surfaces the
+    exposure pre-check error (NotionalLimitNotSetError)."""
+    from trading_state import NotionalLimitNotSetError, Symbol
     state = init_state()
     state.set_alt_currency_weights((
         (Decimal('1'),),
         (Decimal('1'),),
     ))
-    # Construct a ticket whose base asset has no symbol in any account
-    # currency. Use FOO/BAR which is not in the config; the symbol
-    # lookups during allocate's resource-gathering all return None.
-    from trading_state import Symbol
+    # Register a new symbol but skip set_notional_limit for its base.
     state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
     sym = state.get_symbol('FOOZZZ')
     ticket = LimitOrderTicket(
@@ -697,15 +715,73 @@ def test_allocate_no_eligible_resources_passthrough():
         price=Decimal('10'),
         time_in_force=TimeInForce.GTC,
     )
-    out = state.allocate(ticket)
+    exc, out = state.allocate(ticket)
+    assert out is None
+    assert isinstance(exc, NotionalLimitNotSetError)
+
+
+def test_allocate_sell_skips_missing_alt_symbol_buckets():
+    """A SELL whose base asset has a symbol only in some weighted
+    account currencies: the missing-symbol buckets are silently
+    skipped and the present ones still produce sub-tickets."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),  # SELL: USDC weight 1, USDT implicit 1
+    ))
+    # Register a new base whose symbol exists only against USDT, not
+    # USDC. The USDC bucket exercises the `alt_symbol is None: continue`
+    # path inside state.allocate's resource gathering.
+    from trading_state import Symbol
+    state.set_symbol(Symbol('FOOUSDT', 'FOO', USDT))
+    state.set_notional_limit('FOO', Decimal('100000'))
+    state.set_price('FOOUSDT', Decimal('10'))
+    state.set_balances([
+        Balance('FOO', Decimal('100'), Decimal('0'), balance_time(0)),
+    ])
+
+    sym = state.get_symbol('FOOUSDT')
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('10'),
+        price=Decimal('10'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
+    assert len(out) == 1
+    assert out[0].symbol.quote_asset == USDT
+
+
+def test_allocate_sell_with_no_registered_symbols_falls_back_to_passthrough():
+    """A SELL whose base asset has no symbol in any weighted account
+    currency falls back to a single-element passthrough rather than
+    raising an `InsufficientFreeBalanceError` (which is BUY-specific)."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),
+    ))
+    from trading_state import Symbol
+    state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
+    sym = state.get_symbol('FOOZZZ')
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        price=Decimal('10'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
     assert out == [ticket]
 
 
-def test_allocate_zero_or_missing_balance_skips_bucket():
-    """A BUY allocation skips buckets whose account currency has no
-    balance — and if every weighted bucket is skipped, falls back to
-    passthrough."""
-    from trading_state import TradingConfig
+def test_allocate_buy_zero_balance_returns_insufficient_free_balance():
+    """A BUY allocation with every weighted account-currency bucket at
+    zero free balance returns InsufficientFreeBalanceError."""
+    from trading_state import InsufficientFreeBalanceError, TradingConfig
     config = TradingConfig(
         account_currency=USDT,
         alt_account_currencies=(USDC,),
@@ -725,8 +801,10 @@ def test_allocate_zero_or_missing_balance_skips_bucket():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
     )
-    out = state.allocate(ticket)
-    assert out == [ticket]
+    exc, out = state.allocate(ticket)
+    assert out is None
+    assert isinstance(exc, InsufficientFreeBalanceError)
+    assert exc.asset == BTC
 
 
 def test_unsettled_outflow_from_sell_fill():
@@ -883,7 +961,8 @@ def test_allocate_with_market_base_ticket():
         quantity_type=MarketQuantityType.BASE,
         estimated_price=Decimal('10000'),
     )
-    out = state.allocate(ticket)
+    exc, out = state.allocate(ticket)
+    assert exc is None
     assert len(out) >= 1
     for t in out:
         assert isinstance(t, MarketOrderTicket)
@@ -899,17 +978,17 @@ def test_allocate_skips_zero_weight_bucket():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDT_NAME, Decimal('1'), Decimal('10000'),
     )
-    out = state.allocate(ticket)
+    exc, out = state.allocate(ticket)
     # Only the primary bucket got a sub-ticket
+    assert exc is None
     assert len(out) == 1
     assert out[0].symbol.quote_asset == USDT
 
 
-def test_allocate_sell_zero_quantity_hits_assign_guard():
-    """sell_allocate is a non-conditional for-loop; with a SELL ticket
-    whose total quantity is 0, every bucket's pour is 0 and the
-    assign() callback's `quantity <= 0 -> return DECIMAL_ZERO` guard
-    fires. No sub-ticket gets emitted -> passthrough fallback."""
+def test_allocate_sell_zero_quantity_surfaces_value_error():
+    """A SELL with quantity == 0 produces no sub-ticket — under the
+    new allocate contract that surfaces as a ValueError rather than a
+    silent passthrough."""
     state = init_state()
     state.set_alt_currency_weights((
         (Decimal('0'),),
@@ -923,15 +1002,15 @@ def test_allocate_sell_zero_quantity_hits_assign_guard():
         price=Decimal('10000'),
         time_in_force=TimeInForce.GTC,
     )
-    out = state.allocate(ticket)
-    assert out == [ticket]
+    exc, out = state.allocate(ticket)
+    assert out is None
+    assert isinstance(exc, ValueError)
 
 
-def test_allocate_filter_rejection_rolls_forward_or_passthroughs():
-    """A bucket whose filter rejects (e.g. quantity below MinNotional)
-    rolls its quantity forward to the next bucket. With only one
-    eligible bucket and a too-small total, every assignment is
-    rejected → allocate returns the single passthrough fallback."""
+def test_allocate_filter_rejection_surfaces_filter_error():
+    """When every candidate sub-ticket is rejected by the symbol's
+    filters, allocate returns the first such filter exception rather
+    than silently passing the original ticket through."""
     state = init_state()
     state.set_alt_currency_weights((
         (Decimal('1'),),
@@ -947,8 +1026,9 @@ def test_allocate_filter_rejection_rolls_forward_or_passthroughs():
         price=Decimal('10000'),
         time_in_force=TimeInForce.GTC,
     )
-    out = state.allocate(ticket)
-    assert out == [ticket]
+    exc, out = state.allocate(ticket)
+    assert out is None
+    assert isinstance(exc, ValueError)
 
 
 def test_completed_order_rejects_further_updates():
@@ -983,3 +1063,53 @@ def test_completed_order_rejects_further_updates():
         commission_quantity=None,
     )
     assert order.status is OrderStatus.FILLED
+
+
+def test_set_notional_limit_rejects_none_and_non_positive():
+    import pytest as _pytest
+    from trading_state import TradingConfig, TradingState
+    state = TradingState(TradingConfig(account_currency=USDT))
+    with _pytest.raises(TypeError, match='must be a Decimal'):
+        state.set_notional_limit('BTC', None)  # type: ignore[arg-type]
+    with _pytest.raises(ValueError, match='must be > 0'):
+        state.set_notional_limit('BTC', Decimal('0'))
+    with _pytest.raises(ValueError, match='must be > 0'):
+        state.set_notional_limit('BTC', Decimal('-1'))
+
+
+def test_allocate_buy_exceeding_notional_limit_returns_error():
+    from trading_state import NotionalLimitExceededError
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('0'),),
+    ))
+    # init_state fixture sets BTC notional_limit=100k. Holding is 1 BTC
+    # at price 10k → current notional 10k. A BUY of 10 BTC at 10k would
+    # add 100k, totalling 110k > 100k cap.
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('10'), Decimal('10000'),
+    )
+    exc, out = state.allocate(ticket)
+    assert out is None
+    assert isinstance(exc, NotionalLimitExceededError)
+    assert exc.asset == BTC
+    assert exc.notional_limit == Decimal('100000')
+
+
+def test_exposure_infinity_notional_limit_yields_zero_ratio():
+    """Decimal('Infinity') as notional_limit is the documented escape
+    hatch for "no effective cap"; the ratio collapses to 0 and
+    headroom is unbounded."""
+    state = init_state()
+    state.set_notional_limit(BTC, Decimal('Infinity'))
+    exc, exp = state.exposure(
+        BTC,
+        include_unsettled_inflow=False,
+        include_unsettled_outflow=False,
+    )
+    assert exc is None
+    assert exp.notional_limit == Decimal('Infinity')
+    assert exp.ratio == Decimal('0')
+    assert exp.headroom_notional == Decimal('Infinity')
+    assert exp.headroom_quantity == Decimal('Infinity')

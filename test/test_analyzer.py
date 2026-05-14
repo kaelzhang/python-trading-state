@@ -63,7 +63,10 @@ class Trader:
             self._analyzer.add_snapshots,
         )
 
-        self._state.set_notional_limit(BTC, None)
+        # The backtester models a pure trading account where notional
+        # is not actively capped; Decimal('Infinity') satisfies the
+        # must-set invariant without imposing a real ceiling.
+        self._state.set_notional_limit(BTC, Decimal('Infinity'))
 
         # Initial balances — time must be set on every Balance.
         self._state.set_balances([

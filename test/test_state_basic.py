@@ -46,8 +46,10 @@ def test_underlying_assets():
         Balance(AAPL, Decimal('10'), DECIMAL_ZERO, balance_time()),
     ])
 
-    assert state.exposure(
+    exc, exp = state.exposure(
         AAPL,
         include_unsettled_inflow=False,
         include_unsettled_outflow=False,
-    ) == (None, Decimal('0.1'))
+    )
+    assert exc is None
+    assert exp.ratio == Decimal('0.1')

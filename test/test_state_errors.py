@@ -126,7 +126,8 @@ def test_exposure_errors_propagate_through_value_or_exception(
         include_unsettled_outflow=False,
     )
     assert exception is None
-    assert exposure == Decimal('1')  # 1 BTC * 10000 valuation / 10000 limit
+    # 1 BTC * 10000 valuation / 10000 limit
+    assert exposure.ratio == Decimal('1')
 
 
 def test_feature_not_allowed_error(test_symbols: Symbols):
@@ -193,7 +194,7 @@ def test_valuation_path_not_available(test_symbols: Symbols):
     state.set_symbol(XY)
     state.set_symbol(ZY)
 
-    state.set_notional_limit(X, None)
+    state.set_notional_limit(X, Decimal('1'))
 
     exception = state._balances.check_asset_ready(X)
     assert isinstance(exception, ValuationNotAvailableError)

@@ -95,6 +95,13 @@ from .common import (
     ValueOrException,
 )
 from .config import TradingConfig
+from .exceptions import (
+    AccountAssetHasNoExposureError,
+    AllocationWeightsNotSetError,
+    InsufficientFreeBalanceError,
+    NotionalLimitExceededError,
+)
+from .exposure import Exposure
 from .reconciliation import (
     ReconciliationManager,
     UnsettledFlow,
@@ -219,11 +226,13 @@ class TradingState(EventEmitter[TradingStateEvent]):
         if self._symbols.set_symbol(symbol):
             self.emit(TradingStateEvent.SYMBOL_ADDED, symbol)
 
-    def set_notional_limit(self, *args, **kwargs) -> None:
+    def set_notional_limit(self, asset: str, limit: Decimal) -> None:
         """
-        Set the notional limit for a certain asset. Pay attention that
-        it is mandatory to set the notional limit for every non-account
-        asset before trading.
+        Set the notional limit for a non-account asset. Mandatory:
+        every asset that the caller intends to take exposure on must
+        have a positive notional_limit configured before that asset's
+        `exposure(...)` query (and the BUY-side `allocate(...)` gate)
+        will succeed.
 
         For example, if::
 
@@ -234,8 +243,13 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         Then the trader can only buy 5 BTC, although the balance would
         otherwise allow 10.
+
+        Use `Decimal('Infinity')` to declare "no effective cap" while
+        still satisfying the always-set invariant — useful for
+        backtests or unbounded strategies. `set_notional_limit` will
+        raise on None, on a non-Decimal value, or on a value <= 0.
         """
-        self._balances.set_notional_limit(*args, **kwargs)
+        self._balances.set_notional_limit(asset, limit)
 
     def set_alt_currency_weights(
         self,
@@ -340,50 +354,52 @@ class TradingState(EventEmitter[TradingStateEvent]):
         *,
         include_unsettled_inflow: bool,
         include_unsettled_outflow: bool,
-    ) -> ValueOrException[Decimal]:
+    ) -> ValueOrException[Exposure]:
         """
-        Current exposure of `asset`:
+        Snapshot of `asset`'s exposure under the chosen unsettled
+        policy. Returns an `Exposure` value object — see
+        `trading_state.exposure.Exposure` for the four atoms it stores
+        and the derived quantities it exposes via @property.
 
-            exposure = (effective_holding * valuation_price(asset))
-                        / notional_limit(asset)
+        Effective holding folded into `Exposure.holding`::
 
-        where::
+            holding = balance.free + balance.locked
+                    - frozen(asset)
+                    + (unsettled.inflow  if include_unsettled_inflow  else 0)
+                    - (unsettled.outflow if include_unsettled_outflow else 0)
 
-            effective_holding =
-                  balance.free + balance.locked
-                - frozen(asset)
-                + (unsettled.inflow  if include_unsettled_inflow  else 0)
-                - (unsettled.outflow if include_unsettled_outflow else 0)
-
-        "Unsettled inflow" sums every order's confirmed-by-exchange but
-        not-yet-reflected-in-balance increase of `asset`. "Unsettled
-        outflow" is the symmetric quantity for decreases. Both are
-        managed by ReconciliationManager.
+        Account currencies are the unit of measurement, not a position;
+        calling `exposure(...)` with an account currency yields
+        `AccountAssetHasNoExposureError`.
 
         Args:
             asset: asset name.
-            include_unsettled_inflow: must be passed; selects whether
-                unsettled increases (e.g. BUY fill that has not yet
-                hit the balance snapshot) count toward the holding.
-            include_unsettled_outflow: must be passed; selects whether
-                unsettled decreases (e.g. SELL fill not yet reflected
-                in balance) count toward the holding.
+            include_unsettled_inflow: required; whether unsettled
+                inflows (BUY fills not yet reflected in a balance
+                snapshot) count toward the holding.
+            include_unsettled_outflow: required; symmetric for
+                outflows.
 
         Returns:
-            (exception, None) when the asset is not ready (see
-                check_asset_ready).
-            (None, exposure) otherwise.
+            (exception, None) on:
+              - AccountAssetHasNoExposureError when `asset` is an
+                account currency.
+              - AssetNotDefinedError / NotionalLimitNotSetError /
+                ValuationNotAvailableError /
+                ValuationPriceNotReadyError / BalanceNotReadyError
+                via `check_asset_ready`.
+            (None, Exposure) otherwise.
         """
+        if self._symbols.is_account_asset(asset):
+            return AccountAssetHasNoExposureError(asset), None
+
         exception = self._balances.check_asset_ready(asset)
         if exception is not None:
             return exception, None
 
         notional_limit = self._balances.get_notional_limit(asset)
-        if notional_limit is None:
-            # Account-currency exposure is not defined (no managed
-            # notional cap). Preserves the previous public surface:
-            # (None, None) signals "ready, but not calculable".
-            return None, None
+        # check_asset_ready ensures notional_limit is set for any
+        # non-account asset, so notional_limit cannot be None here.
 
         holding = self._balances.get_asset_total_balance(
             asset, DECIMAL_ZERO
@@ -396,7 +412,12 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         valuation_price = self._symbols.valuation_price(asset)
 
-        return None, holding * valuation_price / notional_limit
+        return None, Exposure(
+            asset=asset,
+            holding=holding,
+            valuation_price=valuation_price,
+            notional_limit=notional_limit,
+        )
 
     def unsettled(
         self,
@@ -596,54 +617,92 @@ class TradingState(EventEmitter[TradingStateEvent]):
     def allocate(
         self,
         ticket: OrderTicket, /,
-    ) -> List[OrderTicket]:
+    ) -> ValueOrException[List[OrderTicket]]:
         """
-        Split `ticket` across the configured account currencies
-        according to `set_alt_currency_weights(...)`, returning a list
-        of filter-applied sub-tickets.
+        Pre-flight gate plus cross-currency split. Mandatory entry
+        point before `add_order` — it both validates exposure / free
+        balance against the configured notional cap and produces the
+        filter-applied sub-tickets to feed to `add_order`.
 
-        Best-effort: when allocation cannot proceed (weights not
-        configured, no eligible bucket, MarketOrderTicket(QUOTE) which
-        we cannot split in base units, etc.) the original ticket is
-        returned wrapped in a single-element list — never a business
-        error. Eventual consistency is preserved: callers always get a
-        usable list of tickets to feed to `add_order`.
+        Returns:
+            (None, [t1, ...])  — one or more filter-applied sub-tickets
+                                 whose combined base quantity does not
+                                 push exposure(base_asset) above its
+                                 notional_limit (worst-case unsettled
+                                 inflow=True, outflow=False).
+            (exc, None) on:
+              - AllocationWeightsNotSetError when
+                `set_alt_currency_weights(...)` has not been called.
+              - NotionalLimitExceededError when the BUY would push the
+                base-asset exposure past its cap even before any
+                allocation.
+              - InsufficientFreeBalanceError when no weighted
+                account-currency bucket can fund a BUY (either no
+                symbol is registered or every bucket has zero free).
+              - Whatever the asset's `exposure(...)` check returns
+                (AssetNotDefinedError / NotionalLimitNotSetError /
+                ValuationPriceNotReadyError / ...) for BUY orders.
+              - The first filter exception when every candidate
+                sub-ticket gets rejected by its symbol's filters.
+              - ValueError when allocation yields no sub-ticket and no
+                filter rejection was recorded (e.g. ticket.quantity is
+                effectively zero).
 
-        Each output ticket has already been run through its symbol's
-        filters in normalize mode. Filter rejections during allocation
-        cause that bucket's quantity to roll forward to the next
-        bucket via the existing compensate chain.
+        Stop-loss / take-profit families and MARKET orders with
+        QUOTE-denominated quantity bypass the split math; allocate
+        returns `(None, [ticket])` so the caller still has a single
+        normalized entry to feed to `add_order`.
         """
-        passthrough = [ticket]
-
         if self._alt_currency_weights is None:
-            return passthrough
+            return AllocationWeightsNotSetError(), None
 
         side = ticket.side
-        weights_vec = self._alt_currency_weights[
-            0 if side is OrderSide.BUY else 1
-        ]
-        # alt weights first (in alt_account_currencies order), primary
-        # at the tail with implicit weight 1 — matches config.account_currencies.
-        # The primary bucket is always weight 1 (>0), so the overall
-        # "any positive weight" check is guaranteed True; the loop below
-        # filters per-bucket weights itself.
-        full_weights = (*weights_vec, DECIMAL_ONE)
 
         if isinstance(ticket, LimitOrderTicket):
             reference_price = ticket.price
         elif isinstance(ticket, MarketOrderTicket):
             if ticket.quantity_type is MarketQuantityType.QUOTE:
-                # Quantity is quote-denominated; the base-unit allocate
-                # math does not apply. Passthrough is the safest move.
-                return passthrough
+                # Quote-denominated MARKET orders are not allocatable
+                # in base units; pass through as a single sub-ticket.
+                return None, [ticket]
             reference_price = ticket.estimated_price
         else:
             # Stop-loss / take-profit variants are out of scope of the
-            # current account-currency split logic.
-            return passthrough
+            # account-currency split logic; pass through.
+            return None, [ticket]
 
         base_asset = ticket.symbol.base_asset
+
+        if side is OrderSide.BUY:
+            # Worst-case exposure pre-check: assume every unsettled
+            # inflow lands, no unsettled outflow does.
+            exc, exposure_now = self.exposure(
+                base_asset,
+                include_unsettled_inflow=True,
+                include_unsettled_outflow=False,
+            )
+            if exc is not None:
+                return exc, None
+            projected = (
+                exposure_now.notional_value
+                + ticket.quantity * reference_price
+            )
+            if projected > exposure_now.notional_limit:
+                return NotionalLimitExceededError(
+                    asset=base_asset,
+                    attempted_notional=projected,
+                    notional_limit=exposure_now.notional_limit,
+                ), None
+
+        weights_vec = self._alt_currency_weights[
+            0 if side is OrderSide.BUY else 1
+        ]
+        # alt weights first (in alt_account_currencies order), primary
+        # at the tail with implicit weight 1 — matches
+        # config.account_currencies. The primary bucket is always
+        # weight 1 (>0); the loop filters per-bucket weights itself.
+        full_weights = (*weights_vec, DECIMAL_ONE)
+
         resources: List[AllocationResource] = []
         for i, acct_cur in enumerate(self._config.account_currencies):
             weight = full_weights[i]
@@ -663,9 +722,15 @@ class TradingState(EventEmitter[TradingStateEvent]):
             resources.append(AllocationResource(alt_symbol, free, weight))
 
         if not resources:
-            return passthrough
+            if side is OrderSide.BUY:
+                return InsufficientFreeBalanceError(base_asset), None
+            # SELL with no resources: every weighted bucket is missing
+            # a registered symbol. Fall back to a single passthrough
+            # rather than fabricating an "insufficient balance" error.
+            return None, [ticket]
 
         output: List[OrderTicket] = []
+        last_filter_exc: List[Exception] = []
 
         def assign(symbol: Symbol, quantity: Decimal) -> Decimal:
             if quantity <= DECIMAL_ZERO:
@@ -675,8 +740,10 @@ class TradingState(EventEmitter[TradingStateEvent]):
             )
             exc, normalized = candidate.apply_filters()
             if exc is not None:
-                # Filter rejected — the entire candidate quantity rolls
-                # forward to the next bucket via the compensate chain.
+                # Filter rejected — capture for surfacing if every
+                # bucket fails, and roll the candidate quantity
+                # forward via the compensate chain.
+                last_filter_exc.append(exc)
                 return quantity
             output.append(normalized)
             return quantity - normalized.quantity
@@ -689,9 +756,18 @@ class TradingState(EventEmitter[TradingStateEvent]):
             sell_allocate(resources, ticket.quantity, assign)
 
         if not output:
-            return passthrough
+            if last_filter_exc:
+                return last_filter_exc[0], None
+            return (
+                ValueError(
+                    'allocate produced no sub-ticket; the input '
+                    'quantity may be zero or every candidate fell '
+                    "below the symbol's minimum"
+                ),
+                None,
+            )
 
-        return output
+        return None, output
 
     def record(self, *args, **kwargs) -> PerformanceSnapshot:
         """Record current performance snapshot."""
