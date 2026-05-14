@@ -32,7 +32,7 @@ from .fixtures import (
 
 
 def _buy_limit(state, symbol_name, quantity, price):
-    sym = state._symbols.get_symbol(symbol_name)
+    sym = state.get_symbol(symbol_name)
     return LimitOrderTicket(
         symbol=sym,
         side=OrderSide.BUY,
@@ -43,7 +43,7 @@ def _buy_limit(state, symbol_name, quantity, price):
 
 
 def _sell_limit(state, symbol_name, quantity, price):
-    sym = state._symbols.get_symbol(symbol_name)
+    sym = state.get_symbol(symbol_name)
     return LimitOrderTicket(
         symbol=sym,
         side=OrderSide.SELL,

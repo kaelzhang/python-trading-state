@@ -36,7 +36,7 @@ BTCUSDT_NAME = BTCUSDT.name
 
 
 def _make_buy_limit_ticket(state, symbol_name, quantity, price):
-    sym = state._symbols.get_symbol(symbol_name)
+    sym = state.get_symbol(symbol_name)
     return LimitOrderTicket(
         symbol=sym,
         side=OrderSide.BUY,
@@ -484,7 +484,7 @@ def test_allocate_sell_across_alt_currencies():
     ))
 
     canonical = LimitOrderTicket(
-        symbol=state._symbols.get_symbol(BTCUSDT_NAME),
+        symbol=state.get_symbol(BTCUSDT_NAME),
         side=OrderSide.SELL,
         quantity=Decimal('1'),
         price=Decimal('10000'),
@@ -503,7 +503,7 @@ def test_allocate_passthrough_for_market_quote_quantity():
         (Decimal('1'),),
         (Decimal('0'),),
     ))
-    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    sym = state.get_symbol(BTCUSDT_NAME)
     quote_market = MarketOrderTicket(
         symbol=sym,
         side=OrderSide.BUY,
@@ -524,7 +524,7 @@ def test_order_fill_records_trade_and_pnl():
         Balance(Z, DECIMAL_ZERO, DECIMAL_ZERO, balance_time()),
     ])
 
-    sym = state._symbols.get_symbol(ZUSDT.name)
+    sym = state.get_symbol(ZUSDT.name)
     ticket = LimitOrderTicket(
         symbol=sym,
         side=OrderSide.BUY,
@@ -666,7 +666,7 @@ def test_allocate_all_zero_weights_passthrough():
     # this asserts the passthrough only when weights vec genuinely zero.
     # Instead force passthrough via stop-loss ticket which is unsupported.
     from trading_state import StopLossOrderTicket
-    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    sym = state.get_symbol(BTCUSDT_NAME)
     sl = StopLossOrderTicket(
         symbol=sym,
         side=OrderSide.SELL,
@@ -689,7 +689,7 @@ def test_allocate_no_eligible_resources_passthrough():
     # lookups during allocate's resource-gathering all return None.
     from trading_state import Symbol
     state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
-    sym = state._symbols.get_symbol('FOOZZZ')
+    sym = state.get_symbol('FOOZZZ')
     ticket = LimitOrderTicket(
         symbol=sym,
         side=OrderSide.BUY,
@@ -736,7 +736,7 @@ def test_unsettled_outflow_from_sell_fill():
 
     # Pre-existing balance: 1 BTC. Then a SELL of 0.5 BTC is filled but
     # the balance update reflecting the decrease hasn't landed yet.
-    sym = state._symbols.get_symbol(BTCUSDC_NAME)
+    sym = state.get_symbol(BTCUSDC_NAME)
     ticket = LimitOrderTicket(
         symbol=sym,
         side=OrderSide.SELL,
@@ -875,7 +875,7 @@ def test_allocate_with_market_base_ticket():
         (Decimal('1'),),
         (Decimal('0'),),
     ))
-    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    sym = state.get_symbol(BTCUSDT_NAME)
     ticket = MarketOrderTicket(
         symbol=sym,
         side=OrderSide.BUY,
@@ -915,7 +915,7 @@ def test_allocate_sell_zero_quantity_hits_assign_guard():
         (Decimal('0'),),
         (Decimal('1'),),
     ))
-    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    sym = state.get_symbol(BTCUSDT_NAME)
     ticket = LimitOrderTicket(
         symbol=sym,
         side=OrderSide.SELL,
@@ -937,7 +937,7 @@ def test_allocate_filter_rejection_rolls_forward_or_passthroughs():
         (Decimal('1'),),
         (Decimal('0'),),
     ))
-    sym = state._symbols.get_symbol(BTCUSDT_NAME)
+    sym = state.get_symbol(BTCUSDT_NAME)
     # Quantity intentionally too small to clear the symbol's NOTIONAL
     # filter so every candidate gets rejected.
     ticket = LimitOrderTicket(

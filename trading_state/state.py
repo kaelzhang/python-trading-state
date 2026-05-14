@@ -316,6 +316,21 @@ class TradingState(EventEmitter[TradingStateEvent]):
     ) -> Optional[Decimal]:
         return self._symbols.get_price(symbol_name)
 
+    def get_symbol(
+        self,
+        symbol_name: str, /,
+    ) -> Optional[Symbol]:
+        """
+        Retrieve a previously-registered Symbol by name. Returns None
+        when the symbol has not been added via `set_symbol`.
+
+        Callers build OrderTickets directly and a ticket's `symbol`
+        field is a Symbol instance, so a public way to fetch one back
+        out of state is part of the supported API surface (rather than
+        reaching into `state._symbols`).
+        """
+        return self._symbols.get_symbol(symbol_name)
+
     def support_symbol(self, symbol_name: str, /) -> bool:
         return self._symbols.has_symbol(symbol_name)
 

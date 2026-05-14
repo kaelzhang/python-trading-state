@@ -89,7 +89,7 @@ class Trader:
         if usdt <= DECIMAL_ZERO:
             return
         quantity = usdt / price
-        sym = self._state._symbols.get_symbol(BTCUSDT.name)
+        sym = self._state.get_symbol(BTCUSDT.name)
         ticket = LimitOrderTicket(
             symbol=sym,
             side=OrderSide.BUY,
@@ -134,7 +134,7 @@ class Trader:
         btc = self._state._balances.get_balance(BTC).free
         if btc <= DECIMAL_ZERO:
             return
-        sym = self._state._symbols.get_symbol(BTCUSDT.name)
+        sym = self._state.get_symbol(BTCUSDT.name)
         ticket = LimitOrderTicket(
             symbol=sym,
             side=OrderSide.SELL,

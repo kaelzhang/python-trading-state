@@ -67,7 +67,7 @@ from trading_state import (
     TimeInForce,
 )
 
-btcusdt = state._symbols.get_symbol('BTCUSDT')   # the Symbol registered above
+btcusdt = state.get_symbol('BTCUSDT')   # the Symbol registered above
 
 ticket = LimitOrderTicket(
     symbol=btcusdt,
