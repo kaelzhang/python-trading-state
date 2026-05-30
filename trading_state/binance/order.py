@@ -240,18 +240,11 @@ def decode_order_create_response(
     if exc is not None:
         return exc, None
 
-    updates = dict(
-        status=status,
-        id=client_order_id,
-        created_at=datetime.fromtimestamp(transact_time / 1000),
-        filled_quantity=filled_quantity,
-        quote_quantity=quote_quantity,
-    )
+    commission_asset = None
+    commission_quantity: Decimal = DECIMAL_ZERO
 
     fills = response.get('fills')
     if fills:
-        commission_quantity = DECIMAL_ZERO
-        commission_asset = None
         for fill in fills:
             exc, fill_commission = _decode_decimal(
                 fill.get('commission', '0'),
@@ -272,11 +265,23 @@ def decode_order_create_response(
                 ),
                 None,
             )
+    else:
+        # No fills section: leave commission as None / 0 so caller can
+        # tell update_order "not updated this round".
+        commission_quantity = None  # type: ignore[assignment]
 
-        updates['commission_asset'] = commission_asset
-        updates['commission_quantity'] = commission_quantity
-
-    return None, updates
+    # The full kwarg set state.update_order requires; emit `None` for
+    # anything not present on the wire so `state.update_order(order,
+    # **updates)` is a complete call regardless of execution context.
+    return None, dict(
+        status=status,
+        updated_at=datetime.fromtimestamp(transact_time / 1000),
+        id=client_order_id,
+        filled_quantity=filled_quantity,
+        quote_quantity=quote_quantity,
+        commission_asset=commission_asset,
+        commission_quantity=commission_quantity,
+    )
 
 
 # Ref
@@ -351,11 +356,16 @@ def decode_order_update_event(
     if exc is not None:
         return exc, None
 
+    # The full kwarg set state.update_order requires; `id` is unset by
+    # executionReport because the order is keyed by clientOrderId at
+    # the caller (state.get_order_by_id), so `id=None` here means "do
+    # not overwrite the existing Order.id".
     update_kwargs = {
         'status': status,
+        'updated_at': updated_at,
+        'id': None,
         'filled_quantity': filled_quantity,
         'quote_quantity': quote_quantity,
-        'updated_at': updated_at,
         'commission_asset': commission_asset,
         'commission_quantity': commission_quantity,
     }

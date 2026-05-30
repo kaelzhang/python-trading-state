@@ -518,15 +518,22 @@ def test_decode_order_create_response_without_fills():
     }
     exc, updates = decode_order_create_response(response)
     assert exc is None
+    # Full kwarg surface required by state.update_order(...). Fields
+    # absent on the wire round-trip as None so caller `**updates` works.
+    assert set(updates.keys()) == {
+        'status', 'updated_at', 'id',
+        'filled_quantity', 'quote_quantity',
+        'commission_asset', 'commission_quantity',
+    }
     assert updates["status"] == OrderStatus.FILLED
     assert updates["id"] == response["clientOrderId"]
-    assert updates["created_at"] == datetime.fromtimestamp(
+    assert updates["updated_at"] == datetime.fromtimestamp(
         response["transactTime"] / 1000
     )
     assert updates["filled_quantity"] == Decimal("10.00000000")
     assert updates["quote_quantity"] == Decimal("10.00000000")
-    assert "commission_asset" not in updates
-    assert "commission_quantity" not in updates
+    assert updates["commission_asset"] is None
+    assert updates["commission_quantity"] is None
 
 
 def test_decode_order_create_response_with_fills():
@@ -545,6 +552,9 @@ def test_decode_order_create_response_with_fills():
     assert exc is None
     assert updates["commission_asset"] == "USDT"
     assert updates["commission_quantity"] == Decimal("0.30000000")
+    assert updates["updated_at"] == datetime.fromtimestamp(
+        response["transactTime"] / 1000
+    )
 
 
 def test_decode_order_create_response_missing_field():
@@ -636,6 +646,15 @@ def test_decode_order_update_event(status_raw, expected_status):
     assert exc is None
     client_id, updates = decoded
     assert client_id == "client-1"
+    # Full kwarg surface required by state.update_order(...). `id`
+    # is intentionally None on WS executionReport because the caller
+    # already looked the order up via state.get_order_by_id(client_id).
+    assert set(updates.keys()) == {
+        'status', 'updated_at', 'id',
+        'filled_quantity', 'quote_quantity',
+        'commission_asset', 'commission_quantity',
+    }
+    assert updates["id"] is None
     assert updates["filled_quantity"] == Decimal("1.00000000")
     assert updates["quote_quantity"] == Decimal("100.00000000")
     assert updates["commission_asset"] is None
@@ -758,3 +777,65 @@ def test_decode_order_create_response_negative_quote():
     })
     assert value is None
     assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decoded_dicts_round_trip_through_state_update_order():
+    # Regression: both decoders must emit the full kwarg set
+    # `state.update_order(...)` requires so a caller doing
+    # `state.update_order(order, **decoded)` does not TypeError on a
+    # missing required keyword. Prior to this audit, `id` was missing
+    # from the executionReport output and `updated_at` /
+    # `commission_asset` / `commission_quantity` were missing (or
+    # `created_at` was emitted as a phantom kwarg) from the order-create
+    # response output.
+    from datetime import datetime
+    from trading_state import (
+        Balance, LimitOrderTicket, OrderSide, TimeInForce,
+        TradingConfig, TradingState, Symbol,
+    )
+    from trading_state.common import DECIMAL_ZERO
+
+    sym = Symbol("BTCUSDT", "BTC", "USDT")
+    state = TradingState(TradingConfig(account_currency="USDT"))
+    state.set_symbol(sym)
+    state.set_price("BTCUSDT", Decimal("30000"))
+    state.set_notional_limit("BTC", Decimal("100000"))
+    state.set_balances([
+        Balance("BTC", Decimal("1"), DECIMAL_ZERO, datetime(2024, 1, 1)),
+        Balance("USDT", Decimal("100000"), DECIMAL_ZERO,
+                datetime(2024, 1, 1)),
+    ])
+
+    exc, order = state.add_order(LimitOrderTicket(
+        symbol=sym, side=OrderSide.BUY, quantity=Decimal("0.1"),
+        price=Decimal("30000"), time_in_force=TimeInForce.GTC,
+    ))
+    assert exc is None and order is not None
+
+    # 1) order-create response
+    exc, create_updates = decode_order_create_response({
+        "status": "FILLED",
+        "clientOrderId": "ord-1",
+        "transactTime": 1700000000000,
+        "executedQty": "0.1",
+        "cummulativeQuoteQty": "3000",
+        "fills": [{"commission": "0.001", "commissionAsset": "BNB"}],
+    })
+    assert exc is None
+    # Must not TypeError on a missing required kwarg.
+    state.update_order(order, **create_updates)
+
+    # 2) executionReport
+    exc, decoded = decode_order_update_event({
+        "c": "ord-1",
+        "X": "FILLED",
+        "z": "0.1",
+        "Z": "3000",
+        "N": "BNB",
+        "n": "0.001",
+        "T": 1700000000001,
+    })
+    assert exc is None
+    _, update_updates = decoded
+    # Must not TypeError either.
+    state.update_order(order, **update_updates)
