@@ -8,74 +8,7 @@
 
 `trading-state` is a small, focused Python library that models the dynamic state of a trading account — balances, positions, open orders, fills, unsettled flow, exposure, and PnL — under realistic exchange-like constraints.
 
-It is **passive**: the library never schedules, polls, or talks to an exchange. Every state change is the consequence of a caller-driven write. It is **synchronous**: all reads return immediately. It separates **state** from **strategy** — the library owns the truth about what is held, ordered, filled, settled, and unsettled, while the caller owns the question "what should we do next?".
-
----
-
-## Project positioning & design principles
-
-These principles are load-bearing. Reading them once will save you from arguing with the API later.
-
-### 1. Single entry point for orders: `state.allocate(...)`
-
-There is **one** way to create an Order: `state.allocate(ticket)`. There is no `add_order`, no `submit`, no shortcut. `allocate` runs:
-
-1. Setup checks (fail-fast on missing config — see below).
-2. Cross-currency split across configured account currencies (when the ticket type supports it).
-3. Per-bucket filter normalization against the symbol's `exchangeInfo` filters.
-4. Per-bucket pre-flight (BUY notional, free balance).
-5. Materializes each surviving sub-ticket into a registered `Order` and emits `ORDER_CREATED`.
-
-The caller drives every subsequent state transition through `state.update_order(order, ...)`.
-
-### 2. Recovery is a separate path: `state.import_order(order)`
-
-When a process restarts, reconnects after a WS gap, or polls for an order placed by another client, the order may already exist at the exchange but be missing from local state. `state.import_order(order)` is the recovery entry point. The Binance decoders (`decode_order_snapshot`, `decode_order_query_response`) produce the right inputs.
-
-Recovery and allocation are kept separate so neither path needs to know about the other's preconditions.
-
-### 3. All parameters are passed explicitly
-
-Required parameters are keyword-only. There are very few defaults, and they are reserved for opaque metadata bags (`Order.data`, `allocate(data=...)`). This is deliberate: real-money trading is unforgiving of "I forgot to pass that argument and the library used a default I didn't know about".
-
-`state.update_order(...)` is the strictest example — every field is a required keyword. Pass `None` if you do not want to update a field; the library will not guess.
-
-### 4. Initialization is exhaustive
-
-Before `allocate` will succeed, the caller must have set:
-
-- `set_symbol(symbol)` for every symbol the strategy touches
-- `set_price(symbol_name, price)` for every symbol used in valuation paths
-- `set_notional_limit(asset, limit)` for every base asset the strategy takes exposure on
-- `set_alt_currency_weights(((BUY_weights,), (SELL_weights,)))` — mandatory, even if every alt weight is zero
-- `set_balances([Balance(asset, free, locked, time)])` — `Balance.time` is required, not optional
-
-A missing setup step is a **fail-fast** error: `AllocationWeightsNotSetError`, `SymbolNotDefinedError`, `NotionalLimitNotSetError`, etc. The library will not silently work around missing config.
-
-### 5. Fail-fast on setup, best-effort on business outcomes
-
-- **Fail-fast** = the caller's setup or call signature is wrong. Returns `(exc, None)` so the caller cannot accidentally drop the error.
-- **Best-effort** = a per-bucket business outcome (filter rejection, insufficient balance, aggregate notional cap reached). Returns a shorter result list — possibly empty. The caller decides whether the partial result is good enough.
-
-The split keeps "did the caller break the contract?" cleanly separate from "did the market refuse to honour this allocation?".
-
-### 6. State never raises a business exception
-
-`state.update_order(...)` silently drops stale data (status / time / filled regression) and emits a diagnostic `STALE_UPDATE` event. Protocol-side errors (a malformed wire payload) surface through `ValueOrException` returns from `trading_state.binance.*` decoders, never as raises from state.
-
-### 7. `trading_state` is exchange-agnostic
-
-The core package knows nothing about Binance. All wire ↔ domain mapping lives in `trading_state.binance`. If you add a second exchange, mirror the pattern in a sibling subpackage.
-
-### 8. `Decimal` arithmetic everywhere
-
-All internal money math uses `Decimal`. Tickets are frozen value objects; filters produce normalized copies via `dataclasses.replace`.
-
-### 9. Caller chooses what counts as "exposure"
-
-`state.exposure(asset, include_unsettled_inflow=..., include_unsettled_outflow=...)` requires both flags at every call site. There is no default. Trading decisions depend on which components of the holding you consider "real" right now; the library refuses to guess.
-
----
+The library is **passive**: it never schedules, polls, or talks to an exchange. The caller owns the network — when an exchange responds to a request, or pushes an event over a WebSocket, the caller hands that data to `trading_state`. All reads are **synchronous** and return immediately.
 
 ## Install
 
@@ -85,7 +18,9 @@ $ pip install trading-state
 
 ## Usage
 
-### 1) Initialize state, market data, and weights
+### 1) Set up the state
+
+Before placing any order, configure the account, register every Symbol you will trade, set notional limits, set cross-currency allocation weights, then seed initial balances. The library does not fall back to defaults for any of these — a missing setup step makes `state.allocate(...)` fail fast with a specific exception, by design.
 
 ```py
 from datetime import datetime
@@ -105,29 +40,38 @@ config = TradingConfig(
 )
 state = TradingState(config)
 
+# Register every symbol the strategy will trade.
 state.set_symbol(Symbol('BTCUSDT', 'BTC', 'USDT'))
 state.set_symbol(Symbol('BTCUSDC', 'BTC', 'USDC'))
+
+# Seed prices used by the valuation paths.
 state.set_price('BTCUSDT', Decimal('30000'))
 state.set_price('BTCUSDC', Decimal('30000'))
+
+# Hard cap on how much BTC notional the strategy is allowed to hold.
+# Required for every base asset the strategy takes exposure on.
 state.set_notional_limit('BTC', Decimal('100000'))
 
-# Mandatory: weights for the alternative account currencies on BUY
-# and SELL. The primary account currency has implicit weight 1. Use
-# zero across the alts if you do not want cross-currency splitting.
+# Cross-currency allocation weights for the alt account currencies.
+# Required even if you do not intend to split across alts — pass zero
+# weights to route everything through the primary account currency.
 state.set_alt_currency_weights((
-    (Decimal('0.5'),),   # BUY weights vs alt_account_currencies
+    (Decimal('0.5'),),   # BUY weights against alt_account_currencies
     (Decimal('0'),),     # SELL weights
 ))
 
+# Initial balances from the exchange's account snapshot.
+# Balance.time is required: it lets the library tell unsettled flow
+# (fills not yet reflected in a balance update) from settled balance.
 state.set_balances([
     Balance('USDT', Decimal('10000'), Decimal('0'), datetime.now()),
     Balance('USDC', Decimal('10000'), Decimal('0'), datetime.now()),
 ])
 ```
 
-`Balance.time` is required: it drives the reconciliation between order fills (from the order channel) and balance snapshots (from the balance channel).
+### 2) Place a trade and keep state in sync with the exchange
 
-### 2) Allocate Orders from a canonical ticket
+Suppose your strategy decided to buy 0.2 BTC at 30000 USDT. Encode that decision as an `OrderTicket`, hand it to `state.allocate(...)`, and the library returns one `Order` per cross-currency bucket that survived allocation (the BUY weights above gave each of USDT and USDC a non-zero share, so this single ticket fans out into two Orders).
 
 ```py
 from trading_state import (
@@ -147,16 +91,36 @@ ticket = LimitOrderTicket(
     time_in_force=TimeInForce.GTC,
 )
 
-# allocate returns ValueOrException[List[Order]]. Each Order is
-# already registered with the order manager, the reconciliation
-# manager, and has had `ORDER_CREATED` emitted once. The caller
-# drives each Order's state machine via update_order.
+# allocate runs the cross-currency split, the per-bucket exchange
+# filters, and the BUY pre-flight (notional cap + free balance). It
+# returns one Order per surviving bucket — each Order is already
+# registered with the order manager, and ORDER_CREATED has been
+# emitted once per Order. Each Order starts at status INIT.
 exc, orders = state.allocate(ticket, data={'strategy': 'momentum'})
-assert exc is None
+if exc is not None:
+    # Setup error (weights missing, symbol not registered, notional
+    # limit not set, etc.). Caller decides: log, raise, or repair.
+    ...
+elif not orders:
+    # Best-effort outcome: every bucket was skipped (filter rejection,
+    # insufficient balance, aggregate notional cap reached). The
+    # caller's decision was not honoured this round; nothing landed
+    # in state.
+    ...
+```
+
+For each returned `Order`, push it through the exchange's order-create endpoint, then push the exchange's response back into state. The library does not perform any network I/O — that is the caller's exchange client.
+
+```py
+from trading_state.binance import (
+    decode_order_create_response,
+    encode_order_request,
+)
 
 for order in orders:
-    # The caller drives the state machine explicitly. update_order
-    # requires every keyword — pass None for fields you aren't touching.
+    # 1. Mark the Order as being submitted to the exchange. This
+    #    transitions it from INIT to SUBMITTING. update_order requires
+    #    every keyword — pass None for fields you are not touching.
     state.update_order(
         order,
         status=OrderStatus.SUBMITTING,
@@ -168,187 +132,115 @@ for order in orders:
         commission_quantity=None,
     )
 
-    state.update_order(
-        order,
-        status=OrderStatus.CREATED,
-        updated_at=datetime.now(),
-        id='order-1',
-        filled_quantity=Decimal('0.05'),
-        quote_quantity=Decimal('1500'),
-        commission_asset=None,
-        commission_quantity=None,
-    )
+    # 2. Encode the ticket for the exchange's POST body.
+    exc, body = encode_order_request(order.ticket)
+    if exc is not None:
+        continue
+
+    # 3. Send to the exchange. trading_state is passive; this network
+    #    call is owned by your HTTP client.
+    response = exchange_client.post('/api/v3/order', body=body)
+
+    # 4. Decode the response into update_order's keyword set and push
+    #    it back into state. The id, status, and fill cumulatives all
+    #    come from the exchange — never hand-write them.
+    exc, kwargs = decode_order_create_response(response)
+    if exc is None:
+        state.update_order(order, **kwargs)
 ```
 
-`exc is None` and `orders == []` is a legal outcome: every per-bucket pre-flight (filter / balance / aggregate notional) was best-effort skipped. The library does NOT signal "I rejected your ticket"; the caller inspects the empty list and decides whether to retry with smaller size, different weights, or to wait.
-
-Failure modes:
-- `(AllocationWeightsNotSetError(), None)` — `set_alt_currency_weights` was never called.
-- `(SymbolNotDefinedError(name), None)` — `ticket.symbol` was never registered via `set_symbol`.
-- `(NotionalLimitNotSetError(asset), None)` — the BUY pre-flight tried to query exposure on an asset without a notional limit.
-- `(None, [orders...])` — happy path; may be a shorter list than expected, or empty.
-
-### 3) Query exposure and unsettled flow
-
-```py
-exc, exposure_now = state.exposure(
-    'BTC',
-    include_unsettled_inflow=True,    # count fills the exchange has confirmed but balance has not yet caught up to
-    include_unsettled_outflow=False,  # do not deduct unsettled outflows here
-)
-
-exc, flow = state.unsettled('BTC')    # diagnostic only — do not drive trading decisions from this
-```
-
-Each `include_unsettled_*` flag is required: callers must state at every call site which components of the holding they want.
-
-### 4) Cross-currency allocation across alt account currencies
-
-```py
-state.set_alt_currency_weights((
-    (Decimal('0.5'),),   # BUY weights against `alt_account_currencies`
-    (Decimal('0'),),     # SELL weights
-))
-
-# A canonical ticket on the primary symbol is fanned out across every
-# weighted account-currency bucket. allocate produces one Order per
-# eligible bucket, in `config.account_currencies` declaration order.
-exc, orders = state.allocate(ticket)
-for order in orders:
-    print(order.ticket.symbol.name, order.ticket.quantity)
-```
-
-Per-bucket failures (filter rejection, insufficient balance) silently skip that bucket; surviving buckets still produce Orders.
-
-### 5) Subscribe to events and diagnostics
-
-```py
-from trading_state import StaleUpdate, TradingStateEvent
-
-state.on(
-    TradingStateEvent.ORDER_CREATED,
-    lambda order: print('order created', order.id, order.ticket.symbol.name),
-)
-
-state.on(
-    TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED,
-    lambda snapshot: ...,
-)
-
-state.on(
-    TradingStateEvent.STALE_UPDATE,
-    lambda event: print('dropped stale update', event.kind, event),
-)
-```
-
-Every Order in state was preceded by an `ORDER_CREATED` event — whether it came from `allocate` or from `import_order` (recovery). Downstream subscribers do not need to differentiate.
-
-### 6) Record snapshots and analyze performance
-
-```py
-from trading_state import CashFlow
-
-state.set_cash_flow(
-    CashFlow('USDT', Decimal('1000'), datetime.now()),
-)
-
-snapshot = state.record()
-```
-
-```py
-from trading_state import TradingStateEvent
-from trading_state.analyzer import AnalyzerType, PerformanceAnalyzer
-
-analyzer = PerformanceAnalyzer([
-    AnalyzerType.TOTAL_RETURN,
-    AnalyzerType.SHARPE_RATIO.params(trading_days=365),
-    AnalyzerType.MAX_DRAWDOWN,
-])
-
-state.on(
-    TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED,
-    analyzer.add_snapshots,
-)
-
-results = analyzer.analyze()
-total_return = results[AnalyzerType.TOTAL_RETURN].value
-```
-
-### 7) Bridging to Binance (or any exchange) via decoders
-
-WS executionReport → `state.update_order`:
+After the create response lands, subsequent state changes for this Order — partial fills, full fill, cancellation — typically arrive over the user-data WebSocket as `executionReport` events. When one arrives, decode it, look up the Order by its client-order-id, and feed the result to `update_order`.
 
 ```py
 from trading_state.binance import decode_order_update_event
 
+# When an `executionReport` arrives over the user-data WS (your WS
+# infrastructure is out of scope; trading_state never opens sockets):
 exc, decoded = decode_order_update_event(ws_payload)
-if exc is not None:
-    log.error('bad executionReport', err=exc)
-    return
-client_id, updates = decoded
-
-order = state.get_order_by_id(client_id)
-if order is None:
-    return  # unknown order; consider recovery (Section 8)
-state.update_order(order, **updates)
-```
-
-REST `POST /api/v3/order` response → `state.update_order`:
-
-```py
-from trading_state.binance import decode_order_create_response
-
-exc, updates = decode_order_create_response(rest_response)
 if exc is None:
-    state.update_order(order, **updates)
+    client_order_id, kwargs = decoded
+    order = state.get_order_by_id(client_order_id)
+    if order is not None:
+        state.update_order(order, **kwargs)
+    # If order is None, the Order is not in local state — see §4 Recovery.
 ```
 
-All decoders in `trading_state.binance` return `ValueOrException[T]`; validation is embedded so callers cannot accidentally feed malformed data into state.
+`state.update_order` silently drops stale writes (status / time / filled-quantity regressions) and emits a diagnostic `STALE_UPDATE` event. It never raises a business exception.
 
-### 8) Recovery
+#### Pre-flight for stop-loss / take-profit and `MarketOrderTicket(QUOTE)`
 
-`trading_state.binance` provides two recovery-oriented decoders on top of the same wire schema. The caller chooses which one based on whether the Order is already in state.
+`allocate` cannot cross-currency-split tickets whose base quantity is implicit (`MarketOrderTicket(QUOTE)`) or trigger-dependent (stop-loss / take-profit variants). For these, `allocate` runs filter normalization and pre-flight on amounts that are precisely computable up-front; anything that depends on the trigger-time market price is silently passed through, and the exchange does the authoritative check at trigger time.
+
+| Ticket | notional pre-flight | free-balance pre-flight |
+|---|---|---|
+| `MarketOrderTicket(QUOTE)` BUY | yes (notional = quote_quantity) | yes (quote currency) |
+| `MarketOrderTicket(QUOTE)` SELL | N/A | skipped (base quantity unknown) |
+| `StopLossLimit / TakeProfitLimit` BUY | yes (notional = price × quantity) | yes (quote currency) |
+| `StopLoss / TakeProfit` (no limit) BUY | skipped (depends on trigger price) | skipped |
+| Any `StopLoss / TakeProfit*` SELL | N/A | yes (base quantity known) |
+
+### 3) Check exposure when sizing the next trade
+
+Before deciding on the next order size, the strategy typically needs to know how much room is left under the asset's notional cap, accounting for what is held now and for any fills that have not yet been reflected in a balance snapshot.
+
+`state.exposure(asset, ...)` returns an `Exposure` value object. Both `include_unsettled_*` flags are required at every call site — there is no library default, because what counts as "real" depends on whether you are sizing a new BUY (conservative: include unsettled inflows so you don't double-spend the room), a SELL (include outflows), or a diagnostic read (your call).
 
 ```py
-from trading_state.binance import (
-    decode_order_query_response,
-    decode_order_snapshot,
+exc, exposure = state.exposure(
+    'BTC',
+    include_unsettled_inflow=True,
+    include_unsettled_outflow=False,
 )
+if exc is None:
+    room_left = exposure.notional_limit - exposure.notional_value
 ```
+
+`state.unsettled(asset)` returns just the unsettled inflow / outflow magnitudes — it is a diagnostic read only. Do not drive trading decisions from it; go through `state.exposure(...)` with explicit flags.
+
+### 4) Recover after restart or a WebSocket gap
+
+The user-data WebSocket does not replay missed events. After a process restart or a WS drop, local state can drift from the exchange. `trading_state.binance` provides two recovery decoders that consume the same per-order schema returned by `GET /api/v3/openOrders`, `GET /api/v3/allOrders`, and `GET /api/v3/order`; the caller chooses the right one based on whether the Order is already in state.
 
 | Decoder | Returns | Pair with |
 |---|---|---|
-| `decode_order_snapshot(item, *, symbol, data=None)` | `Order` (fully populated) | `state.import_order(order)` |
+| `decode_order_snapshot(item, *, symbol, data=None)` | a fully-populated `Order` | `state.import_order(order)` |
 | `decode_order_query_response(payload)` | `(client_order_id, update_kwargs)` | `state.update_order(existing, **kwargs)` |
 
-Both consume the per-order schema returned by `GET /api/v3/openOrders`, `GET /api/v3/allOrders`, and the body of `GET /api/v3/order` (single-order query).
+#### 4a) Cold startup
 
-#### 8a) Cold startup
-
-State is empty. Pull `openOrders`, import each:
+The process just launched; state is empty. Pull every open order from the exchange and import each one.
 
 ```py
-account = await binance.get_account()
-state.set_balances(decode_account_info_response(account))
+from trading_state.binance import (
+    decode_account_info_response,
+    decode_order_snapshot,
+)
 
-for item in await binance.get_open_orders():
+# Seed balances from the account snapshot.
+account = exchange_client.get_account()
+exc, balances = decode_account_info_response(account)
+if exc is None:
+    state.set_balances(balances)
+
+# Import every open order.
+for item in exchange_client.get_open_orders():
     sym = state.get_symbol(item['symbol'])
     if sym is None:
         continue
     exc, order = decode_order_snapshot(item, symbol=sym)
-    if exc is not None:
-        log.error('snapshot decode failed', err=exc)
-        continue
-    state.import_order(order)
+    if exc is None:
+        state.import_order(order)
 ```
 
-#### 8b) Periodic check of one specific order
+#### 4b) Periodic refresh of one known order
 
-Caller is tracking a long-lived order and wants a status refresh. Order is known to be in state, so use `update_order`:
+The strategy is tracking a long-lived order (the local state knows it) and wants a status refresh. The Order is already in state, so route through `update_order`.
 
 ```py
+from trading_state.binance import decode_order_query_response
+
 order = state.get_order_by_id('order-1')
-item = await binance.get_order(
+item = exchange_client.get_order(
     orig_client_order_id='order-1',
     symbol=order.ticket.symbol.name,
 )
@@ -358,17 +250,17 @@ if exc is None:
     state.update_order(order, **kwargs)
 ```
 
-The `update_order` path naturally handles terminal status (FILLED / CANCELED / REJECTED): it just transitions the existing Order through `update_order`'s standard logic, including the stale-update silent drop.
+`update_order` handles terminal status naturally: if the refresh returns FILLED, it transitions the Order through the same path it would have taken via WS, including the stale-update silent drop.
 
-#### 8c) Mid-session reconnect after a WS gap
+#### 4c) Mid-session reconnect after a WS gap
 
-WS has no replay. After reconnect, pull `openOrders` and dispatch per item on existing-in-state, then gap-fill local-open orders that are no longer in the exchange's open set:
+WS reconnected; some local Orders may have advanced or terminated during the gap, and orders placed by another client / process during the gap need discovering. Pull `openOrders` and dispatch per item on existing-in-state, then gap-fill local-open orders that are no longer in the exchange's open set.
 
 ```py
-api_open = await binance.get_open_orders()
+api_open = exchange_client.get_open_orders()
 exchange_open_ids = set()
 
-# (1) For each open at exchange: import if new, refresh if known.
+# (1) For each open order at the exchange: import if new, refresh if known.
 for item in api_open:
     sym = state.get_symbol(item['symbol'])
     if sym is None:
@@ -386,13 +278,13 @@ for item in api_open:
             _, kwargs = decoded
             state.update_order(existing, **kwargs)
 
-# (2) Locally open but not in the exchange's open set must have
-#     terminated during the gap; query each one and push the
+# (2) Local Orders that the exchange no longer lists as open must
+#     have terminated during the gap; query each one and push the
 #     terminal status via update_order.
 for order in state.get_open_orders():
     if order.id in exchange_open_ids:
         continue
-    item = await binance.get_order(
+    item = exchange_client.get_order(
         orig_client_order_id=order.id,
         symbol=order.ticket.symbol.name,
     )
@@ -402,20 +294,92 @@ for order in state.get_open_orders():
         state.update_order(order, **kwargs)
 
 # (3) Refresh balances.
-account = await binance.get_account()
-state.set_balances(decode_account_info_response(account))
+account = exchange_client.get_account()
+exc, balances = decode_account_info_response(account)
+if exc is None:
+    state.set_balances(balances)
 ```
 
-`state.get_open_orders()` returns the locally-known orders the exchange has acknowledged (status `CREATED`, `PARTIALLY_FILLED`, `CANCELLING`). It does **not** include orders in `INIT` or `SUBMITTING` — those are still caller-side in-flight; the caller holds the reference returned by `allocate` and is responsible for driving them forward.
+`state.get_open_orders()` returns Orders the exchange has acknowledged (`CREATED` / `PARTIALLY_FILLED` / `CANCELLING`). It does **not** include `INIT` / `SUBMITTING` — those Orders are still caller-side in-flight; the caller holds the reference returned by `allocate` and is responsible for driving them forward.
 
-#### Allocation pre-flight semantics
+### 5) Observe state changes via events
 
-`allocate`'s passthrough flow (`MarketOrderTicket(QUOTE)`, stop-loss / take-profit variants) always applies filter normalization but only runs pre-flight on amounts that are precisely computable. Anything that depends on the trigger-time market price is silently allowed through — the exchange does the authoritative check at trigger time.
+For dashboards, audit logs, or downstream pipelines that should not sit on the trading hot path, subscribe to `TradingStateEvent`s.
 
-| Ticket | notional pre-flight | free-balance pre-flight |
-|---|---|---|
-| `MarketOrderTicket(QUOTE)` BUY | yes (notional = quote_quantity) | yes (quote currency) |
-| `MarketOrderTicket(QUOTE)` SELL | N/A | skipped (base quantity unknown) |
-| `StopLossLimit / TakeProfitLimit` BUY | yes (notional = price × quantity) | yes (quote currency) |
-| `StopLoss / TakeProfit` (no limit) BUY | skipped (depends on trigger price) | skipped |
-| `StopLoss / TakeProfit / StopLossLimit / TakeProfitLimit` SELL | N/A | yes (base quantity known) |
+```py
+from trading_state import TradingStateEvent
+
+state.on(
+    TradingStateEvent.ORDER_CREATED,
+    lambda order: ...,
+)
+state.on(
+    TradingStateEvent.ORDER_STATUS_UPDATED,
+    lambda order, status: ...,
+)
+state.on(
+    TradingStateEvent.ORDER_FILLED_QUANTITY_UPDATED,
+    lambda order, filled_quantity: ...,
+)
+state.on(
+    TradingStateEvent.STALE_UPDATE,
+    lambda event: ...,
+)
+```
+
+Every Order in state — whether created via `allocate` or injected via `import_order` (§4) — was preceded by an `ORDER_CREATED`, so a single subscription covers both paths.
+
+`STALE_UPDATE` fires whenever state silently drops a write that would regress a monotonic invariant (out-of-order status, filled-quantity going backwards, balance snapshot older than current). It is the main observability hook for "is my exchange feed misbehaving?".
+
+### 6) Record snapshots and analyze performance
+
+For backtesting or live PnL tracking, periodically take a performance snapshot — typically at the close of each decision window — and feed the snapshot stream to a `PerformanceAnalyzer`.
+
+```py
+from trading_state import CashFlow
+
+# Account-level external cash flow (deposit / withdrawal).
+state.set_cash_flow(
+    CashFlow('USDT', Decimal('1000'), datetime.now()),
+)
+
+# Snapshot the current account value, holdings, and metrics.
+snapshot = state.record()
+```
+
+```py
+from trading_state import TradingStateEvent
+from trading_state.analyzer import AnalyzerType, PerformanceAnalyzer
+
+analyzer = PerformanceAnalyzer([
+    AnalyzerType.TOTAL_RETURN,
+    AnalyzerType.SHARPE_RATIO.params(trading_days=365),
+    AnalyzerType.MAX_DRAWDOWN,
+])
+
+# Push every recorded snapshot into the analyzer as soon as state
+# emits it.
+state.on(
+    TradingStateEvent.PERFORMANCE_SNAPSHOT_RECORDED,
+    analyzer.add_snapshots,
+)
+
+results = analyzer.analyze()
+total_return = results[AnalyzerType.TOTAL_RETURN].value
+```
+
+### 7) Binance decoders reference
+
+Every wire ↔ domain mapping for Binance Spot lives in `trading_state.binance`. Each channel pairs with a `state` method as follows. All decoders return `ValueOrException[T]`; validation is embedded so malformed wire data cannot accidentally land in state.
+
+| Direction | Channel | Function | Output | Pair with |
+|---|---|---|---|---|
+| → exchange | `POST /api/v3/order` body | `encode_order_request(ticket)` | `dict` | (your HTTP client) |
+| ← exchange | `POST /api/v3/order` response | `decode_order_create_response(response)` | `update_kwargs` | `state.update_order(order, **kwargs)` |
+| ← exchange | `GET /api/v3/order` response (also a single item from `/openOrders` / `/allOrders`) | `decode_order_query_response(payload)` | `(client_order_id, update_kwargs)` | `state.update_order(existing, **kwargs)` |
+| ← exchange | `/openOrders` / `/allOrders` item (recovery — order not in state) | `decode_order_snapshot(item, *, symbol, data=None)` | `Order` | `state.import_order(order)` |
+| ← exchange | WS `executionReport` | `decode_order_update_event(payload)` | `(client_order_id, update_kwargs)` | `state.update_order(order, **kwargs)` |
+| ← exchange | WS `outboundAccountPosition` | `decode_account_update_event(payload)` | `Set[Balance]` | `state.set_balances(balances)` |
+| ← exchange | WS `balanceUpdate` | `decode_balance_update_event(payload)` | `CashFlow` | `state.set_cash_flow(cash_flow)` |
+| ← exchange | `GET /api/v3/account` response | `decode_account_info_response(response)` | `Set[Balance]` | `state.set_balances(balances)` |
+| ← exchange | `GET /api/v3/exchangeInfo` response | `decode_exchange_info_response(response)` | `Set[Symbol]` | `state.set_symbol(symbol)` per item |
