@@ -466,7 +466,15 @@ class NotionalFilter(BaseFilter):
         self,
         ticket: OrderTicket,
     ) -> bool:
-        return True
+        # Notional needs a local price reference: `estimated_price`
+        # for MARKET tickets, otherwise `price`. Bare STOP_LOSS /
+        # TAKE_PROFIT have neither (the execution price is whatever
+        # the market is at trigger time), so there is no meaningful
+        # local notional check the filter could run — the exchange
+        # will do the authoritative check at trigger time.
+        if ticket.is_a(OrderType.MARKET):
+            return True
+        return ticket.has('price')
 
     def apply(
         self,
