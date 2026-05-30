@@ -183,41 +183,18 @@ def _require(payload: dict, key: str, field_name: str) -> ValueOrException:
 
 
 # Ref:
-# https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints#new-order-trade
-# Verified against the Spot REST trading endpoints documentation
-# 2026-05-30.
+# https://github.com/binance/binance-spot-api-docs/blob/master/user-data-stream.md#order-create
 def decode_order_create_response(
     response: dict,
 ) -> ValueOrException[dict]:
     """
-    Decode the REST `POST /api/v3/order` response (newOrderRespType =
-    `FULL`) into the kwargs for `state.update_order(...)`.
-
-    The `FULL` response is the union of the `ACK` and `RESULT` shapes
-    plus a `fills` list (one entry per per-trade leg of the initial
-    fill). Consumed keys:
-
-      status              — order status (mapped via
-                            `_BINANCE_ORDER_STATUS_MAP`)
-      clientOrderId       — primary key; set as Order.id
-      transactTime        — used as `created_at`
-      executedQty         — cumulative filled quantity
-      cummulativeQuoteQty — cumulative quote quantity
-      fills[]             — summed per-fill commission + commissionAsset
-
-    Intentionally not surfaced (consistent with `decode_order_update_event`):
-      symbol / orderId / orderListId / origClientOrderId / price /
-      origQty / type / side / timeInForce / workingTime /
-      selfTradePreventionMode / preventedMatchId / preventedQuantity /
-      stopPrice / strategyId / strategyType / trailingDelta /
-      trailingTime / icebergQty / fills[].price / fills[].qty /
-      fills[].tradeId / fills[].allocId. Same rationale as the
-      executionReport docstring above.
+    Decode the REST `POST /api/v3/order` response into the kwargs for
+    `state.update_order(...)`.
 
     Validates:
       - required fields present (status, clientOrderId, transactTime,
         executedQty, cummulativeQuoteQty)
-      - status is one of the documented Spot enums
+      - status is one of the recognised Binance order statuses
       - executedQty / cummulativeQuoteQty are non-negative decimals
       - if fills are present, the commission components are coherent
         (commissionAsset present when commission > 0)
@@ -303,8 +280,7 @@ def decode_order_create_response(
 
 
 # Ref
-# https://developers.binance.com/docs/binance-spot-api-docs/user-data-stream
-# (current page; the older github mirror is no longer authoritative.)
+# https://github.com/binance/binance-spot-api-docs/blob/master/user-data-stream.md#order-update
 def decode_order_update_event(
     payload: dict,
 ) -> ValueOrException[Tuple[str, dict]]:
@@ -312,76 +288,9 @@ def decode_order_update_event(
     Decode a WebSocket `executionReport` event into the (client order
     id, update kwargs) pair consumed by `state.update_order(...)`.
 
-    Verified against the Spot User Data Stream documentation
-    2026-05-30. The Binance payload is the full ~50-key executionReport
-    surface; this decoder is deliberately narrower than the SDK's
-    pass-through column map because `trading_state.state` exposes a
-    much smaller state-mutating contract.
-
-    Consumed keys:
-      c  client_order_id  — primary key into `state.get_order_by_id`
-      X  order_status     — mapped via `_BINANCE_ORDER_STATUS_MAP`
-      z  filled_quantity  — cumulative base filled
-      Z  quote_quantity   — cumulative quote transacted
-      n  commission_qty   — cumulative commission charged on this event
-      N  commission_asset — asset the commission was charged in
-      T  transact_time    — used as the `updated_at` timestamp
-
-    Intentionally not surfaced (with rationale):
-      e, E         event type / event time — bookkeeping; transact_time
-                                              already carries the
-                                              order-level moment.
-      s            symbol               — the order is already keyed by id.
-      S, o, f, q,  side / type / TIF /  — the originating ticket already
-       p, P, F,    quantities / prices    carries these; resending them
-       Q, V                               is redundant.
-      g, C         OCO list id / orig    — OCO lists are not modeled in
-                   client_order_id        state today; the original
-                                          client_order_id is the
-                                          same value as `c` for non-OCO
-                                          flow.
-      x            execution_type        — finer-grained than `X`; state
-                                          collapses NEW / TRADE / REPLACED
-                                          / EXPIRED / REJECTED / CALCULATED
-                                          into the `X` status transitions.
-      r            reject_reason         — captured implicitly by the
-                                          REJECTED status; surfacing the
-                                          reason string requires adding
-                                          a diagnostic surface on Order,
-                                          tracked as a follow-up.
-      i, t, I      exchange order_id /   — state currently keys orders
-                   trade_id / exec_id     by client_order_id; exchange
-                                          ids are queryable on the SDK
-                                          side, not on state.
-      l, L, Y      last filled qty /     — state derives per-fill Trade
-                   price / quote qty      records from the cumulative
-                                          (z, Z, n) deltas, so the
-                                          per-event last-trade fields
-                                          are not needed.
-      w, m, M      is_on_book / maker /  — diagnostic-only; state has no
-                   ignore                 representation for them.
-      O            order_creation_time   — `created_at` is set from the
-                                          first `updated_at` transition
-                                          into CREATED; `O` would be
-                                          marginally more accurate but
-                                          not state-correctness-relevant.
-      d, D, j, J,  trailing_delta /      — STP / SOR / OCO / peg / trailing
-       v, A, B, u,  trailing_time /       are not first-class concepts in
-       U, Cs, pl,   strategy / prevented   state today (they ride on
-       pL, pY, b,   match / counter /     OrderTicket subclasses that
-       a, k, uS,    prevented exec /      `state` treats as opaque). They
-       gP, gOT,     match_type /           do not transition the order
-       gOV, gp,     allocation /           state machine.
-       eR, W        working_floor /
-                    used_sor / peg
-                    fields / expiry_reason
-                    / working_time
-      subscriptionId — WS-API routing tag; the caller already knows
-                       which subscription it owns.
-
     Validates:
       - all required event fields present (c, X, z, Z, n, T)
-      - status string is one of the documented Spot enums
+      - status string is recognised
       - filled_quantity / quote_quantity / commission_quantity are
         non-negative decimals
       - commission_asset is present when commission_quantity > 0
