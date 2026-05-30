@@ -34,10 +34,17 @@ ORDER_TYPE_MAP = {
 }
 
 STP_MODE_MAP = {
-    'EXPIRE_TAKER': STPMode.EXPIRE_TAKER,
+    # Covers every Spot STPMode documented at
+    # developers.binance.com/docs/binance-spot-api-docs/enums, verified
+    # 2026-05-30. Symbols whose allowedSelfTradePreventionModes contain
+    # 'NONE' or 'TRANSFER' previously crashed with a KeyError inside
+    # the exchangeInfo decoder.
+    'NONE': STPMode.NONE,
     'EXPIRE_MAKER': STPMode.EXPIRE_MAKER,
+    'EXPIRE_TAKER': STPMode.EXPIRE_TAKER,
     'EXPIRE_BOTH': STPMode.EXPIRE_BOTH,
-    'DECREMENT': STPMode.DECREMENT
+    'DECREMENT': STPMode.DECREMENT,
+    'TRANSFER': STPMode.TRANSFER,
 }
 
 

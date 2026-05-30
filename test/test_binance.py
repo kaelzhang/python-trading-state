@@ -224,10 +224,12 @@ def test_decode_exchange_info_response():
                     "TAKE_PROFIT_LIMIT",
                 ],
                 "allowedSelfTradePreventionModes": [
-                    "EXPIRE_TAKER",
+                    "NONE",
                     "EXPIRE_MAKER",
+                    "EXPIRE_TAKER",
                     "EXPIRE_BOTH",
                     "DECREMENT",
+                    "TRANSFER",
                 ],
                 "icebergAllowed": True,
                 "ocoAllowed": True,
@@ -294,10 +296,12 @@ def test_decode_exchange_info_response():
     assert symbol.support(FeatureType.ORDER_TYPE, OrderType.STOP_LOSS_LIMIT)
     assert symbol.support(FeatureType.ORDER_TYPE, OrderType.TAKE_PROFIT)
     assert symbol.support(FeatureType.ORDER_TYPE, OrderType.TAKE_PROFIT_LIMIT)
-    assert symbol.support(FeatureType.STP_MODE, STPMode.EXPIRE_TAKER)
+    assert symbol.support(FeatureType.STP_MODE, STPMode.NONE)
     assert symbol.support(FeatureType.STP_MODE, STPMode.EXPIRE_MAKER)
+    assert symbol.support(FeatureType.STP_MODE, STPMode.EXPIRE_TAKER)
     assert symbol.support(FeatureType.STP_MODE, STPMode.EXPIRE_BOTH)
     assert symbol.support(FeatureType.STP_MODE, STPMode.DECREMENT)
+    assert symbol.support(FeatureType.STP_MODE, STPMode.TRANSFER)
 
     assert symbol.support(FeatureType.ICEBERG)
     assert symbol.support(FeatureType.OCO)
