@@ -20,7 +20,38 @@ from trading_state import (
     FeatureType, OrderType, STPMode,
     InvalidExchangeData,
 )
-from trading_state.common import ValueOrException
+from trading_state.common import DECIMAL_INF, ValueOrException
+
+
+# Spot exchangeInfo `filters[]` entries that this adapter explicitly
+# recognises but does not enforce — see `_attach_filter`. Verified
+# 2026-05-30 against
+# https://developers.binance.com/docs/binance-spot-api-docs/filters.
+#
+# - PERCENT_PRICE / PERCENT_PRICE_BY_SIDE need a market-price reference
+#   (lastPrice avg over `avgPriceMins` minutes) that the filter layer
+#   does not have access to under the current synchronous, kwarg-free
+#   `Symbol.apply_filters` contract. Leaving them as silent-skip is the
+#   conservative choice: the exchange still rejects out-of-range orders
+#   server-side, so the worst local effect is a `-1013` or `-2010` from
+#   the REST layer rather than a state-level corruption.
+# - MAX_POSITION needs the symbol's current base-asset position to
+#   enforce; state tracks balances per asset, not per symbol, so we do
+#   not attempt this client-side.
+# - MAX_NUM_ORDERS / MAX_NUM_ALGO_ORDERS / MAX_NUM_ICEBERG_ORDERS /
+#   MAX_NUM_ORDER_AMENDS / MAX_NUM_ORDER_LISTS are pure count budgets.
+#   trading-state is a passive store; counting open orders / amends /
+#   list orders is the caller's responsibility above the state.
+_SILENTLY_SKIPPED_FILTER_TYPES = frozenset({
+    'PERCENT_PRICE',
+    'PERCENT_PRICE_BY_SIDE',
+    'MAX_POSITION',
+    'MAX_NUM_ORDERS',
+    'MAX_NUM_ALGO_ORDERS',
+    'MAX_NUM_ICEBERG_ORDERS',
+    'MAX_NUM_ORDER_AMENDS',
+    'MAX_NUM_ORDER_LISTS',
+})
 
 
 ORDER_TYPE_MAP = {
@@ -197,6 +228,25 @@ def _attach_filter(symbol: Symbol, filter_info: dict):
                 apply_max_to_market=bool(filter_info['applyMaxToMarket']),
                 avg_price_mins=int(filter_info['avgPriceMins']),
             ))
+        elif filter_type == 'MIN_NOTIONAL':
+            # Legacy single-cap form (predates 2022-04-04 NOTIONAL).
+            # Some older symbols still emit it instead of NOTIONAL. We
+            # alias it onto NotionalFilter with the max set to +Inf so
+            # the lower bound is enforced identically and the upper
+            # bound is a no-op.
+            symbol.add_filter(NotionalFilter(
+                min_notional=Decimal(filter_info['minNotional']),
+                max_notional=DECIMAL_INF,
+                apply_min_to_market=bool(
+                    filter_info.get('applyToMarket', False)
+                ),
+                apply_max_to_market=False,
+                avg_price_mins=int(filter_info.get('avgPriceMins', 0)),
+            ))
+        elif filter_type in _SILENTLY_SKIPPED_FILTER_TYPES:
+            # Recognised but not enforced — see
+            # _SILENTLY_SKIPPED_FILTER_TYPES for the per-type rationale.
+            pass
         # Unknown filter types are skipped silently: Binance adds new
         # filter types over time and we'd rather no-op than fail.
     except (KeyError, InvalidOperation, ValueError, TypeError) as e:

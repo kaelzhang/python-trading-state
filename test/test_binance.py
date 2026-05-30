@@ -367,6 +367,107 @@ def test_decode_exchange_info_response_filter_invalid():
     assert isinstance(exc, InvalidExchangeData)
 
 
+def test_decode_exchange_info_response_min_notional_legacy():
+    # Older symbols still emit MIN_NOTIONAL instead of NOTIONAL. The
+    # decoder aliases it onto NotionalFilter with the upper bound set
+    # to +Inf so the lower-bound enforcement is preserved.
+    from decimal import Decimal
+    from trading_state.common import DECIMAL_INF
+
+    exc, symbols = decode_exchange_info_response({
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "baseAsset": "BTC",
+                "quoteAsset": "USDT",
+                "baseAssetPrecision": 8,
+                "quoteAssetPrecision": 8,
+                "filters": [
+                    {
+                        "filterType": "MIN_NOTIONAL",
+                        "minNotional": "10.00000000",
+                        "applyToMarket": True,
+                        "avgPriceMins": 5,
+                    },
+                ],
+            },
+        ],
+    })
+    assert exc is None
+    symbol = next(iter(symbols))
+    notional_filters = [
+        f for f in symbol._filters if isinstance(f, NotionalFilter)
+    ]
+    assert len(notional_filters) == 1
+    nf = notional_filters[0]
+    assert nf.min_notional == Decimal('10.00000000')
+    assert nf.max_notional == DECIMAL_INF
+    assert nf.apply_min_to_market is True
+    assert nf.apply_max_to_market is False
+    assert nf.avg_price_mins == 5
+
+
+@pytest.mark.parametrize('filter_type', [
+    'PERCENT_PRICE',
+    'PERCENT_PRICE_BY_SIDE',
+    'MAX_POSITION',
+    'MAX_NUM_ORDERS',
+    'MAX_NUM_ALGO_ORDERS',
+    'MAX_NUM_ICEBERG_ORDERS',
+    'MAX_NUM_ORDER_AMENDS',
+    'MAX_NUM_ORDER_LISTS',
+])
+def test_decode_exchange_info_response_recognised_but_skipped_filters(
+    filter_type,
+):
+    # Filters in _SILENTLY_SKIPPED_FILTER_TYPES are recognised by the
+    # decoder and must not raise, even when their per-type fields are
+    # absent. They attach nothing to the symbol's filter chain.
+    exc, symbols = decode_exchange_info_response({
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "baseAsset": "BTC",
+                "quoteAsset": "USDT",
+                "baseAssetPrecision": 8,
+                "quoteAssetPrecision": 8,
+                "filters": [{"filterType": filter_type}],
+            },
+        ],
+    })
+    assert exc is None
+    symbol = next(iter(symbols))
+    # Only the unconditional PrecisionFilter is on the symbol.
+    assert {type(f).__name__ for f in symbol._filters} == {
+        'PrecisionFilter',
+    }
+
+
+def test_decode_exchange_info_response_unknown_filter_type_silent_skip():
+    # Forward-compatible: Binance has historically added new filter
+    # types, so the decoder must not fail on a name it does not yet
+    # know.
+    exc, symbols = decode_exchange_info_response({
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "baseAsset": "BTC",
+                "quoteAsset": "USDT",
+                "baseAssetPrecision": 8,
+                "quoteAssetPrecision": 8,
+                "filters": [
+                    {"filterType": "SOME_FILTER_BINANCE_INVENTS_TOMORROW"},
+                ],
+            },
+        ],
+    })
+    assert exc is None
+    symbol = next(iter(symbols))
+    assert {type(f).__name__ for f in symbol._filters} == {
+        'PrecisionFilter',
+    }
+
+
 def test_encode_order_request_limit():
     symbol = Symbol("BTCUSDT", "BTC", "USDT")
     ticket = LimitOrderTicket(
