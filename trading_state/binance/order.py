@@ -106,24 +106,26 @@ def encode_order_request(
 # vocabulary; this table is the binance <-> trading-state bridge.
 #
 # Mapping rationale:
-#   NEW              -> CREATED      (order accepted by exchange, on the book)
-#   PENDING_NEW      -> CREATED      (accepted but not yet on the book; state
-#                                     does not distinguish this sub-state)
-#   PARTIALLY_FILLED -> CREATED      (state treats partial fill as a quality
-#                                     of CREATED — caller derives "partially
-#                                     filled" from order.filled_quantity
-#                                     against order.ticket.quantity)
-#   FILLED           -> FILLED       (terminal, filled in full)
-#   CANCELED         -> CANCELLED    (terminal, user cancel)
-#   PENDING_CANCEL   -> CANCELLING   (cancel request acknowledged but not
-#                                     yet final — matches our intermediate)
-#   EXPIRED          -> CANCELLED    (terminal, TIF expiry)
-#   EXPIRED_IN_MATCH -> CANCELLED    (terminal, STP-triggered expiry)
-#   REJECTED         -> REJECTED     (terminal, rejected pre-book)
+#   NEW              -> CREATED          (order accepted by exchange, on the book)
+#   PENDING_NEW      -> CREATED          (accepted but not yet on the book; state
+#                                         does not distinguish this sub-state)
+#   PARTIALLY_FILLED -> PARTIALLY_FILLED (trading-state has carried a first-class
+#                                         PARTIALLY_FILLED member in OrderStatus
+#                                         since v0.0.2 / commit e70822a
+#                                         2025-11-24; activating it lets
+#                                         query_orders(status=PARTIALLY_FILLED)
+#                                         match partially-filled orders directly)
+#   FILLED           -> FILLED           (terminal, filled in full)
+#   CANCELED         -> CANCELLED        (terminal, user cancel)
+#   PENDING_CANCEL   -> CANCELLING       (cancel request acknowledged but not
+#                                         yet final — matches our intermediate)
+#   EXPIRED          -> CANCELLED        (terminal, TIF expiry)
+#   EXPIRED_IN_MATCH -> CANCELLED        (terminal, STP-triggered expiry)
+#   REJECTED         -> REJECTED         (terminal, rejected pre-book)
 _BINANCE_ORDER_STATUS_MAP = {
     'NEW': OrderStatus.CREATED,
     'PENDING_NEW': OrderStatus.CREATED,
-    'PARTIALLY_FILLED': OrderStatus.CREATED,
+    'PARTIALLY_FILLED': OrderStatus.PARTIALLY_FILLED,
     'FILLED': OrderStatus.FILLED,
     'CANCELED': OrderStatus.CANCELLED,
     'PENDING_CANCEL': OrderStatus.CANCELLING,

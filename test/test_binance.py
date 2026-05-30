@@ -493,7 +493,7 @@ def test_decode_order_status():
     assert _decode_order_status("PENDING_NEW")[1] == OrderStatus.CREATED
     assert (
         _decode_order_status("PARTIALLY_FILLED")[1]
-        == OrderStatus.CREATED
+        == OrderStatus.PARTIALLY_FILLED
     )
     assert _decode_order_status("FILLED")[1] == OrderStatus.FILLED
     assert _decode_order_status("CANCELED")[1] == OrderStatus.CANCELLED
@@ -626,12 +626,13 @@ def test_decode_order_create_response_invalid_decimal():
         # The full Spot OrderStatus surface per
         # developers.binance.com/docs/binance-spot-api-docs/enums,
         # verified 2026-05-30. Wire statuses are translated into the
-        # smaller trading-state OrderStatus vocabulary; PARTIALLY_FILLED
-        # folds into CREATED because state derives partial-fill from
-        # filled_quantity rather than from a separate status.
+        # smaller trading-state OrderStatus vocabulary.
+        # `PARTIALLY_FILLED` maps to the first-class
+        # OrderStatus.PARTIALLY_FILLED that trading-state has carried
+        # since v0.0.2.
         ("NEW", OrderStatus.CREATED),
         ("PENDING_NEW", OrderStatus.CREATED),
-        ("PARTIALLY_FILLED", OrderStatus.CREATED),
+        ("PARTIALLY_FILLED", OrderStatus.PARTIALLY_FILLED),
         ("FILLED", OrderStatus.FILLED),
         ("CANCELED", OrderStatus.CANCELLED),
         ("PENDING_CANCEL", OrderStatus.CANCELLING),
