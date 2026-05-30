@@ -120,18 +120,10 @@ class TimeInForce(StringEnum):
 
 
 class STPMode(StringEnum):
-    # Self-Trade Prevention modes per Spot enums documentation.
-    # https://developers.binance.com/docs/binance-spot-api-docs/enums
-    # 2026-05-30 alignment: NONE and TRANSFER added; they appear on
-    # symbol exchangeInfo `allowedSelfTradePreventionModes` and on
-    # executionReport `V` for some symbols, and silently skipping them
-    # would corrupt downstream STP feature gating.
-    NONE = 'NONE'
     EXPIRE_MAKER = 'EXPIRE_MAKER'
     EXPIRE_TAKER = 'EXPIRE_TAKER'
     EXPIRE_BOTH = 'EXPIRE_BOTH'
     DECREMENT = 'DECREMENT'
-    TRANSFER = 'TRANSFER'
 
 
 class FeatureType(StringEnum):

@@ -296,12 +296,14 @@ def test_decode_exchange_info_response():
     assert symbol.support(FeatureType.ORDER_TYPE, OrderType.STOP_LOSS_LIMIT)
     assert symbol.support(FeatureType.ORDER_TYPE, OrderType.TAKE_PROFIT)
     assert symbol.support(FeatureType.ORDER_TYPE, OrderType.TAKE_PROFIT_LIMIT)
-    assert symbol.support(FeatureType.STP_MODE, STPMode.NONE)
+    # Wire 'NONE' and 'TRANSFER' are documented Spot STPMode values
+    # trading-state does not model in its STPMode enum; the decoder
+    # silently drops them rather than crashing. The four modes we DO
+    # model show up on the symbol's STP feature list:
     assert symbol.support(FeatureType.STP_MODE, STPMode.EXPIRE_MAKER)
     assert symbol.support(FeatureType.STP_MODE, STPMode.EXPIRE_TAKER)
     assert symbol.support(FeatureType.STP_MODE, STPMode.EXPIRE_BOTH)
     assert symbol.support(FeatureType.STP_MODE, STPMode.DECREMENT)
-    assert symbol.support(FeatureType.STP_MODE, STPMode.TRANSFER)
 
     assert symbol.support(FeatureType.ICEBERG)
     assert symbol.support(FeatureType.OCO)
@@ -491,7 +493,7 @@ def test_decode_order_status():
     assert _decode_order_status("PENDING_NEW")[1] == OrderStatus.CREATED
     assert (
         _decode_order_status("PARTIALLY_FILLED")[1]
-        == OrderStatus.PARTIALLY_FILLED
+        == OrderStatus.CREATED
     )
     assert _decode_order_status("FILLED")[1] == OrderStatus.FILLED
     assert _decode_order_status("CANCELED")[1] == OrderStatus.CANCELLED
@@ -623,11 +625,13 @@ def test_decode_order_create_response_invalid_decimal():
     [
         # The full Spot OrderStatus surface per
         # developers.binance.com/docs/binance-spot-api-docs/enums,
-        # verified 2026-05-30. Each row pins the decoder against the
-        # documented values so a future enum addition fails loudly.
+        # verified 2026-05-30. Wire statuses are translated into the
+        # smaller trading-state OrderStatus vocabulary; PARTIALLY_FILLED
+        # folds into CREATED because state derives partial-fill from
+        # filled_quantity rather than from a separate status.
         ("NEW", OrderStatus.CREATED),
         ("PENDING_NEW", OrderStatus.CREATED),
-        ("PARTIALLY_FILLED", OrderStatus.PARTIALLY_FILLED),
+        ("PARTIALLY_FILLED", OrderStatus.CREATED),
         ("FILLED", OrderStatus.FILLED),
         ("CANCELED", OrderStatus.CANCELLED),
         ("PENDING_CANCEL", OrderStatus.CANCELLING),

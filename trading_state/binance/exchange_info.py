@@ -33,18 +33,20 @@ ORDER_TYPE_MAP = {
     'TAKE_PROFIT_LIMIT': OrderType.TAKE_PROFIT_LIMIT
 }
 
+# Bridge from Spot STPMode wire strings into trading-state's STPMode
+# enum. trading-state intentionally models a smaller STP vocabulary
+# than Binance's documented set; wire values not represented in the
+# local enum (currently 'NONE' and 'TRANSFER' per
+# developers.binance.com/docs/binance-spot-api-docs/enums verified
+# 2026-05-30) are silently dropped from the symbol's STP feature list
+# in `_build_symbol` rather than crashing the decoder. Adding any new
+# STPMode member would be a trading-state core change and is out of
+# scope for binance alignment work.
 STP_MODE_MAP = {
-    # Covers every Spot STPMode documented at
-    # developers.binance.com/docs/binance-spot-api-docs/enums, verified
-    # 2026-05-30. Symbols whose allowedSelfTradePreventionModes contain
-    # 'NONE' or 'TRANSFER' previously crashed with a KeyError inside
-    # the exchangeInfo decoder.
-    'NONE': STPMode.NONE,
-    'EXPIRE_MAKER': STPMode.EXPIRE_MAKER,
     'EXPIRE_TAKER': STPMode.EXPIRE_TAKER,
+    'EXPIRE_MAKER': STPMode.EXPIRE_MAKER,
     'EXPIRE_BOTH': STPMode.EXPIRE_BOTH,
     'DECREMENT': STPMode.DECREMENT,
-    'TRANSFER': STPMode.TRANSFER,
 }
 
 
@@ -108,6 +110,7 @@ def _build_symbol(
     symbol.allow(FeatureType.STP_MODE, [
         STP_MODE_MAP[stp_mode]
         for stp_mode in symbol_info.get('allowedSelfTradePreventionModes', [])
+        if stp_mode in STP_MODE_MAP
     ])
 
     if symbol_info.get('icebergAllowed'):
