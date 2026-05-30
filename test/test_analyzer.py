@@ -100,9 +100,10 @@ class Trader:
             price=price,
             time_in_force=TimeInForce.GTC,
         )
-        exc, order = self._state.add_order(ticket)
-        if exc is not None or order is None:
+        exc, orders = self._state.allocate(ticket)
+        if exc is not None or not orders:
             return
+        order = orders[0]
 
         assert order.ticket.is_a(OrderType.LIMIT, side=OrderSide.BUY)
         assert not order.ticket.is_a(
@@ -145,9 +146,10 @@ class Trader:
             price=price,
             time_in_force=TimeInForce.GTC,
         )
-        exc, order = self._state.add_order(ticket)
-        if exc is not None or order is None:
+        exc, orders = self._state.allocate(ticket)
+        if exc is not None or not orders:
             return
+        order = orders[0]
 
         quantity_gain = (
             order.ticket.quantity * order.ticket.price * self._fee_loss

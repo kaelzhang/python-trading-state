@@ -161,3 +161,35 @@ class AllocationWeightsNotSetError(Exception):
             'state.set_alt_currency_weights(...) first'
         )
 
+
+class DuplicateOrderIdError(Exception):
+    """
+    Raised by `state.import_order(...)` when the order's id is already
+    present in state. Recovery callers must dispatch on
+    `state.get_order_by_id(id) is None` and route already-known ids
+    through `state.update_order(...)` instead — a duplicate import
+    indicates a caller orchestration bug.
+    """
+    def __init__(self, order_id: str) -> None:
+        super().__init__(
+            f"cannot import order: id '{order_id}' is already present "
+            f'in state; use state.update_order(...) to push fields '
+            f'into an existing order'
+        )
+        self.order_id = order_id
+
+
+class InvalidOrderForImportError(Exception):
+    """
+    Raised by `state.import_order(...)` when the order does not satisfy
+    the import preconditions: a non-None `id` and a non-None `ticket`
+    are mandatory. The decoder helpers in `trading_state.binance.order`
+    always produce a well-formed Order; this guards against caller
+    bugs that fabricate Orders manually.
+    """
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            f'cannot import order: {reason}'
+        )
+        self.reason = reason
+

@@ -144,8 +144,9 @@ def test_feature_not_allowed_error(test_symbols: Symbols):
     ])
 
     # MARKET ticket with QUOTE quantity against a symbol that doesn't
-    # allow QUOTE_ORDER_QUANTITY — add_order should surface the
-    # FeatureNotAllowedError via ValueOrException.
+    # allow QUOTE_ORDER_QUANTITY. allocate runs the symbol's filters in
+    # the passthrough flow; a filter rejection is treated as best-effort
+    # and surfaces as an empty list rather than an exception.
     ticket = MarketOrderTicket(
         symbol=test_symbols[SYMBOL],
         side=OrderSide.BUY,
@@ -154,15 +155,25 @@ def test_feature_not_allowed_error(test_symbols: Symbols):
         estimated_price=Decimal('10000'),
     )
 
-    exception, order = state.add_order(ticket)
+    exception, orders = state.allocate(ticket)
 
-    assert order is None
-    assert isinstance(exception, FeatureNotAllowedError)
-    assert exception.feature == FeatureType.QUOTE_ORDER_QUANTITY
-    assert exception.symbol.name == SYMBOL
+    assert exception is None
+    assert orders == []
+    # The order was never registered with state.
+    assert len(list(state.query_orders())) == 0
+
+    # The FeatureNotAllowedError is still observable to callers that
+    # want a diagnostic before / instead of allocate; the symbol's
+    # filter chain surfaces it directly.
+    filter_exc, _ = test_symbols[SYMBOL].apply_filters(
+        ticket, validate_only=True
+    )
+    assert isinstance(filter_exc, FeatureNotAllowedError)
+    assert filter_exc.feature == FeatureType.QUOTE_ORDER_QUANTITY
+    assert filter_exc.symbol.name == SYMBOL
 
     # symbol.support diagnostics
-    symbol = exception.symbol
+    symbol = filter_exc.symbol
     with pytest.raises(ValueError, match='but got None'):
         symbol.support(FeatureType.ORDER_TYPE)
     with pytest.raises(ValueError, match='but got 1'):

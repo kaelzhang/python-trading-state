@@ -49,15 +49,37 @@ class Trade:
 
 
 class Order(EventEmitter[OrderUpdatedType]):
-    """Order
+    """Order — mutable, lifecycle-aware record of a single exchange order.
+
+    Two construction modes:
+
+    1. Allocate path (the common case). `allocate` calls
+       `Order(ticket=t, data=d)`; status defaults to INIT, id stays
+       None, all numeric fields start at zero, and the order is then
+       driven through its state machine via `state.update_order(...)`
+       as exchange traffic arrives.
+
+    2. Import path (recovery / mid-session rehydrate).
+       `trading_state.binance.decode_order_snapshot` constructs the
+       Order with the full set of keyword-only fields populated from
+       the exchange snapshot (id, status, filled / quote / commission
+       cumulatives, created_at, updated_at) so the result is ready to
+       hand directly to `state.import_order(order)`.
+
+    The keyword-only fields are kept-default rather than required to
+    preserve the allocate-path call site; recovery callers are
+    expected to pass every field explicitly (the project's
+    "explicit parameter passing" principle).
 
     Args:
-        ticket (OrderTicket): the ticket of the order
-        data (Optional[Dict[str, Any]]): caller-supplied metadata stored
-            on the order; opaque to trading_state. Defaults to an empty
-            dict when None. A defensive copy is taken on construction so
-            mutating the dict the caller passed in (or sharing the same
-            default across orders) cannot leak across orders.
+        ticket: the ticket the order is realising.
+        data: caller-supplied metadata bag; defaults to an empty dict
+            when None. Defensively copied on construction so a shared
+            default `{}` cannot leak across orders.
+        id, status, filled_quantity, quote_quantity, commission_asset,
+        commission_quantity, created_at, updated_at: initial state.
+            Used by the recovery / import path. All default to the
+            "freshly allocated INIT order" values.
     """
 
     ticket: OrderTicket
@@ -96,6 +118,15 @@ class Order(EventEmitter[OrderUpdatedType]):
         self,
         ticket: OrderTicket,
         data: Optional[Dict[str, Any]] = None,
+        *,
+        id: Optional[str] = None,
+        status: OrderStatus = OrderStatus.INIT,
+        filled_quantity: Decimal = DECIMAL_ZERO,
+        quote_quantity: Decimal = DECIMAL_ZERO,
+        commission_asset: Optional[str] = None,
+        commission_quantity: Decimal = DECIMAL_ZERO,
+        created_at: Optional[datetime] = None,
+        updated_at: Optional[datetime] = None,
     ) -> None:
         super().__init__()
 
@@ -105,10 +136,16 @@ class Order(EventEmitter[OrderUpdatedType]):
         # instances.
         self.data = dict(data) if data else {}
 
-        self._status = OrderStatus.INIT
+        self._id = id
+        self._status = status
 
-        self.created_at = None
-        self.updated_at = None
+        self.filled_quantity = filled_quantity
+        self.quote_quantity = quote_quantity
+        self.commission_asset = commission_asset
+        self.commission_quantity = commission_quantity
+
+        self.created_at = created_at
+        self.updated_at = updated_at
         self.trades = []
 
     def update(
@@ -463,9 +500,34 @@ class OrderManager:
         self,
         order: Order
     ) -> None:
-        self._register_order(order)
+        """
+        Register `order` with the manager. Handles orders arriving at
+        any status:
 
-        order.on(
-            OrderUpdatedType.STATUS_UPDATED,
-            self._on_order_status_updated
-        )
+        - INIT / SUBMITTING (allocate path): added to _open_orders,
+          status listener attached; history is populated on the
+          eventual CREATED transition.
+        - CREATED / PARTIALLY_FILLED / CANCELLING (import_order path
+          for active exchange orders): added to _open_orders, status
+          listener attached, AND history + id-index populated
+          immediately (mirroring what the CREATED transition would
+          have done on natural arrival).
+        - FILLED / CANCELLED / REJECTED (import_order path for
+          terminal exchange orders): NOT added to _open_orders, NO
+          listener (Order.update silently drops further updates on
+          completed orders), but history + id-index ARE populated so
+          the order is reachable via get_order_by_id / query_orders.
+        """
+        status = order.status
+
+        if not status.completed():
+            self._register_order(order)
+            order.on(
+                OrderUpdatedType.STATUS_UPDATED,
+                self._on_order_status_updated
+            )
+
+        if not status.lt(OrderStatus.CREATED):
+            self.history.append(order)
+            if order.id is not None:
+                self._id_orders[order.id] = order

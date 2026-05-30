@@ -141,9 +141,26 @@ def init_balances(state: TradingState) -> None:
     ])
 
 
+def init_alt_weights(state: TradingState) -> None:
+    """
+    Install zero weights for the configured alt account currencies on
+    both BUY and SELL. With the post-refactor `allocate` requiring
+    weights to be set before any call, this default routes every
+    allocation to the primary account currency only — matching the
+    pre-refactor "no cross-currency split" baseline that most tests
+    assume.
+    """
+    n = len(state.config.alt_account_currencies)
+    state.set_alt_currency_weights((
+        tuple(Decimal('0') for _ in range(n)),
+        tuple(Decimal('0') for _ in range(n)),
+    ))
+
+
 def init_state(
     config: Optional[TradingConfig] = None,
     with_balances: bool = True,
+    with_alt_weights: bool = True,
 ) -> TradingState:
     state = create_state(config=config)
     init_symbols(state)
@@ -152,5 +169,8 @@ def init_state(
 
     if with_balances:
         init_balances(state)
+
+    if with_alt_weights:
+        init_alt_weights(state)
 
     return state

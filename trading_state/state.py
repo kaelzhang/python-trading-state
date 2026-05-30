@@ -1,13 +1,12 @@
 """
 TradingState — the aggregate root of the trading_state library.
 
-Design principles (kept stable across the post-execution-strategy
-refactor):
+Design principles:
 - Be pure. No strategies. No diff loops. The state never schedules,
   retries, or polls.
 - Be passive. Every state change is the consequence of a caller-driven
   write (set_price, set_symbol, set_notional_limit, set_balances,
-  set_cash_flow, add_order, update_order, cancel_order, allocate,
+  set_cash_flow, allocate, update_order, cancel_order, import_order,
   set_alt_currency_weights). The state never reaches out to an
   exchange.
 - Be sync. All methods are synchronous; no callbacks-by-default; events
@@ -15,28 +14,34 @@ refactor):
 - Be terminologically aligned with professional trading
   (exposure / notional limit / ticket / fill / settled / unsettled).
 - No defaults on internal computation; callers must opt in or out of
-  every component explicitly. The only sanctioned-with-default arg in
-  this surface is `Order.data`, an opaque caller-metadata bag.
+  every component explicitly. The only sanctioned-with-default args
+  in this surface are caller-metadata bags (Order.data, allocate's
+  optional `data=`).
+- Fail-fast on incomplete setup (missing weights, missing symbol);
+  best-effort on per-bucket business outcomes (filter rejection,
+  insufficient balance, aggregate notional cap reached).
 
 Public flow (caller side):
     state = TradingState(config)
     state.set_symbol(...); state.set_price(...); state.set_notional_limit(...)
+    state.set_alt_currency_weights(...)
     state.set_balances([Balance(...)])
 
-    # Build a ticket externally and (optionally) split across alt
-    # account currencies. allocate() returns filter-applied sub-tickets
-    # and is a best-effort splitter that never raises a business error
-    # — when there's nothing to split, the original ticket comes back.
-    tickets = state.allocate(canonical_ticket)
-    for t in tickets:
-        exc, order = state.add_order(t, data={...})
-        ...
+    # `allocate` is the sole entry point for creating Orders. It runs
+    # cross-currency split + filter + pre-flight and materializes each
+    # surviving sub-ticket into a registered Order.
+    exc, orders = state.allocate(canonical_ticket, data={...})
+    for order in orders:
         state.update_order(order, status=..., updated_at=..., ...)
+
+    # Recovery: re-attach exchange-known orders not in state.
+    exc, order = state.import_order(decoded_order)
 
     # Read paths
     state.exposure(asset, include_unsettled_inflow=..., include_unsettled_outflow=...)
     state.unsettled(asset)
     state.query_orders(...)
+    state.get_open_orders()
 """
 from typing import (
     Any,
@@ -49,13 +54,12 @@ from typing import (
     Set,
     Tuple,
 )
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
 from .enums import (
     MarketQuantityType,
-    OrderSide,
     OrderStatus,
     TradingStateEvent,
 )
@@ -83,13 +87,10 @@ from .order_ticket import (
     MarketOrderTicket,
 )
 from .allocate import (
-    AllocationResource,
-    buy_allocate,
-    sell_allocate,
+    passthrough_allocate,
+    split_allocate,
 )
 from .common import (
-    DECIMAL_INF,
-    DECIMAL_ONE,
     DECIMAL_ZERO,
     EventEmitter,
     ValueOrException,
@@ -98,8 +99,9 @@ from .config import TradingConfig
 from .exceptions import (
     AccountAssetHasNoExposureError,
     AllocationWeightsNotSetError,
-    InsufficientFreeBalanceError,
-    NotionalLimitExceededError,
+    DuplicateOrderIdError,
+    InvalidOrderForImportError,
+    SymbolNotDefinedError,
 )
 from .exposure import Exposure
 from .reconciliation import (
@@ -443,60 +445,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
             return exception, None
         return None, self._recon.unsettled_for(asset)
 
-    def add_order(
-        self,
-        ticket: OrderTicket, /,
-        *,
-        data: Optional[Dict[str, Any]] = None,
-    ) -> ValueOrException[Order]:
-        """
-        Register a caller-built ticket as a new Order in INIT status.
-
-        Behaviour:
-        - Runs the symbol's filters in normalize mode via
-          `ticket.apply_filters()`. The returned ticket may be a frozen
-          copy with adjusted fields.
-        - On filter rejection: returns `(exception, None)` and does NOT
-          touch state. Filter rejections are not emitted as events;
-          they come back through the return value so the caller cannot
-          accidentally drop them.
-        - On success: creates the Order, attaches state's listeners,
-          registers it with the order manager and reconciliation
-          manager, and returns `(None, Order)`. Caller controls the
-          state machine transitions (INIT -> SUBMITTING -> CREATED ...)
-          via subsequent `update_order` calls.
-
-        Args:
-            ticket: A constructed OrderTicket; its symbol must already
-                have been added via `set_symbol`.
-            data: Caller metadata. Copied defensively into the Order
-                so a shared default `{}` cannot leak across orders.
-
-        Returns:
-            ValueOrException[Order]:
-              (exception, None) on filter rejection.
-              (None, order) on success.
-        """
-        exception, normalized = ticket.apply_filters()
-        if exception is not None:
-            return exception, None
-
-        order = Order(ticket=normalized, data=data)
-
-        order.on(
-            OrderUpdatedType.STATUS_UPDATED,
-            self._on_order_status_updated,
-        )
-        order.on(
-            OrderUpdatedType.FILLED_QUANTITY_UPDATED,
-            self._on_order_filled_quantity_updated,
-        )
-
-        self._orders.add(order)
-        self._recon.register(order)
-
-        return None, order
-
     def update_order(
         self,
         order: Order, /,
@@ -624,160 +572,153 @@ class TradingState(EventEmitter[TradingStateEvent]):
     def get_order_by_id(self, order_id: str, /) -> Optional[Order]:
         return self._orders.get_order_by_id(order_id)
 
+    def get_open_orders(self) -> List[Order]:
+        """
+        List the locally-known orders that the exchange has
+        acknowledged (status CREATED / PARTIALLY_FILLED / CANCELLING)
+        and that have not yet reached a terminal status
+        (FILLED / CANCELLED / REJECTED).
+
+        Used by recovery callers to enumerate orders needing a status
+        refresh after a WS gap — see README "Recovery" for the full
+        cold-startup / reconnect / periodic-check flows.
+
+        Does NOT include orders in INIT or SUBMITTING. Those are still
+        caller-side in-flight: either just returned by `allocate` (the
+        caller holds the reference and is about to drive the POST), or
+        the POST is in flight and the exchange has not yet acked. Such
+        orders never enter the order history either.
+        """
+        return [
+            o for o in self._orders.open_orders
+            if not o.status.lt(OrderStatus.CREATED)
+        ]
+
+    def import_order(
+        self,
+        order: Order, /,
+    ) -> ValueOrException[Order]:
+        """
+        Inject an externally-constructed Order into state. Used for
+        recovery (cold startup or mid-session reconnect): the caller
+        decodes an exchange snapshot via
+        `trading_state.binance.decode_order_snapshot(item, symbol=...)`
+        and feeds the resulting Order in here.
+
+        Fail-fast (returns `(exc, None)`):
+          - `InvalidOrderForImportError` if `order.id is None` or
+            `order.ticket is None`. The Order must carry the stable
+            exchange-side identity used as the lookup key.
+          - `DuplicateOrderIdError` if an order with the same id is
+            already in state. Recovery callers must dispatch on
+            `state.get_order_by_id(id) is None` and route already-
+            known ids through `state.update_order(...)`.
+
+        Accepts any status, including terminal (FILLED / CANCELLED /
+        REJECTED). A terminal IMPORTED order is added to the history
+        and the id index but NOT to `_open_orders`; this lets cold
+        startup pull `/api/v3/allOrders` and reflect orders that
+        opened and closed during an earlier downtime, for accounting
+        completeness.
+
+        Does NOT apply filter normalization or validation. The
+        exchange already accepted this order, so a local-filter
+        rejection here would be a false negative caused by stale
+        symbol filter snapshots.
+
+        The imported Order does NOT pass through the INIT or
+        SUBMITTING stages — its status is whatever the snapshot says.
+        Downstream subscribers that observe INIT will simply not see
+        these orders; ORDER_CREATED is emitted instead so the "every
+        Order in state was preceded by ORDER_CREATED" invariant holds.
+
+        Subsequent `update_order` calls operate identically to natively
+        created orders (stale-update silent drop, fill events, etc.).
+        """
+        if order.id is None:
+            return InvalidOrderForImportError('order.id is None'), None
+        if order.ticket is None:
+            return (
+                InvalidOrderForImportError('order.ticket is None'),
+                None,
+            )
+        if self._orders.get_order_by_id(order.id) is not None:
+            return DuplicateOrderIdError(order.id), None
+
+        return None, self._attach_order(order)
+
     def allocate(
         self,
         ticket: OrderTicket, /,
-    ) -> ValueOrException[List[OrderTicket]]:
+        *,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> ValueOrException[List[Order]]:
         """
-        Pre-flight gate plus cross-currency split. Mandatory entry
-        point before `add_order` — it both validates exposure / free
-        balance against the configured notional cap and produces the
-        filter-applied sub-tickets to feed to `add_order`.
+        Construct one or more Orders from a caller-built canonical
+        ticket and register them with state.
 
-        Returns:
-            (None, [t1, ...])  — one or more filter-applied sub-tickets
-                                 whose combined base quantity does not
-                                 push exposure(base_asset) above its
-                                 notional_limit (worst-case unsettled
-                                 inflow=True, outflow=False).
-            (exc, None) on:
-              - AllocationWeightsNotSetError when
-                `set_alt_currency_weights(...)` has not been called.
-              - NotionalLimitExceededError when the BUY would push the
-                base-asset exposure past its cap even before any
-                allocation.
-              - InsufficientFreeBalanceError when no weighted
-                account-currency bucket can fund a BUY (either no
-                symbol is registered or every bucket has zero free).
-              - Whatever the asset's `exposure(...)` check returns
-                (AssetNotDefinedError / NotionalLimitNotSetError /
-                ValuationPriceNotReadyError / ...) for BUY orders.
-              - The first filter exception when every candidate
-                sub-ticket gets rejected by its symbol's filters.
-              - ValueError when allocation yields no sub-ticket and no
-                filter rejection was recorded (e.g. ticket.quantity is
-                effectively zero).
+        This is the sole public entry point for creating Orders. It
+        runs cross-currency allocation (when the ticket type permits),
+        filter normalization, and BUY pre-flight checks, then
+        materializes each surviving sub-ticket into an Order via the
+        private `_create_order` path (which registers with the order
+        manager, the reconciliation manager, and emits
+        `ORDER_CREATED` per Order).
 
-        Stop-loss / take-profit families and MARKET orders with
-        QUOTE-denominated quantity bypass the split math; allocate
-        returns `(None, [ticket])` so the caller still has a single
-        normalized entry to feed to `add_order`.
+        Fail-fast (returns `(exc, None)`):
+          - `AllocationWeightsNotSetError` if
+            `set_alt_currency_weights(...)` has not been called.
+          - `SymbolNotDefinedError` if `ticket.symbol` has not been
+            registered via `set_symbol(...)`.
+          - Whatever `exposure(...)` returns for the ticket's base
+            asset on a BUY when those errors signal an incomplete
+            setup (NotionalLimitNotSet, ValuationPriceNotReady, etc.).
+
+        Best-effort (returns `(None, [orders])`, possibly shorter than
+        the caller might expect — or empty):
+          - Per-bucket filter rejection -> skip that bucket.
+          - Per-bucket insufficient free balance -> skip that bucket.
+          - Aggregate notional exceeding the asset's `notional_limit`
+            -> return `(None, [])`. Real-money trading: price drift
+            between ticket construction and the pre-flight may push
+            the projected exposure over the cap; the caller decides
+            whether to scale down and retry or skip entirely.
+
+        Ticket dispatch:
+          - `LimitOrderTicket`, `MarketOrderTicket(BASE)` -> main flow
+            (cross-currency split via `allocate.buy_allocate` /
+            `allocate.sell_allocate`).
+          - `MarketOrderTicket(QUOTE)`, stop-loss / take-profit
+            variants -> passthrough flow (filter normalization +
+            precise-only pre-flight; never split because the base
+            quantity is either implicit in the quote amount or
+            trigger-dependent).
+
+        The returned list is ordered by `config.account_currencies`
+        declaration order — primary first, then alt currencies in the
+        order they were declared. Buckets that skipped are simply
+        omitted (no empty slot).
         """
         if self._alt_currency_weights is None:
             return AllocationWeightsNotSetError(), None
 
-        side = ticket.side
+        if not self._symbols.has_symbol(ticket.symbol.name):
+            return SymbolNotDefinedError(ticket.symbol.name), None
 
         if isinstance(ticket, LimitOrderTicket):
-            reference_price = ticket.price
-        elif isinstance(ticket, MarketOrderTicket):
+            return split_allocate(
+                self, ticket, reference_price=ticket.price, data=data
+            )
+        if isinstance(ticket, MarketOrderTicket):
             if ticket.quantity_type is MarketQuantityType.QUOTE:
-                # Quote-denominated MARKET orders are not allocatable
-                # in base units; pass through as a single sub-ticket.
-                return None, [ticket]
-            reference_price = ticket.estimated_price
-        else:
-            # Stop-loss / take-profit variants are out of scope of the
-            # account-currency split logic; pass through.
-            return None, [ticket]
-
-        base_asset = ticket.symbol.base_asset
-
-        if side is OrderSide.BUY:
-            # Worst-case exposure pre-check: assume every unsettled
-            # inflow lands, no unsettled outflow does.
-            exc, exposure_now = self.exposure(
-                base_asset,
-                include_unsettled_inflow=True,
-                include_unsettled_outflow=False,
+                return passthrough_allocate(self, ticket, data=data)
+            return split_allocate(
+                self, ticket,
+                reference_price=ticket.estimated_price,
+                data=data,
             )
-            if exc is not None:
-                return exc, None
-            projected = (
-                exposure_now.notional_value
-                + ticket.quantity * reference_price
-            )
-            if projected > exposure_now.notional_limit:
-                return NotionalLimitExceededError(
-                    asset=base_asset,
-                    attempted_notional=projected,
-                    notional_limit=exposure_now.notional_limit,
-                ), None
-
-        weights_vec = self._alt_currency_weights[
-            0 if side is OrderSide.BUY else 1
-        ]
-        # alt weights first (in alt_account_currencies order), primary
-        # at the tail with implicit weight 1 — matches
-        # config.account_currencies. The primary bucket is always
-        # weight 1 (>0); the loop filters per-bucket weights itself.
-        full_weights = (*weights_vec, DECIMAL_ONE)
-
-        resources: List[AllocationResource] = []
-        for i, acct_cur in enumerate(self._config.account_currencies):
-            weight = full_weights[i]
-            if weight <= DECIMAL_ZERO:
-                continue
-            symbol_name = self._config.get_symbol_name(base_asset, acct_cur)
-            alt_symbol = self._symbols.get_symbol(symbol_name)
-            if alt_symbol is None:
-                continue
-            if side is OrderSide.BUY:
-                balance = self._balances.get_balance(acct_cur)
-                if balance is None or balance.free <= DECIMAL_ZERO:
-                    continue
-                free = balance.free
-            else:
-                free = DECIMAL_INF
-            resources.append(AllocationResource(alt_symbol, free, weight))
-
-        if not resources:
-            if side is OrderSide.BUY:
-                return InsufficientFreeBalanceError(base_asset), None
-            # SELL with no resources: every weighted bucket is missing
-            # a registered symbol. Fall back to a single passthrough
-            # rather than fabricating an "insufficient balance" error.
-            return None, [ticket]
-
-        output: List[OrderTicket] = []
-        last_filter_exc: List[Exception] = []
-
-        def assign(symbol: Symbol, quantity: Decimal) -> Decimal:
-            if quantity <= DECIMAL_ZERO:
-                return DECIMAL_ZERO
-            candidate = replace(
-                ticket, symbol=symbol, quantity=quantity
-            )
-            exc, normalized = candidate.apply_filters()
-            if exc is not None:
-                # Filter rejected — capture for surfacing if every
-                # bucket fails, and roll the candidate quantity
-                # forward via the compensate chain.
-                last_filter_exc.append(exc)
-                return quantity
-            output.append(normalized)
-            return quantity - normalized.quantity
-
-        if side is OrderSide.BUY:
-            buy_allocate(
-                resources, ticket.quantity, reference_price, assign
-            )
-        else:
-            sell_allocate(resources, ticket.quantity, assign)
-
-        if not output:
-            if last_filter_exc:
-                return last_filter_exc[0], None
-            return (
-                ValueError(
-                    'allocate produced no sub-ticket; the input '
-                    'quantity may be zero or every candidate fell '
-                    "below the symbol's minimum"
-                ),
-                None,
-            )
-
-        return None, output
+        # Stop-loss / take-profit families — passthrough flow.
+        return passthrough_allocate(self, ticket, data=data)
 
     def record(self, *args, **kwargs) -> PerformanceSnapshot:
         """Record current performance snapshot."""
@@ -790,6 +731,43 @@ class TradingState(EventEmitter[TradingStateEvent]):
         return self._perf.iterator(descending)
 
     # End of public methods ---------------------------------------------
+
+    # Order construction & allocation internals -------------------------
+
+    def _create_order(
+        self,
+        normalized_ticket: OrderTicket,
+        data: Optional[Dict[str, Any]],
+    ) -> Order:
+        """
+        Construct a fresh Order at INIT, wire it into state's
+        lifecycle, and emit ORDER_CREATED. Used by `allocate` for
+        every sub-ticket that survives filter normalization +
+        pre-flight.
+        """
+        return self._attach_order(
+            Order(ticket=normalized_ticket, data=data)
+        )
+
+    def _attach_order(self, order: Order) -> Order:
+        """
+        Wire `order` into state: status / fill listeners, registration
+        with the order manager and the reconciliation manager, and the
+        ORDER_CREATED emission. Shared by allocate's `_create_order`
+        and the recovery-path `import_order`.
+        """
+        order.on(
+            OrderUpdatedType.STATUS_UPDATED,
+            self._on_order_status_updated,
+        )
+        order.on(
+            OrderUpdatedType.FILLED_QUANTITY_UPDATED,
+            self._on_order_filled_quantity_updated,
+        )
+        self._orders.add(order)
+        self._recon.register(order)
+        self.emit(TradingStateEvent.ORDER_CREATED, order)
+        return order
 
     def _check_allocation_weights(
         self,

@@ -18,5 +18,8 @@ from .balance import (
 from .order import (
     encode_order_request,
     decode_order_update_event,
-    decode_order_create_response
+    decode_order_create_response,
+    decode_order_query_response,
+    decode_order_snapshot,
+    UnsupportedOrderTypeError,
 )

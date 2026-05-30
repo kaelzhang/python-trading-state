@@ -4,19 +4,53 @@ asset quantity across multiple account-currency symbols according to
 caller-configured weights, while respecting per-bucket free balances
 (BUY) and per-bucket exchange filters.
 
-The math is the same as before; the orchestration changed: the
-`assign` callback used to be wired into state.update_order, now it is
-"build a child ticket, run filters, append on success, return leftover
-on failure".
-"""
+This module owns two flows used by `state.allocate`:
 
-from typing import Callable, List
+- `split_allocate` for tickets that can be sized in base units
+  (LIMIT / LIMIT_MAKER / MARKET(BASE)). It runs aggregate BUY pre-
+  flight against the asset's notional cap, then runs the math in
+  `buy_allocate` / `sell_allocate` to fan a single canonical ticket
+  out across weighted alt-currency buckets in
+  `config.account_currencies` order.
+
+- `passthrough_allocate` for tickets that cannot be split in base
+  units (MARKET(QUOTE), stop / take-profit families). It applies
+  filter normalization and runs pre-flight only on amounts that are
+  precisely known up-front; anything that depends on trigger-time
+  market price is passed through.
+
+Both flows materialize Orders through `state._create_order`, which
+attaches lifecycle listeners and emits `ORDER_CREATED`.
+"""
+from __future__ import annotations
+
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    TYPE_CHECKING,
+)
 
 from bisect import bisect_left
+from dataclasses import replace
 from decimal import Decimal
 
 from .symbol import Symbol
-from .common import DECIMAL_ZERO
+from .enums import MarketQuantityType, OrderSide
+from .order_ticket import (
+    OrderTicket,
+    MarketOrderTicket,
+    StopLossOrderTicket,
+    StopLossLimitOrderTicket,
+)
+from .common import DECIMAL_INF, DECIMAL_ONE, DECIMAL_ZERO, ValueOrException
+
+if TYPE_CHECKING:
+    from .order import Order
+    from .state import TradingState
 
 
 class AllocationResource:
@@ -163,3 +197,185 @@ def sell_allocate(
             # We do not need to check caps for SELL
             compensate + (take * resource.weight) / total_w,
         )
+
+
+# state-coupled allocation flows ---------------------------------------
+
+def split_allocate(
+    state: 'TradingState',
+    ticket: OrderTicket,
+    *,
+    reference_price: Decimal,
+    data: Optional[Dict[str, Any]],
+) -> ValueOrException[List['Order']]:
+    """
+    Cross-currency split flow for LIMIT / LIMIT_MAKER / MARKET(BASE)
+    tickets.
+
+    BUY: aggregate notional pre-flight (best-effort: empty list on
+    violation). Then split the base quantity across weighted buckets
+    in `config.account_currencies` order, normalising each candidate
+    via the symbol's filters; failed candidates are skipped.
+
+    SELL: no notional pre-flight; same split logic, using
+    `DECIMAL_INF` as the per-bucket free balance.
+    """
+    side = ticket.side
+    base_asset = ticket.symbol.base_asset
+
+    if side is OrderSide.BUY:
+        exc, exposure_now = state.exposure(
+            base_asset,
+            include_unsettled_inflow=True,
+            include_unsettled_outflow=False,
+        )
+        if exc is not None:
+            return exc, None
+        projected = (
+            exposure_now.notional_value
+            + ticket.quantity * reference_price
+        )
+        if projected > exposure_now.notional_limit:
+            return None, []
+
+    weights_vec = state._alt_currency_weights[
+        0 if side is OrderSide.BUY else 1
+    ]
+    # alt weights first (matches alt_account_currencies order),
+    # primary at the tail with implicit weight 1 — together matches
+    # config.account_currencies.
+    full_weights = (*weights_vec, DECIMAL_ONE)
+
+    resources: List[AllocationResource] = []
+    # symbol -> declaration position, used to sort the resulting
+    # Orders into account_currencies order at the end.
+    symbol_position: Dict[Symbol, int] = {}
+
+    for i, acct_cur in enumerate(state._config.account_currencies):
+        weight = full_weights[i]
+        if weight <= DECIMAL_ZERO:
+            continue
+        symbol_name = state._config.get_symbol_name(base_asset, acct_cur)
+        alt_symbol = state._symbols.get_symbol(symbol_name)
+        if alt_symbol is None:
+            continue
+        if side is OrderSide.BUY:
+            balance = state._balances.get_balance(acct_cur)
+            if balance is None or balance.free <= DECIMAL_ZERO:
+                continue
+            free = balance.free
+        else:
+            free = DECIMAL_INF
+        resources.append(AllocationResource(alt_symbol, free, weight))
+        symbol_position[alt_symbol] = i
+
+    if not resources:
+        return None, []
+
+    indexed: List[Tuple[int, 'Order']] = []
+
+    def assign(symbol: Symbol, quantity: Decimal) -> Decimal:
+        if quantity <= DECIMAL_ZERO:
+            return DECIMAL_ZERO
+        candidate = replace(ticket, symbol=symbol, quantity=quantity)
+        exc, normalized = candidate.symbol.apply_filters(
+            candidate, validate_only=False
+        )
+        if exc is not None:
+            # Best-effort: skip this bucket silently.
+            return quantity
+        order = state._create_order(normalized, data)
+        indexed.append((symbol_position[symbol], order))
+        return quantity - normalized.quantity
+
+    if side is OrderSide.BUY:
+        buy_allocate(resources, ticket.quantity, reference_price, assign)
+    else:
+        sell_allocate(resources, ticket.quantity, assign)
+
+    indexed.sort(key=lambda io: io[0])
+    return None, [order for _, order in indexed]
+
+
+def passthrough_allocate(
+    state: 'TradingState',
+    ticket: OrderTicket,
+    *,
+    data: Optional[Dict[str, Any]],
+) -> ValueOrException[List['Order']]:
+    """
+    Passthrough flow for non-splittable tickets: `MarketOrderTicket
+    (QUOTE)` and stop-loss / take-profit variants.
+
+    Always applies filter normalization. Runs pre-flight only on
+    precisely-known amounts (see `_check_passthrough_amounts`);
+    anything that depends on the trigger-time market price (e.g. bare
+    `STOP_LOSS` BUY notional) is silently passed through — the caller
+    accepted exchange-side reject risk by choosing the ticket type.
+    """
+    side = ticket.side
+
+    exc, normalized = ticket.symbol.apply_filters(
+        ticket, validate_only=False
+    )
+    if exc is not None:
+        return None, []
+
+    notional, base_qty = _check_passthrough_amounts(normalized)
+    base_asset = normalized.symbol.base_asset
+    quote_asset = normalized.symbol.quote_asset
+
+    if side is OrderSide.BUY:
+        if notional is not None:
+            exc, exposure_now = state.exposure(
+                base_asset,
+                include_unsettled_inflow=True,
+                include_unsettled_outflow=False,
+            )
+            if exc is not None:
+                return exc, None
+            projected = exposure_now.notional_value + notional
+            if projected > exposure_now.notional_limit:
+                return None, []
+            balance = state._balances.get_balance(quote_asset)
+            if balance is None or balance.free < notional:
+                return None, []
+    else:
+        if base_qty is not None:
+            balance = state._balances.get_balance(base_asset)
+            if balance is None or balance.free < base_qty:
+                return None, []
+
+    order = state._create_order(normalized, data)
+    return None, [order]
+
+
+def _check_passthrough_amounts(
+    ticket: OrderTicket,
+) -> Tuple[Optional[Decimal], Optional[Decimal]]:
+    """
+    Compute the (notional, base_quantity) pair that the passthrough
+    pre-flight can rely on. `None` for either slot means "depends on
+    trigger-time market price — do NOT use for pre-flight rejection".
+    See README "Allocation pre-flight" for the carve-out table.
+    """
+    if isinstance(ticket, MarketOrderTicket):
+        if ticket.quantity_type is MarketQuantityType.QUOTE:
+            # quote_quantity IS the notional amount on BUY; base
+            # quantity is unknown until the fill price lands.
+            return ticket.quantity, None
+        # MARKET(BASE) is split-flow; defensive None / quantity.
+        return None, ticket.quantity
+
+    # StopLossLimitOrderTicket / TakeProfitLimitOrderTicket: both have
+    # a precise limit `price` -> notional & base both known.
+    if isinstance(ticket, StopLossLimitOrderTicket):
+        return ticket.quantity * ticket.price, ticket.quantity
+
+    # Bare StopLossOrderTicket / TakeProfitOrderTicket: market-on-
+    # trigger; notional depends on trigger-time price -> None.
+    if isinstance(ticket, StopLossOrderTicket):
+        return None, ticket.quantity
+
+    # Defensive: any other passthrough ticket type.
+    return None, None

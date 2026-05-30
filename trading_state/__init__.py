@@ -31,9 +31,11 @@ from .exceptions import (
     ValuationPriceNotReadyError,
     ValuationNotAvailableError,
     BalanceNotReadyError,
+    DuplicateOrderIdError,
     FeatureNotAllowedError,
     InsufficientFreeBalanceError,
     InvalidExchangeData,
+    InvalidOrderForImportError,
     NotionalLimitExceededError,
 )
 

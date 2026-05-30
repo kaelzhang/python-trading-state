@@ -8,22 +8,52 @@ errors come back through the return value so the caller has to handle
 them explicitly.
 """
 from typing import (
+    Any,
+    Dict,
+    Optional,
     Tuple,
 )
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 
 from trading_state import (
-    OrderTicket,
-    OrderStatus,
     LimitOrderTicket,
     MarketOrderTicket,
     MarketQuantityType,
+    Order,
+    OrderSide,
+    OrderStatus,
+    OrderTicket,
+    StopLossLimitOrderTicket,
+    StopLossOrderTicket,
+    TakeProfitLimitOrderTicket,
+    TakeProfitOrderTicket,
+    TimeInForce,
     InvalidExchangeData,
 )
 from trading_state.common import DECIMAL_ZERO, ValueOrException
+from trading_state.symbol import Symbol
 
 from .common import timestamp_to_datetime
+
+
+class UnsupportedOrderTypeError(Exception):
+    """
+    Raised by `decode_order_snapshot` when the wire payload references
+    an order type that this package does not model on the ticket side
+    (e.g. Binance returns a snapshot of a MARKET order, which is
+    terminal at placement and never appears in /openOrders, or a type
+    we have not added a ticket class for yet).
+
+    Surfaced through `ValueOrException` so callers decide how to react
+    (log + skip the row, raise, retry under a different schema).
+    """
+    def __init__(self, order_type: str) -> None:
+        super().__init__(
+            f"order type '{order_type}' is not supported by "
+            f'trading_state.binance.decode_order_snapshot'
+        )
+        self.order_type = order_type
 
 
 def _format_decimal(value: Decimal) -> str:
@@ -375,3 +405,342 @@ def decode_order_update_event(
     }
 
     return None, (client_order_id, update_kwargs)
+
+
+# Recovery: REST snapshot decoders -------------------------------------
+#
+# `/api/v3/order` (single GET), `/api/v3/openOrders` (list), and
+# `/api/v3/allOrders` (list) all return the same per-order schema. The
+# two decoders below consume that schema for different downstream
+# consumers:
+#
+#   decode_order_query_response -> (id, update_kwargs)
+#       Caller already has the Order in state (via get_order_by_id) and
+#       wants to push the refreshed fields via state.update_order.
+#       Symmetric with decode_order_update_event for WS executionReport.
+#
+#   decode_order_snapshot -> Order
+#       Caller has determined the Order is NOT in state (e.g. cold
+#       startup, mid-session import for an order placed by another
+#       client / process during a WS gap) and wants to feed
+#       state.import_order. Constructs the Order with id, status, and
+#       all cumulative fields populated from the snapshot.
+#
+# trading_state.binance does not orchestrate the recovery flow; callers
+# choose the right decoder per item based on the in-state existence
+# check. See README "Recovery" for the canonical caller patterns.
+
+
+def _decode_order_side(raw) -> ValueOrException[OrderSide]:
+    try:
+        return None, OrderSide(raw)
+    except ValueError:
+        return (
+            InvalidExchangeData(f'unknown order side: {raw!r}'),
+            None,
+        )
+
+
+def _decode_time_in_force(raw) -> ValueOrException[TimeInForce]:
+    try:
+        return None, TimeInForce(raw)
+    except ValueError:
+        return (
+            InvalidExchangeData(f'unknown timeInForce: {raw!r}'),
+            None,
+        )
+
+
+def decode_order_query_response(
+    payload: dict,
+) -> ValueOrException[Tuple[str, dict]]:
+    """
+    Decode a `GET /api/v3/order` response (or a single item from
+    `GET /api/v3/openOrders` / `GET /api/v3/allOrders`, same schema)
+    into the `(client_order_id, update_kwargs)` pair consumed by
+    `state.update_order(...)`.
+
+    Use this when the caller has confirmed the Order is already in
+    state (via `state.get_order_by_id(id)`) and wants to refresh its
+    fields from a REST snapshot. For Orders that are NOT in state,
+    use `decode_order_snapshot` + `state.import_order` instead.
+
+    Validates:
+      - required fields present
+      - status is recognised
+      - executedQty / cummulativeQuoteQty are non-negative decimals
+
+    Commission fields are absent from REST snapshots (only WS
+    executionReport carries per-update commission); both are emitted
+    as None so that `update_order` treats them as "not updated this
+    round".
+    """
+    exc, client_order_id = _require(
+        payload, 'clientOrderId', 'client_order_id'
+    )
+    if exc is not None:
+        return exc, None
+
+    exc, status_raw = _require(payload, 'status', 'status')
+    if exc is not None:
+        return exc, None
+    exc, status = _decode_order_status(status_raw)
+    if exc is not None:
+        return exc, None
+
+    exc, update_time = _require(payload, 'updateTime', 'updated_at')
+    if exc is not None:
+        return exc, None
+    updated_at = timestamp_to_datetime(update_time)
+
+    exc, executed_qty_raw = _require(
+        payload, 'executedQty', 'filled_quantity'
+    )
+    if exc is not None:
+        return exc, None
+    exc, filled_quantity = _decode_decimal(
+        executed_qty_raw, 'filled_quantity', allow_negative=False
+    )
+    if exc is not None:
+        return exc, None
+
+    exc, quote_qty_raw = _require(
+        payload, 'cummulativeQuoteQty', 'quote_quantity'
+    )
+    if exc is not None:
+        return exc, None
+    exc, quote_quantity = _decode_decimal(
+        quote_qty_raw, 'quote_quantity', allow_negative=False
+    )
+    if exc is not None:
+        return exc, None
+
+    update_kwargs = {
+        'status': status,
+        'updated_at': updated_at,
+        'id': None,
+        'filled_quantity': filled_quantity,
+        'quote_quantity': quote_quantity,
+        'commission_asset': None,
+        'commission_quantity': None,
+    }
+    return None, (client_order_id, update_kwargs)
+
+
+def _build_snapshot_ticket(
+    item: dict,
+    *,
+    symbol: Symbol,
+    side: OrderSide,
+    quantity: Decimal,
+) -> ValueOrException[OrderTicket]:
+    """
+    Dispatch on `item['type']` and construct the appropriate ticket.
+    Returns `UnsupportedOrderTypeError` for types that have no
+    trading_state ticket-side representation (currently MARKET — the
+    Spot REST schema only ever surfaces MARKET orders as terminal, and
+    a terminal market order has no ticket-level price to round-trip
+    through filters).
+    """
+    type_raw = item.get('type')
+    if type_raw is None:
+        return InvalidExchangeData("missing required field 'type'"), None
+
+    if type_raw in ('LIMIT', 'LIMIT_MAKER', 'STOP_LOSS_LIMIT',
+                    'TAKE_PROFIT_LIMIT'):
+        exc, price_raw = _require(item, 'price', 'price')
+        if exc is not None:
+            return exc, None
+        exc, price = _decode_decimal(
+            price_raw, 'price', allow_negative=False
+        )
+        if exc is not None:
+            return exc, None
+    else:
+        price = None
+
+    if type_raw in ('STOP_LOSS', 'STOP_LOSS_LIMIT', 'TAKE_PROFIT',
+                    'TAKE_PROFIT_LIMIT'):
+        exc, stop_price_raw = _require(item, 'stopPrice', 'stop_price')
+        if exc is not None:
+            return exc, None
+        exc, stop_price = _decode_decimal(
+            stop_price_raw, 'stop_price', allow_negative=False
+        )
+        if exc is not None:
+            return exc, None
+    else:
+        stop_price = None
+
+    if type_raw in ('LIMIT', 'STOP_LOSS_LIMIT', 'TAKE_PROFIT_LIMIT'):
+        exc, tif_raw = _require(item, 'timeInForce', 'time_in_force')
+        if exc is not None:
+            return exc, None
+        exc, tif = _decode_time_in_force(tif_raw)
+        if exc is not None:
+            return exc, None
+    else:
+        tif = None
+
+    if type_raw == 'LIMIT':
+        return None, LimitOrderTicket(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            time_in_force=tif,
+        )
+    if type_raw == 'LIMIT_MAKER':
+        return None, LimitOrderTicket(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            post_only=True,
+        )
+    if type_raw == 'STOP_LOSS':
+        return None, StopLossOrderTicket(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            stop_price=stop_price,
+        )
+    if type_raw == 'STOP_LOSS_LIMIT':
+        return None, StopLossLimitOrderTicket(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            stop_price=stop_price,
+            time_in_force=tif,
+        )
+    if type_raw == 'TAKE_PROFIT':
+        return None, TakeProfitOrderTicket(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            stop_price=stop_price,
+        )
+    if type_raw == 'TAKE_PROFIT_LIMIT':
+        return None, TakeProfitLimitOrderTicket(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            stop_price=stop_price,
+            time_in_force=tif,
+        )
+
+    return UnsupportedOrderTypeError(str(type_raw)), None
+
+
+def decode_order_snapshot(
+    item: dict,
+    *,
+    symbol: Symbol,
+    data: Optional[Dict[str, Any]] = None,
+) -> ValueOrException[Order]:
+    """
+    Decode a Binance Spot order snapshot item (single item from
+    `GET /api/v3/openOrders`, `GET /api/v3/allOrders`, or the body of
+    `GET /api/v3/order`) into a fully-populated `Order` ready to feed
+    `state.import_order`.
+
+    Used on the recovery path when the caller has confirmed the order
+    is NOT already in state (cold startup, mid-session reconnect
+    discovery of orders placed by another client / process during a
+    WS gap, cold pull of /allOrders for accounting completeness).
+
+    Synthesizes a ticket from `item['type']` via
+    `_build_snapshot_ticket` and populates `id`, `status`,
+    `filled_quantity`, `quote_quantity`, `created_at`, and `updated_at`
+    from the snapshot fields. Commission fields are left at their
+    defaults — REST snapshots do not carry per-update commission.
+
+    Accepts any status the wire returns (open or terminal). Callers
+    that want to gate by status (e.g. skip terminal rows from
+    /allOrders) should filter before calling.
+
+    Returns `UnsupportedOrderTypeError` for types that trading_state
+    does not model on the ticket side (currently MARKET).
+    """
+    exc, client_order_id = _require(
+        item, 'clientOrderId', 'client_order_id'
+    )
+    if exc is not None:
+        return exc, None
+
+    exc, side_raw = _require(item, 'side', 'side')
+    if exc is not None:
+        return exc, None
+    exc, side = _decode_order_side(side_raw)
+    if exc is not None:
+        return exc, None
+
+    exc, status_raw = _require(item, 'status', 'status')
+    if exc is not None:
+        return exc, None
+    exc, status = _decode_order_status(status_raw)
+    if exc is not None:
+        return exc, None
+
+    exc, orig_qty_raw = _require(item, 'origQty', 'quantity')
+    if exc is not None:
+        return exc, None
+    exc, quantity = _decode_decimal(
+        orig_qty_raw, 'quantity', allow_negative=False
+    )
+    if exc is not None:
+        return exc, None
+
+    exc, executed_qty_raw = _require(
+        item, 'executedQty', 'filled_quantity'
+    )
+    if exc is not None:
+        return exc, None
+    exc, filled_quantity = _decode_decimal(
+        executed_qty_raw, 'filled_quantity', allow_negative=False
+    )
+    if exc is not None:
+        return exc, None
+
+    exc, quote_qty_raw = _require(
+        item, 'cummulativeQuoteQty', 'quote_quantity'
+    )
+    if exc is not None:
+        return exc, None
+    exc, quote_quantity = _decode_decimal(
+        quote_qty_raw, 'quote_quantity', allow_negative=False
+    )
+    if exc is not None:
+        return exc, None
+
+    exc, time_raw = _require(item, 'time', 'created_at')
+    if exc is not None:
+        return exc, None
+    created_at = timestamp_to_datetime(time_raw)
+
+    exc, update_time_raw = _require(item, 'updateTime', 'updated_at')
+    if exc is not None:
+        return exc, None
+    updated_at = timestamp_to_datetime(update_time_raw)
+
+    exc, ticket = _build_snapshot_ticket(
+        item, symbol=symbol, side=side, quantity=quantity,
+    )
+    if exc is not None:
+        return exc, None
+
+    order = Order(
+        ticket=ticket,
+        data=data,
+        id=client_order_id,
+        status=status,
+        filled_quantity=filled_quantity,
+        quote_quantity=quote_quantity,
+        commission_asset=None,
+        commission_quantity=DECIMAL_ZERO,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+    return None, order

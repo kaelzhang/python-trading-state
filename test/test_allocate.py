@@ -1,6 +1,15 @@
 from decimal import Decimal
 
-from trading_state import Symbol
+from trading_state import (
+    Balance,
+    LimitOrderTicket,
+    MarketOrderTicket,
+    MarketQuantityType,
+    OrderSide,
+    OrderStatus,
+    Symbol,
+    TimeInForce,
+)
 from trading_state.allocate import (
     buy_allocate,
     sell_allocate,
@@ -8,10 +17,29 @@ from trading_state.allocate import (
 )
 
 from .fixtures import (
+    init_state,
+    balance_time,
     BTCUSDT,
     BTCUSDC,
     BTCFDUSD,
+    USDC,
+    USDT,
 )
+
+
+BTCUSDT_NAME = BTCUSDT.name
+BTCUSDC_NAME = BTCUSDC.name
+
+
+def _make_buy_limit_ticket(state, symbol_name, quantity, price):
+    sym = state.get_symbol(symbol_name)
+    return LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=quantity,
+        price=price,
+        time_in_force=TimeInForce.GTC,
+    )
 
 
 resources = [
@@ -137,3 +165,364 @@ def test_sell_allocate():
         [Decimal('0.6'), Decimal('0.3'), Decimal('0.1')],
         [Decimal('0'), Decimal('0.1'), Decimal('0.1')],
     )
+
+
+# State-level allocate flows ---------------------------------------
+#
+# Tests below exercise `state.allocate` end-to-end (cross-currency
+# split, passthrough flow, fail-fast vs best-effort outcomes) rather
+# than the lower-level `buy_allocate` / `sell_allocate` math above.
+
+
+def test_allocate_requires_weights_to_be_set():
+    from trading_state import AllocationWeightsNotSetError
+
+    state = init_state(with_alt_weights=False)
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
+    )
+    exc, out = state.allocate(ticket)
+    assert out is None
+    assert isinstance(exc, AllocationWeightsNotSetError)
+
+
+
+
+def test_allocate_buy_across_alt_currencies():
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),  # BUY weights: USDC weight 1 (primary USDT also implicit 1)
+        (Decimal('0'),),  # SELL weights
+    ))
+
+    canonical = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
+    )
+    exc, orders = state.allocate(canonical)
+
+    # Both USDC and USDT have balance, weights both > 0 → expect 2 orders
+    assert exc is None
+    assert len(orders) == 2
+    quote_assets = {o.ticket.symbol.quote_asset for o in orders}
+    assert quote_assets == {USDC, USDT}
+    for order in orders:
+        assert order.ticket.quantity > Decimal('0')
+        assert order.ticket.side is OrderSide.BUY
+        assert order.status is OrderStatus.INIT
+
+
+
+
+def test_allocate_sell_across_alt_currencies():
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),  # SELL weights: USDC weight 1
+    ))
+
+    canonical = LimitOrderTicket(
+        symbol=state.get_symbol(BTCUSDT_NAME),
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, orders = state.allocate(canonical)
+
+    assert exc is None
+    assert len(orders) == 2
+    for order in orders:
+        assert order.ticket.side is OrderSide.SELL
+        assert order.status is OrderStatus.INIT
+
+
+
+
+def test_allocate_passthrough_for_market_quote_quantity():
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('0'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    quote_market = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, orders = state.allocate(quote_market)
+    assert exc is None
+    assert len(orders) == 1
+    order = orders[0]
+    # Passthrough preserves the ticket type and the per-quote quantity.
+    assert isinstance(order.ticket, MarketOrderTicket)
+    assert order.ticket.quantity_type is MarketQuantityType.QUOTE
+    assert order.ticket.symbol is sym
+
+
+
+
+def test_allocate_stop_loss_passes_through_with_weights_set():
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('0'),),
+    ))
+    # Stop-loss / take-profit families take the passthrough flow
+    # (filter normalization + precise-only pre-flight) and materialize
+    # into a single Order. SELL has base-side pre-flight (1 BTC <=
+    # free balance of 1 BTC) which passes here.
+    from trading_state import StopLossOrderTicket
+    sym = state.get_symbol(BTCUSDT_NAME)
+    sl = StopLossOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        stop_price=Decimal('5000'),
+    )
+    exc, out = state.allocate(sl)
+    assert exc is None
+    assert len(out) == 1
+    assert isinstance(out[0].ticket, StopLossOrderTicket)
+    assert out[0].ticket.symbol is sym
+    assert out[0].ticket.stop_price == Decimal('5000')
+
+
+
+
+def test_allocate_buy_unset_notional_limit_propagates_exposure_error():
+    """A BUY whose base asset has no notional_limit set surfaces the
+    exposure pre-check error (NotionalLimitNotSetError)."""
+    from trading_state import NotionalLimitNotSetError, Symbol
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('1'),),
+    ))
+    # Register a new symbol but skip set_notional_limit for its base.
+    state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
+    sym = state.get_symbol('FOOZZZ')
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        price=Decimal('10'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.allocate(ticket)
+    assert out is None
+    assert isinstance(exc, NotionalLimitNotSetError)
+
+
+
+
+def test_allocate_sell_skips_missing_alt_symbol_buckets():
+    """A SELL whose base asset has a symbol only in some weighted
+    account currencies: the missing-symbol buckets are silently
+    skipped and the present ones still produce sub-tickets."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),  # SELL: USDC weight 1, USDT implicit 1
+    ))
+    # Register a new base whose symbol exists only against USDT, not
+    # USDC. The USDC bucket exercises the `alt_symbol is None: continue`
+    # path inside state.allocate's resource gathering.
+    from trading_state import Symbol
+    state.set_symbol(Symbol('FOOUSDT', 'FOO', USDT))
+    state.set_notional_limit('FOO', Decimal('100000'))
+    state.set_price('FOOUSDT', Decimal('10'))
+    state.set_balances([
+        Balance('FOO', Decimal('100'), Decimal('0'), balance_time(0)),
+    ])
+
+    sym = state.get_symbol('FOOUSDT')
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('10'),
+        price=Decimal('10'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
+    assert len(out) == 1
+    assert out[0].ticket.symbol.quote_asset == USDT
+
+
+
+
+def test_allocate_sell_with_no_registered_symbols_returns_empty_list():
+    """A SELL whose base asset has no symbol in any account-currency
+    bucket: no eligible bucket survives the resource-gathering step,
+    so allocate returns an empty list (best-effort)."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),
+    ))
+    from trading_state import Symbol
+    state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
+    sym = state.get_symbol('FOOZZZ')
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        price=Decimal('10'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
+    assert out == []
+
+
+
+
+def test_allocate_buy_zero_balance_returns_empty_list():
+    """A BUY allocation with every account-currency bucket at zero
+    free balance: every bucket fails the per-bucket eligibility
+    check, allocate returns an empty list (best-effort)."""
+    from trading_state import TradingConfig
+    config = TradingConfig(
+        account_currency=USDT,
+        alt_account_currencies=(USDC,),
+    )
+    state = init_state(config=config)
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('1'),),
+    ))
+    # Zero out both balances so every BUY bucket is ineligible.
+    t = balance_time(100)
+    state.set_balances([
+        Balance(USDC, Decimal('0'), Decimal('0'), t),
+        Balance(USDT, Decimal('0'), Decimal('0'), t),
+    ])
+
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('1'), Decimal('10000')
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
+    assert out == []
+
+
+
+
+def test_allocate_with_market_base_ticket():
+    """MarketOrderTicket with BASE quantity_type goes through the
+    normal split path — estimated_price is used as reference."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('0'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        quantity_type=MarketQuantityType.BASE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
+    assert len(out) >= 1
+    for order in out:
+        assert isinstance(order.ticket, MarketOrderTicket)
+
+
+
+
+def test_allocate_skips_zero_weight_bucket():
+    state = init_state()
+    # USDC weight 0, primary USDT implicit 1 -> only USDT bucket used
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('0'),),
+    ))
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('1'), Decimal('10000'),
+    )
+    exc, out = state.allocate(ticket)
+    # Only the primary bucket produced an Order.
+    assert exc is None
+    assert len(out) == 1
+    assert out[0].ticket.symbol.quote_asset == USDT
+
+
+
+
+def test_allocate_sell_zero_quantity_returns_empty_list():
+    """A SELL with quantity == 0 produces no Orders. Under best-effort
+    semantics that surfaces as an empty list, not an exception."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('0'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
+    assert out == []
+
+
+
+
+def test_allocate_filter_rejection_returns_empty_list():
+    """When every candidate sub-ticket is rejected by the symbol's
+    filters (NOTIONAL too small here), allocate returns an empty list
+    — per-bucket filter rejection is best-effort, not surfaced as an
+    exception. State is unchanged."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('0'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    # Quantity intentionally too small to clear the symbol's NOTIONAL
+    # filter so every candidate gets rejected.
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('0.0000001'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
+    assert out == []
+    assert len(list(state.query_orders())) == 0
+
+
+
+
+def test_allocate_buy_exceeding_notional_limit_returns_empty_list():
+    """init_state fixture sets BTC notional_limit=100k. Holding is
+    1 BTC at price 10k -> current notional 10k. A BUY of 10 BTC at
+    10k would add 100k, totalling 110k > 100k cap. The aggregate
+    notional violation is best-effort under the new contract: empty
+    list, no exception."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),
+        (Decimal('0'),),
+    ))
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('10'), Decimal('10000'),
+    )
+    exc, out = state.allocate(ticket)
+    assert exc is None
+    assert out == []
+    assert len(list(state.query_orders())) == 0
+
+

@@ -143,6 +143,13 @@ class FeatureType(StringEnum):
 
 
 class TradingStateEvent(Enum):
+    # Emitted when state first records an Order — via state.allocate
+    # (one event per Order in the returned list) or via
+    # state.import_order (recovery path). Payload is the Order. Keeps
+    # the invariant "every Order in state was preceded by ORDER_CREATED
+    # at some point" so downstream subscribers do not need to poll.
+    ORDER_CREATED = 'ORDER_CREATED'
+
     ORDER_STATUS_UPDATED = 'ORDER_STATUS_UPDATED'
     ORDER_FILLED_QUANTITY_UPDATED = 'ORDER_FILLED_QUANTITY_UPDATED'
     PRICE_UPDATED = 'PRICE_UPDATED'

@@ -149,9 +149,9 @@ def test_pnl():
     )
     assert exposure.ratio == Decimal('0.4')
 
-    # Buy via add_order
+    # Buy via allocate
     ticket = _buy_limit(state, BTCUSDT.name, Decimal('0.5'), price)
-    _, order = state.add_order(ticket)
+    _, [order] = state.allocate(ticket)
     assert order is not None
     assert order.ticket.symbol.name == BTCUSDT.name
     assert order.ticket.side is OrderSide.BUY
@@ -202,7 +202,7 @@ def test_pnl():
 
     # Sell
     ticket = _sell_limit(state, BTCUSDT.name, Decimal('2'), price2)
-    _, order = state.add_order(ticket)
+    _, [order] = state.allocate(ticket)
     assert order is not None
     state.update_order(
         order,
@@ -224,7 +224,7 @@ def test_pnl():
 
     # Sell more
     ticket = _sell_limit(state, BTCUSDT.name, Decimal('0.1'), price2)
-    _, order = state.add_order(ticket)
+    _, [order] = state.allocate(ticket)
     assert order is not None
     state.update_order(
         order,
@@ -269,7 +269,7 @@ def test_buy_commission_in_base_shrinks_tracked_position():
     state.record(time=datetime.now())  # initialise PerformanceTracker
 
     ticket = _buy_limit(state, BTCUSDT.name, Decimal('1'), Decimal('10000'))
-    _, order = state.add_order(ticket)
+    _, [order] = state.allocate(ticket)
     state.update_order(
         order,
         status=OrderStatus.FILLED,
@@ -304,7 +304,7 @@ def test_buy_commission_in_third_asset_folds_cc_into_cost_basis():
     state.record(time=datetime.now())
 
     ticket = _buy_limit(state, BTCUSDT.name, Decimal('1'), Decimal('10000'))
-    _, order = state.add_order(ticket)
+    _, [order] = state.allocate(ticket)
     state.update_order(
         order,
         status=OrderStatus.FILLED,
@@ -336,7 +336,7 @@ def test_sell_commission_in_quote_subtracts_cc_separately():
     # Accumulate 2 BTC at known cost basis: existing 1 BTC @10000 +
     # bought 1 BTC @5000 (no fee) → cost 15000, lots [1@10000, 1@5000].
     buy_ticket = _buy_limit(state, BTCUSDT.name, Decimal('1'), Decimal('5000'))
-    _, buy_order = state.add_order(buy_ticket)
+    _, [buy_order] = state.allocate(buy_ticket)
     state.update_order(
         buy_order,
         status=OrderStatus.FILLED,
@@ -350,7 +350,7 @@ def test_sell_commission_in_quote_subtracts_cc_separately():
 
     # SELL 1 BTC @10000, fee 10 USDT (commission_asset == quote == account).
     sell_ticket = _sell_limit(state, BTCUSDT.name, Decimal('1'), Decimal('10000'))
-    _, sell_order = state.add_order(sell_ticket)
+    _, [sell_order] = state.allocate(sell_ticket)
     state.update_order(
         sell_order,
         status=OrderStatus.FILLED,
@@ -380,7 +380,7 @@ def test_sell_commission_in_base_widens_fifo_without_double_subtracting():
     # @ 5000 USDT, no fee. Position then has 1 (initial) + 1 (bought)
     # = 2 BTC at total cost 10000 + 5000 = 15000.
     buy_ticket = _buy_limit(state, BTCUSDT.name, Decimal('1'), Decimal('5000'))
-    _, buy_order = state.add_order(buy_ticket)
+    _, [buy_order] = state.allocate(buy_ticket)
     state.update_order(
         buy_order,
         status=OrderStatus.FILLED,
@@ -395,7 +395,7 @@ def test_sell_commission_in_base_widens_fifo_without_double_subtracting():
     # SELL 1 BTC @ 10000 USDT, fee 0.01 BTC. The exchange takes
     # 1.01 BTC from balance; FIFO consumes oldest lots first.
     sell_ticket = _sell_limit(state, BTCUSDT.name, Decimal('1'), Decimal('10000'))
-    _, sell_order = state.add_order(sell_ticket)
+    _, [sell_order] = state.allocate(sell_ticket)
     state.update_order(
         sell_order,
         status=OrderStatus.FILLED,
