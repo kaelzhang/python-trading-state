@@ -6,7 +6,6 @@ Exceptions for the trading state, which are
 """
 
 from __future__ import annotations
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from .enums import FeatureType
@@ -108,42 +107,6 @@ class AccountAssetHasNoExposureError(Exception):
         super().__init__(
             f"asset '{asset}' is an account currency; "
             f'exposure is undefined for account currencies'
-        )
-        self.asset = asset
-
-
-class NotionalLimitExceededError(Exception):
-    """
-    Raised by `state.allocate(...)` when the canonical ticket cannot
-    be sized within the asset's notional_limit even under a worst-case
-    unsettled policy (inflow=True, outflow=False).
-    """
-    def __init__(
-        self,
-        asset: str,
-        attempted_notional: Decimal,
-        notional_limit: Decimal,
-    ) -> None:
-        super().__init__(
-            f"BUY of asset '{asset}' would reach notional "
-            f'{attempted_notional} which exceeds the configured '
-            f'limit {notional_limit}'
-        )
-        self.asset = asset
-        self.attempted_notional = attempted_notional
-        self.notional_limit = notional_limit
-
-
-class InsufficientFreeBalanceError(Exception):
-    """
-    Raised by `state.allocate(...)` for BUY tickets when every
-    weighted account-currency bucket has zero free balance, so no
-    sub-ticket can be funded.
-    """
-    def __init__(self, asset: str) -> None:
-        super().__init__(
-            f"no account-currency bucket has free balance to fund a "
-            f"BUY for asset '{asset}'"
         )
         self.asset = asset
 

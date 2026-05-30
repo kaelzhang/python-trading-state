@@ -32,11 +32,9 @@ from .exceptions import (
     BalanceNotReadyError,
     DuplicateOrderIdError,
     FeatureNotAllowedError,
-    InsufficientFreeBalanceError,
     InvalidAllocationWeightsError,
     InvalidExchangeData,
     InvalidOrderForImportError,
-    NotionalLimitExceededError,
 )
 
 from .exposure import (

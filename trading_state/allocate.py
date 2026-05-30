@@ -408,7 +408,11 @@ def split_allocate_quote(
     indexed: List[Tuple[int, 'Order']] = []
 
     def assign(symbol: Symbol, sub_base: Decimal) -> Decimal:
-        if sub_base <= DECIMAL_ZERO:
+        if sub_base <= DECIMAL_ZERO:  # pragma: no cover
+            # Defensive: buy_allocate / sell_allocate never assign a
+            # non-positive amount under valid inputs, but guard so a
+            # future change to the math can't produce a sub-ticket
+            # with quantity == 0.
             return DECIMAL_ZERO
         # Re-derive the per-bucket quote amount (in the alt symbol's
         # quote currency) from sub_base using the same estimated_price.

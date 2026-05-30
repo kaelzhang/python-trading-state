@@ -672,3 +672,375 @@ def test_create_order_buy_exceeding_notional_limit_returns_empty_list():
     assert len(list(state.query_orders())) == 0
 
 
+
+
+# Coverage for single_create / single_create_quote / split_allocate_quote
+# branch arms ---------------------------------------------------------------
+
+def test_create_order_allocate_none_buy_exposure_error_propagates():
+    """single_create BUY: exposure() failure (e.g. missing notional
+    limit on the asset) is propagated as fail-fast."""
+    from trading_state import NotionalLimitNotSetError, Symbol
+    state = init_state()
+    # Register a new symbol but skip set_notional_limit.
+    state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
+    sym = state.get_symbol('FOOZZZ')
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        price=Decimal('10'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert out is None
+    assert isinstance(exc, NotionalLimitNotSetError)
+
+
+def test_create_order_allocate_none_buy_notional_exceeded_returns_empty():
+    """single_create BUY: aggregate notional violation -> empty list."""
+    state = init_state()
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('10'), Decimal('10000'),
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert exc is None
+    assert out == []
+
+
+def test_create_order_allocate_none_buy_insufficient_quote_returns_empty():
+    """single_create BUY: per-side free-balance shortfall -> empty list."""
+    state = init_state()
+    t = balance_time(100)
+    # Drain USDT so a USDT-quoted BUY has no funding.
+    state.set_balances([
+        Balance(USDT, Decimal('0'), Decimal('0'), t),
+    ])
+    ticket = _make_buy_limit_ticket(
+        state, BTCUSDT_NAME, Decimal('0.1'), Decimal('10000'),
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert exc is None
+    assert out == []
+
+
+def test_create_order_allocate_none_sell_insufficient_base_returns_empty():
+    """single_create SELL: free-base shortfall -> empty list."""
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        # init_state seeds 1 BTC; ask for 5.
+        quantity=Decimal('5'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert exc is None
+    assert out == []
+
+
+def test_create_order_allocate_none_market_quote_buy_exposure_error():
+    """single_create_quote BUY: exposure() failure -> fail-fast."""
+    from trading_state import NotionalLimitNotSetError, Symbol
+    state = init_state()
+    state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
+    sym = state.get_symbol('FOOZZZ')
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('100'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10'),
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert out is None
+    assert isinstance(exc, NotionalLimitNotSetError)
+
+
+def test_create_order_allocate_none_market_quote_buy_notional_exceeded():
+    """single_create_quote BUY: notional violation -> empty list."""
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    # notional_limit BTC = 100k; holding 1 BTC * 10k = 10k.
+    # BUY for 110_000 USDT projects to 120k > 100k cap.
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('110000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert exc is None
+    assert out == []
+
+
+def test_create_order_allocate_none_market_quote_buy_insufficient_quote():
+    """single_create_quote BUY: per-side free-quote shortfall -> []."""
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    t = balance_time(100)
+    state.set_balances([
+        Balance(USDT, Decimal('0'), Decimal('0'), t),
+    ])
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert exc is None
+    assert out == []
+
+
+def test_create_order_allocate_none_market_quote_sell_insufficient_base():
+    """single_create_quote SELL: free-base shortfall -> []."""
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('100000'),  # implies 10 BTC at price 10000
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert exc is None
+    assert out == []
+
+
+def test_create_order_split_quote_buy_exposure_error_propagates():
+    """split_allocate_quote BUY: exposure() failure -> fail-fast."""
+    from trading_state import NotionalLimitNotSetError, Symbol
+    state = init_state()
+    state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
+    sym = state.get_symbol('FOOZZZ')
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('100'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10'),
+    )
+    exc, out = state.create_order(ticket, allocate=(Decimal('1'),))
+    assert out is None
+    assert isinstance(exc, NotionalLimitNotSetError)
+
+
+def test_create_order_split_quote_buy_notional_exceeded_returns_empty():
+    """split_allocate_quote BUY: aggregate notional violation -> []."""
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('110000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, out = state.create_order(ticket, allocate=(Decimal('1'),))
+    assert exc is None
+    assert out == []
+
+
+def test_create_order_split_quote_buy_zero_balance_bucket_skipped():
+    """split_allocate_quote BUY: a bucket with zero free balance is
+    silently skipped (exercises the `balance.free <= 0` branch)."""
+    from trading_state import TradingConfig
+    config = TradingConfig(
+        account_currency=USDT,
+        alt_account_currencies=(USDC,),
+    )
+    state = init_state(config=config)
+    t = balance_time(100)
+    # Zero USDC, keep USDT funded.
+    state.set_balances([
+        Balance(USDC, Decimal('0'), Decimal('0'), t),
+    ])
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, out = state.create_order(ticket, allocate=(Decimal('1'),))
+    assert exc is None
+    # USDC bucket skipped, USDT primary survives -> 1 order.
+    assert len(out) == 1
+    assert out[0].ticket.symbol.quote_asset == USDT
+
+
+def test_create_order_split_quote_buy_missing_alt_symbol_skipped():
+    """split_allocate_quote BUY: a bucket whose alt symbol is not
+    registered is silently skipped (exercises the
+    `alt_symbol is None` branch)."""
+    from trading_state import Symbol
+    state = init_state()
+    # Register FOOUSDT (primary quote) but not FOOUSDC.
+    state.set_symbol(Symbol('FOOUSDT', 'FOO', USDT))
+    state.set_notional_limit('FOO', Decimal('100000'))
+    state.set_price('FOOUSDT', Decimal('10'))
+    state.set_balances([
+        Balance('FOO', Decimal('100'), Decimal('0'), balance_time(0)),
+    ])
+    sym = state.get_symbol('FOOUSDT')
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('100'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10'),
+    )
+    exc, out = state.create_order(ticket, allocate=(Decimal('1'),))
+    assert exc is None
+    # USDC bucket skipped (no FOOUSDC), USDT survives.
+    assert len(out) == 1
+    assert out[0].ticket.symbol.quote_asset == USDT
+
+
+def test_create_order_split_quote_zero_weight_bucket_skipped():
+    """split_allocate_quote: weight 0 -> bucket skipped."""
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    # USDC weight 0 -> only USDT primary.
+    exc, out = state.create_order(ticket, allocate=(Decimal('0'),))
+    assert exc is None
+    assert len(out) == 1
+    assert out[0].ticket.symbol.quote_asset == USDT
+
+
+def test_create_order_split_quote_no_resources_returns_empty():
+    """split_allocate_quote: every bucket skipped -> empty list."""
+    from trading_state import Symbol
+    state = init_state()
+    # Register a base whose symbol is on neither USDT nor USDC.
+    state.set_symbol(Symbol('FOOZZZ', 'FOO', 'ZZZ'))
+    sym = state.get_symbol('FOOZZZ')
+    # Need notional_limit + price + balance so the BUY pre-flight passes.
+    state.set_notional_limit('FOO', Decimal('100000'))
+    state.set_price('FOOZZZ', Decimal('10'))
+    state.set_balances([
+        Balance('FOO', Decimal('1'), Decimal('0'), balance_time(0)),
+    ])
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('5'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10'),
+    )
+    exc, out = state.create_order(ticket, allocate=(Decimal('1'),))
+    assert exc is None
+    assert out == []
+
+
+def test_create_order_split_quote_per_bucket_filter_rejection_skipped():
+    """split_allocate_quote: per-bucket filter rejection inside the
+    assigner short-circuits that bucket; surviving buckets still
+    produce orders (covers the `if exc is not None: return sub_base`
+    branch)."""
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    # Tiny quantity ensures every alt bucket's sub-quote is below the
+    # NOTIONAL minimum -> all buckets reject -> empty list.
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('0.001'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, out = state.create_order(ticket, allocate=(Decimal('1'),))
+    assert exc is None
+    assert out == []
+
+
+# Coverage for state-level edge cases ----------------------------------
+
+def test_create_order_unregistered_symbol_fail_fasts():
+    """create_order with a ticket whose symbol was never set_symbol'd
+    -> SymbolNotDefinedError."""
+    from trading_state import Symbol, SymbolNotDefinedError
+    state = init_state()
+    # Construct a Symbol but never register it.
+    ghost = Symbol('GHOSTUSDT', 'GHOST', USDT)
+    ticket = LimitOrderTicket(
+        symbol=ghost,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        price=Decimal('1'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, out = state.create_order(ticket, allocate=None)
+    assert out is None
+    assert isinstance(exc, SymbolNotDefinedError)
+
+
+def test_import_order_missing_ticket_fail_fasts():
+    """import_order with an Order whose ticket is None -> fail-fast."""
+    from trading_state import (
+        InvalidOrderForImportError,
+        Order,
+        OrderStatus,
+    )
+    state = init_state()
+    # Order's __init__ is permissive — pass None for ticket directly.
+    bad = Order(
+        ticket=None,  # type: ignore[arg-type]
+        id='no-ticket',
+        status=OrderStatus.CREATED,
+    )
+    exc, returned = state.import_order(bad)
+    assert returned is None
+    assert isinstance(exc, InvalidOrderForImportError)
+
+
+def test_create_order_allocate_none_market_quote_buy_happy_path():
+    """single_create_quote BUY happy path: filter passes, notional and
+    free quote both fit -> one Order on the ticket's symbol."""
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, orders = state.create_order(ticket, allocate=None)
+    assert exc is None
+    assert len(orders) == 1
+    order = orders[0]
+    assert isinstance(order.ticket, MarketOrderTicket)
+    assert order.ticket.symbol is sym
+    assert order.ticket.quantity == Decimal('1000')
+
+
+def test_create_order_allocate_none_market_quote_sell_happy_path():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        # Implies 0.05 BTC base needed; init_state seeds 1 BTC.
+        quantity=Decimal('500'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, orders = state.create_order(ticket, allocate=None)
+    assert exc is None
+    assert len(orders) == 1
+    assert orders[0].ticket.symbol is sym

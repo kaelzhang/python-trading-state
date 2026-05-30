@@ -337,16 +337,6 @@ def test_decode_order_snapshot_propagates_data_param():
     assert order.data == {'strategy': 'recover'}
 
 
-def test_decode_order_snapshot_missing_required_field():
-    state = init_state()
-    btcusdt = state.get_symbol(BTCUSDT_NAME)
-    item = _snapshot_item()
-    item.pop('clientOrderId')
-    exc, order = decode_order_snapshot(item, symbol=btcusdt)
-    assert order is None
-    assert exc is not None
-
-
 # decode_order_query_response ------------------------------------------
 
 def test_decode_order_query_response_happy_path():
@@ -599,3 +589,186 @@ def test_mid_session_reconnect_imports_new_and_refreshes_existing():
     state.update_order(gap_closed, **kwargs)
     assert gap_closed.status is OrderStatus.FILLED
     assert gap_closed not in state.get_open_orders()
+
+
+# Decoder field-validation paths -----------------------------------------
+#
+# The REST snapshot decoders perform field-by-field validation; each
+# `_require` failure surfaces an InvalidExchangeData. Cover every
+# required-field-missing path so coverage doesn't drift away from
+# 100% as the schema evolves.
+
+from trading_state import InvalidExchangeData  # noqa: E402
+
+_QUERY_REQUIRED_FIELDS = (
+    'clientOrderId',
+    'status',
+    'updateTime',
+    'executedQty',
+    'cummulativeQuoteQty',
+)
+
+
+@pytest.mark.parametrize('drop', _QUERY_REQUIRED_FIELDS)
+def test_decode_order_query_response_missing_required_field(drop):
+    item = _snapshot_item()
+    item.pop(drop)
+    exc, decoded = decode_order_query_response(item)
+    assert decoded is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_query_response_unknown_status():
+    item = _snapshot_item(status='FOO_BAR')
+    exc, decoded = decode_order_query_response(item)
+    assert decoded is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_query_response_bad_executed_qty_decimal():
+    item = _snapshot_item(executedQty='not-a-decimal')
+    exc, decoded = decode_order_query_response(item)
+    assert decoded is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_query_response_bad_quote_qty_decimal():
+    item = _snapshot_item(cummulativeQuoteQty='not-a-decimal')
+    exc, decoded = decode_order_query_response(item)
+    assert decoded is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+_SNAPSHOT_REQUIRED_FIELDS = (
+    'clientOrderId',
+    'side',
+    'status',
+    'origQty',
+    'executedQty',
+    'cummulativeQuoteQty',
+    'time',
+    'updateTime',
+)
+
+
+@pytest.mark.parametrize('drop', _SNAPSHOT_REQUIRED_FIELDS)
+def test_decode_order_snapshot_missing_required_field(drop):
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item()
+    item.pop(drop)
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_unknown_side():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(side='SIDEWAYS')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_unknown_status():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(status='SUPER_FILLED')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_bad_decimal_orig_qty():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(origQty='not-a-decimal')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_bad_decimal_executed_qty():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(executedQty='not-a-decimal')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_bad_decimal_quote_qty():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(cummulativeQuoteQty='not-a-decimal')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_missing_type():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item()
+    item.pop('type')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_limit_missing_price():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(type='LIMIT')
+    item.pop('price')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_limit_bad_price_decimal():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(type='LIMIT', price='not-a-decimal')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_stop_loss_missing_stop_price():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(type='STOP_LOSS')
+    item.pop('stopPrice')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_stop_loss_bad_stop_price_decimal():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(type='STOP_LOSS', stopPrice='nope')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_limit_missing_time_in_force():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(type='LIMIT')
+    item.pop('timeInForce')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)
+
+
+def test_decode_order_snapshot_limit_bad_time_in_force():
+    state = init_state()
+    sym = state.get_symbol(BTCUSDT_NAME)
+    item = _snapshot_item(type='LIMIT', timeInForce='FOREVER')
+    exc, order = decode_order_snapshot(item, symbol=sym)
+    assert order is None
+    assert isinstance(exc, InvalidExchangeData)

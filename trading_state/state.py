@@ -780,8 +780,13 @@ class TradingState(EventEmitter[TradingStateEvent]):
                 if ref is None:
                     return SymbolPriceNotReadyError(ticket.symbol.name)
             return ref
-        # Unknown ticket type: no reference price available.
-        return SymbolPriceNotReadyError(ticket.symbol.name)
+        # The Union[...] in OrderTicket covers every above branch;
+        # arriving here means a new ticket subclass was added without
+        # updating dispatch. Fail loudly rather than silently returning.
+        raise TypeError(  # pragma: no cover
+            f'_resolve_reference_price: unsupported ticket type '
+            f'{type(ticket).__name__}'
+        )
 
     def _create_order(
         self,
