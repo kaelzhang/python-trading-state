@@ -99,12 +99,34 @@ def encode_order_request(
     return None, kwargs
 
 
+# Covers every Spot OrderStatus documented at
+# developers.binance.com/docs/binance-spot-api-docs/enums.
+# Verified 2026-05-30 against the Spot enums page.
+#
+# Mapping rationale:
+#   NEW            -> CREATED        (order accepted by exchange, on the book)
+#   PENDING_NEW    -> CREATED        (accepted but not yet on the book; state
+#                                     does not distinguish this sub-state)
+#   PARTIALLY_FILLED -> PARTIALLY_FILLED
+#                                    (state has a first-class status for this)
+#   FILLED         -> FILLED         (terminal, filled in full)
+#   CANCELED       -> CANCELLED      (terminal, user cancel)
+#   PENDING_CANCEL -> CANCELLING     (cancel request acknowledged but not
+#                                     yet final — matches our intermediate)
+#   EXPIRED        -> CANCELLED      (terminal, TIF expiry)
+#   EXPIRED_IN_MATCH -> CANCELLED    (terminal, STP-triggered expiry; behaves
+#                                     like a non-trading-prevented cancel from
+#                                     state's perspective)
+#   REJECTED       -> REJECTED       (terminal, rejected pre-book)
 _BINANCE_ORDER_STATUS_MAP = {
+    'NEW': OrderStatus.CREATED,
+    'PENDING_NEW': OrderStatus.CREATED,
+    'PARTIALLY_FILLED': OrderStatus.PARTIALLY_FILLED,
     'FILLED': OrderStatus.FILLED,
     'CANCELED': OrderStatus.CANCELLED,
+    'PENDING_CANCEL': OrderStatus.CANCELLING,
     'EXPIRED': OrderStatus.CANCELLED,
-    'PARTIALLY_FILLED': OrderStatus.CREATED,
-    'NEW': OrderStatus.CREATED,
+    'EXPIRED_IN_MATCH': OrderStatus.CANCELLED,
     'REJECTED': OrderStatus.REJECTED,
 }
 

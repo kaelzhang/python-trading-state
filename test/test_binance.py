@@ -481,11 +481,25 @@ def test_encode_order_request_unsupported():
 
 
 def test_decode_order_status():
+    # Mapping of the full Spot OrderStatus surface — see
+    # _BINANCE_ORDER_STATUS_MAP comments for the rationale of each row.
+    assert _decode_order_status("NEW")[1] == OrderStatus.CREATED
+    assert _decode_order_status("PENDING_NEW")[1] == OrderStatus.CREATED
+    assert (
+        _decode_order_status("PARTIALLY_FILLED")[1]
+        == OrderStatus.PARTIALLY_FILLED
+    )
     assert _decode_order_status("FILLED")[1] == OrderStatus.FILLED
     assert _decode_order_status("CANCELED")[1] == OrderStatus.CANCELLED
-    assert _decode_order_status("PARTIALLY_FILLED")[1] == OrderStatus.CREATED
-    assert _decode_order_status("NEW")[1] == OrderStatus.CREATED
+    assert (
+        _decode_order_status("PENDING_CANCEL")[1]
+        == OrderStatus.CANCELLING
+    )
     assert _decode_order_status("EXPIRED")[1] == OrderStatus.CANCELLED
+    assert (
+        _decode_order_status("EXPIRED_IN_MATCH")[1]
+        == OrderStatus.CANCELLED
+    )
     assert _decode_order_status("REJECTED")[1] == OrderStatus.REJECTED
 
     exc, value = _decode_order_status("UNKNOWN")
@@ -593,12 +607,19 @@ def test_decode_order_create_response_invalid_decimal():
 @pytest.mark.parametrize(
     "status_raw,expected_status",
     [
-        ("CANCELED", OrderStatus.CANCELLED),
-        ("FILLED", OrderStatus.FILLED),
-        ("EXPIRED", OrderStatus.CANCELLED),
-        ("REJECTED", OrderStatus.REJECTED),
+        # The full Spot OrderStatus surface per
+        # developers.binance.com/docs/binance-spot-api-docs/enums,
+        # verified 2026-05-30. Each row pins the decoder against the
+        # documented values so a future enum addition fails loudly.
         ("NEW", OrderStatus.CREATED),
-        ("PARTIALLY_FILLED", OrderStatus.CREATED),
+        ("PENDING_NEW", OrderStatus.CREATED),
+        ("PARTIALLY_FILLED", OrderStatus.PARTIALLY_FILLED),
+        ("FILLED", OrderStatus.FILLED),
+        ("CANCELED", OrderStatus.CANCELLED),
+        ("PENDING_CANCEL", OrderStatus.CANCELLING),
+        ("EXPIRED", OrderStatus.CANCELLED),
+        ("EXPIRED_IN_MATCH", OrderStatus.CANCELLED),
+        ("REJECTED", OrderStatus.REJECTED),
     ],
 )
 def test_decode_order_update_event(status_raw, expected_status):
