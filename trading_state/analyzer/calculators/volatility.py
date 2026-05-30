@@ -11,7 +11,6 @@ from ..metrics_stats import (
     weighted_variance,
 )
 from ..types import (
-    Params,
     ParamsAnnualizedReturn,
     ParamsDownsideDeviation,
     ParamsSemiVariance,
