@@ -238,43 +238,98 @@ def test_allocate_sell_across_alt_currencies():
 
 
 
-def test_allocate_passthrough_for_market_quote_quantity():
+def test_allocate_market_quote_buy_splits_across_alt_currencies():
+    """MARKET(QUOTE) BUY is now split across alt account currencies
+    via estimated_price (used as the base/quote conversion factor).
+    The split assumes stablecoin parity between primary and alts."""
     state = init_state()
     state.set_alt_currency_weights((
-        (Decimal('1'),),
+        (Decimal('1'),),  # USDC weight 1, USDT primary implicit 1
         (Decimal('0'),),
     ))
     sym = state.get_symbol(BTCUSDT_NAME)
     quote_market = MarketOrderTicket(
         symbol=sym,
         side=OrderSide.BUY,
-        quantity=Decimal('1000'),
+        quantity=Decimal('1000'),   # spend 1000 USDT total
         quantity_type=MarketQuantityType.QUOTE,
         estimated_price=Decimal('10000'),
     )
     exc, orders = state.allocate(quote_market)
     assert exc is None
-    assert len(orders) == 1
-    order = orders[0]
-    # Passthrough preserves the ticket type and the per-quote quantity.
-    assert isinstance(order.ticket, MarketOrderTicket)
-    assert order.ticket.quantity_type is MarketQuantityType.QUOTE
-    assert order.ticket.symbol is sym
+    assert len(orders) == 2
+
+    # Equal weights -> equal split of the base equivalent
+    # (1000/10000 = 0.1 BTC total) -> per bucket sub_quote ~= 500.
+    quote_assets = {o.ticket.symbol.quote_asset for o in orders}
+    assert quote_assets == {USDC, USDT}
+    for order in orders:
+        assert isinstance(order.ticket, MarketOrderTicket)
+        assert order.ticket.quantity_type is MarketQuantityType.QUOTE
+        assert order.ticket.quantity == Decimal('500')
+        assert order.ticket.side is OrderSide.BUY
 
 
-
-
-def test_allocate_stop_loss_passes_through_with_weights_set():
+def test_allocate_market_quote_sell_splits_with_aggregate_base_check():
+    """MARKET(QUOTE) SELL splits the implied base quantity
+    (quote / estimated_price) across buckets. The aggregate
+    free-base pre-flight rejects when the caller's base balance
+    cannot cover the implied base across all sub-orders."""
     state = init_state()
     state.set_alt_currency_weights((
         (Decimal('0'),),
-        (Decimal('0'),),
+        (Decimal('1'),),  # SELL: split across USDC/USDT
     ))
-    # Stop-loss / take-profit families take the passthrough flow
-    # (filter normalization + precise-only pre-flight) and materialize
-    # into a single Order. SELL has base-side pre-flight (1 BTC <=
-    # free balance of 1 BTC) which passes here.
+    sym = state.get_symbol(BTCUSDT_NAME)
+
+    # init_state seeds 1 BTC free. quantity=10000 USDT implies
+    # base_total = 1.0 BTC at estimated_price=10000 -> exactly fits.
+    quote_market = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('10000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, orders = state.allocate(quote_market)
+    assert exc is None
+    assert len(orders) == 2
+    quote_assets = {o.ticket.symbol.quote_asset for o in orders}
+    assert quote_assets == {USDC, USDT}
+
+
+def test_allocate_market_quote_sell_insufficient_base_returns_empty():
+    """A SELL asking for more quote than the implied base balance
+    can cover is best-effort skipped (empty list)."""
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    # 1 BTC held but caller asks for 50000 USDT -> implies 5 BTC needed.
+    quote_market = MarketOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('50000'),
+        quantity_type=MarketQuantityType.QUOTE,
+        estimated_price=Decimal('10000'),
+    )
+    exc, orders = state.allocate(quote_market)
+    assert exc is None
+    assert orders == []
+
+
+def test_allocate_stop_loss_splits_across_alt_currencies():
+    """A bare StopLoss SELL splits the base quantity across alt
+    account currencies. stop_price is preserved on every sub-ticket;
+    the basis-asymmetry risk is accepted by setting the weights."""
     from trading_state import StopLossOrderTicket
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),  # SELL: USDC weight 1
+    ))
     sym = state.get_symbol(BTCUSDT_NAME)
     sl = StopLossOrderTicket(
         symbol=sym,
@@ -282,12 +337,172 @@ def test_allocate_stop_loss_passes_through_with_weights_set():
         quantity=Decimal('1'),
         stop_price=Decimal('5000'),
     )
-    exc, out = state.allocate(sl)
+    exc, orders = state.allocate(sl)
     assert exc is None
-    assert len(out) == 1
-    assert isinstance(out[0].ticket, StopLossOrderTicket)
-    assert out[0].ticket.symbol is sym
-    assert out[0].ticket.stop_price == Decimal('5000')
+    assert len(orders) == 2
+    quote_assets = {o.ticket.symbol.quote_asset for o in orders}
+    assert quote_assets == {USDC, USDT}
+    for order in orders:
+        assert isinstance(order.ticket, StopLossOrderTicket)
+        assert order.ticket.stop_price == Decimal('5000')
+        assert order.ticket.side is OrderSide.SELL
+
+
+def test_allocate_stop_loss_no_split_primary_only():
+    """When alt weights are zero, the bare stop-loss collapses to a
+    single sub-order on the primary symbol (consistent with the
+    general weights behaviour for any ticket type)."""
+    from trading_state import StopLossOrderTicket
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('0'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    sl = StopLossOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        stop_price=Decimal('5000'),
+    )
+    exc, orders = state.allocate(sl)
+    assert exc is None
+    assert len(orders) == 1
+    assert orders[0].ticket.symbol.quote_asset == USDT
+
+
+def test_allocate_stop_loss_limit_buy_splits_with_quote_balance_check():
+    """A StopLossLimit BUY splits base quantity across alts using
+    the limit price as reference. Per-bucket quote balance gates."""
+    from trading_state import StopLossLimitOrderTicket
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('1'),),  # USDC weight 1
+        (Decimal('0'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    sll = StopLossLimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        price=Decimal('10000'),
+        stop_price=Decimal('11000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, orders = state.allocate(sll)
+    assert exc is None
+    assert len(orders) == 2
+    for order in orders:
+        assert isinstance(order.ticket, StopLossLimitOrderTicket)
+        assert order.ticket.price == Decimal('10000')
+        assert order.ticket.stop_price == Decimal('11000')
+        assert order.ticket.time_in_force is TimeInForce.GTC
+
+
+def test_allocate_take_profit_limit_sell_splits_preserves_fields():
+    """TakeProfitLimit SELL splits base; price + stop_price + TIF
+    are preserved on every sub-ticket."""
+    from trading_state import TakeProfitLimitOrderTicket
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    tpl = TakeProfitLimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        price=Decimal('40000'),
+        stop_price=Decimal('39000'),
+        time_in_force=TimeInForce.GTC,
+    )
+    exc, orders = state.allocate(tpl)
+    assert exc is None
+    assert len(orders) == 2
+    for order in orders:
+        assert isinstance(order.ticket, TakeProfitLimitOrderTicket)
+        assert order.ticket.price == Decimal('40000')
+        assert order.ticket.stop_price == Decimal('39000')
+
+
+def test_allocate_trailing_delta_stop_falls_back_to_symbol_price():
+    """A bare StopLoss with trailing_delta (no fixed stop_price)
+    can still split — the split reference falls back to the symbol's
+    last set_price."""
+    from trading_state import StopLossOrderTicket
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('1'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    sl = StopLossOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        trailing_delta=Decimal('100'),  # bps
+    )
+    exc, orders = state.allocate(sl)
+    assert exc is None
+    assert len(orders) == 2
+    for order in orders:
+        assert order.ticket.trailing_delta == Decimal('100')
+        assert order.ticket.stop_price is None
+
+
+def test_allocate_trailing_delta_stop_fail_fasts_without_symbol_price():
+    """A trailing-delta stop on a symbol with no set_price has no
+    reference for the split math; allocate fail-fasts with
+    SymbolPriceNotReadyError."""
+    from trading_state import (
+        Balance,
+        StopLossOrderTicket,
+        SymbolPriceNotReadyError,
+    )
+    state = init_state()
+    # Register a brand-new symbol but never call set_price on it.
+    state.set_symbol(Symbol('FOOUSDT', 'FOO', USDT))
+    state.set_notional_limit('FOO', Decimal('100000'))
+    state.set_balances([
+        Balance('FOO', Decimal('10'), Decimal('0'), balance_time(0)),
+    ])
+    sym = state.get_symbol('FOOUSDT')
+    sl = StopLossOrderTicket(
+        symbol=sym,
+        side=OrderSide.SELL,
+        quantity=Decimal('1'),
+        trailing_delta=Decimal('100'),
+    )
+    exc, orders = state.allocate(sl)
+    assert orders is None
+    assert isinstance(exc, SymbolPriceNotReadyError)
+
+
+def test_allocate_bare_stop_buy_aggregate_notional_uses_stop_price_estimate():
+    """bare StopLoss BUY notional pre-flight uses stop_price as an
+    estimate. If the estimated notional exceeds the asset cap the
+    request is best-effort skipped — accepted as a false-negative
+    trade-off vs. exchange-side rejection latency."""
+    from trading_state import StopLossOrderTicket
+    state = init_state()
+    state.set_alt_currency_weights((
+        (Decimal('0'),),
+        (Decimal('0'),),
+    ))
+    sym = state.get_symbol(BTCUSDT_NAME)
+    # BTC notional_limit = 100000 (init_state). Holding 1 BTC at
+    # price 10000 -> current notional 10000. A BUY 10 BTC at
+    # stop_price 10000 would project to 110000 > 100000.
+    sl = StopLossOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('10'),
+        stop_price=Decimal('10000'),
+    )
+    exc, orders = state.allocate(sl)
+    assert exc is None
+    assert orders == []
 
 
 

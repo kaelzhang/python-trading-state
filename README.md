@@ -35,6 +35,14 @@ from trading_state import (
 
 config = TradingConfig(
     account_currency='USDT',
+    # Alt account currencies must be stablecoins pegged to the primary
+    # account currency (USDT / USDC / FDUSD / DAI, etc.). The whole
+    # point of configuring alts is to split a single trading decision
+    # across multiple same-base symbols to distribute book depth and
+    # reduce slippage; that math relies on price equivalence across
+    # the configured currencies. Using a non-stablecoin alt (e.g.
+    # BUSD with a broken peg, or anything FX-exposed) makes the split
+    # systematically biased.
     alt_account_currencies=('USDC',),
     benchmark_assets=('BTC',),
 )
@@ -167,17 +175,21 @@ if exc is None:
 
 `state.update_order` silently drops stale writes (status / time / filled-quantity regressions) and emits a diagnostic `STALE_UPDATE` event. It never raises a business exception.
 
-#### Pre-flight for stop-loss / take-profit and `MarketOrderTicket(QUOTE)`
+#### Splits and pre-flight for every ticket type
 
-`allocate` cannot cross-currency-split tickets whose base quantity is implicit (`MarketOrderTicket(QUOTE)`) or trigger-dependent (stop-loss / take-profit variants). For these, `allocate` runs filter normalization and pre-flight on amounts that are precisely computable up-front; anything that depends on the trigger-time market price is silently passed through, and the exchange does the authoritative check at trigger time.
+`allocate` applies the same cross-currency split to **every** ticket type — `MarketOrderTicket(QUOTE)` and the stop-loss / take-profit families included. The split reference price is taken from whichever price field the ticket carries:
 
-| Ticket | notional pre-flight | free-balance pre-flight |
-|---|---|---|
-| `MarketOrderTicket(QUOTE)` BUY | yes (notional = quote_quantity) | yes (quote currency) |
-| `MarketOrderTicket(QUOTE)` SELL | N/A | skipped (base quantity unknown) |
-| `StopLossLimit / TakeProfitLimit` BUY | yes (notional = price × quantity) | yes (quote currency) |
-| `StopLoss / TakeProfit` (no limit) BUY | skipped (depends on trigger price) | skipped |
-| Any `StopLoss / TakeProfit*` SELL | N/A | yes (base quantity known) |
+| Ticket | split reference | aggregate BUY notional check | per-bucket BUY quote balance | aggregate SELL base balance |
+|---|---|---|---|---|
+| `LimitOrderTicket` (incl. post_only) | `price` | precise | yes | yes |
+| `MarketOrderTicket(BASE)` | `estimated_price` | precise | yes | yes |
+| `MarketOrderTicket(QUOTE)` | `estimated_price` | precise (notional = quantity) | yes | yes (uses `quantity / estimated_price`) |
+| `StopLossLimit` / `TakeProfitLimit` | `price` (limit) | precise | yes | yes |
+| `StopLoss` / `TakeProfit` (no limit) | `stop_price` (or symbol's last `set_price` if only `trailing_delta` is set) | **estimate** — actual fill price at trigger may differ | estimate | yes |
+
+For bare stop / take-profit BUYs, the notional pre-flight is an estimate (real fill happens at trigger-time market price). An estimated overshoot results in an empty result list, accepted as the trade-off for catching oversize orders before they hit the exchange.
+
+Stop / take-profit splits inherit a basis-asymmetry risk: in a fast move, one alt symbol may trigger before another, leaving the protective intent partially honoured. The library does not model OCO (one-cancels-other); using split stops means accepting this trade-off in exchange for distributed depth.
 
 ### 3) Check exposure when sizing the next trade
 

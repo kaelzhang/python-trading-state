@@ -4,23 +4,35 @@ asset quantity across multiple account-currency symbols according to
 caller-configured weights, while respecting per-bucket free balances
 (BUY) and per-bucket exchange filters.
 
-This module owns two flows used by `state.allocate`:
+Every ticket type that survives `state.allocate(...)` goes through a
+split flow — there is no passthrough for any ticket. The reason
+weights exist in the first place is to distribute depth across pairs
+sharing the same base asset, and that is most valuable for the order
+types (MARKET, stop-on-trigger) that most directly hit the book.
 
-- `split_allocate` for tickets that can be sized in base units
-  (LIMIT / LIMIT_MAKER / MARKET(BASE)). It runs aggregate BUY pre-
-  flight against the asset's notional cap, then runs the math in
-  `buy_allocate` / `sell_allocate` to fan a single canonical ticket
-  out across weighted alt-currency buckets in
-  `config.account_currencies` order.
+Two state-coupled flows:
 
-- `passthrough_allocate` for tickets that cannot be split in base
-  units (MARKET(QUOTE), stop / take-profit families). It applies
-  filter normalization and runs pre-flight only on amounts that are
-  precisely known up-front; anything that depends on trigger-time
-  market price is passed through.
+- `split_allocate` — base-quantity split. Used by LIMIT / LIMIT_MAKER
+  / MARKET(BASE) / stop / take-profit / their *Limit variants. The
+  caller of `split_allocate` supplies a `reference_price` derived
+  from whichever price field the ticket carries (`price`,
+  `estimated_price`, `stop_price`, or — for trailing-delta stops —
+  the symbol's last `set_price`).
+
+- `split_allocate_quote` — quote-quantity split. Used for
+  MARKET(QUOTE), where the caller-specified quantity is already in
+  quote units. The flow converts to base via `estimated_price`,
+  runs the same split math, then converts each sub-allocation back
+  to a per-bucket quote amount.
 
 Both flows materialize Orders through `state._create_order`, which
 attaches lifecycle listeners and emits `ORDER_CREATED`.
+
+Splitting assumes the alt account currencies are stablecoins pegged
+to the primary — see README §1. Under that assumption,
+`estimated_price` (and limit `price`, and `stop_price`) used as a
+cross-bucket reference produces orders whose effective per-bucket
+quote amounts are equivalent up to basis noise.
 """
 from __future__ import annotations
 
@@ -39,12 +51,10 @@ from dataclasses import replace
 from decimal import Decimal
 
 from .symbol import Symbol
-from .enums import MarketQuantityType, OrderSide
+from .enums import OrderSide
 from .order_ticket import (
-    OrderTicket,
     MarketOrderTicket,
-    StopLossOrderTicket,
-    StopLossLimitOrderTicket,
+    OrderTicket,
 )
 from .common import DECIMAL_INF, DECIMAL_ONE, DECIMAL_ZERO, ValueOrException
 
@@ -209,8 +219,16 @@ def split_allocate(
     data: Optional[Dict[str, Any]],
 ) -> ValueOrException[List['Order']]:
     """
-    Cross-currency split flow for LIMIT / LIMIT_MAKER / MARKET(BASE)
-    tickets.
+    Cross-currency split flow for base-quantity tickets: LIMIT /
+    LIMIT_MAKER / MARKET(BASE) / STOP_LOSS / STOP_LOSS_LIMIT /
+    TAKE_PROFIT / TAKE_PROFIT_LIMIT.
+
+    `reference_price` is the per-ticket price reference the caller's
+    dispatch chose: `ticket.price` for LIMIT-side variants,
+    `ticket.estimated_price` for MARKET(BASE), `ticket.stop_price`
+    for bare stop / take-profit (estimate — actual fill price at
+    trigger may differ; the trade-off was accepted in exchange for
+    splitting MARKET-on-trigger orders across alt buckets).
 
     BUY: aggregate notional pre-flight (best-effort: empty list on
     violation). Then split the base quantity across weighted buckets
@@ -297,85 +315,112 @@ def split_allocate(
     return None, [order for _, order in indexed]
 
 
-def passthrough_allocate(
+def split_allocate_quote(
     state: 'TradingState',
-    ticket: OrderTicket,
+    ticket: 'MarketOrderTicket',
     *,
     data: Optional[Dict[str, Any]],
 ) -> ValueOrException[List['Order']]:
     """
-    Passthrough flow for non-splittable tickets: `MarketOrderTicket
-    (QUOTE)` and stop-loss / take-profit variants.
+    Cross-currency split for `MarketOrderTicket(QUOTE)`.
 
-    Always applies filter normalization. Runs pre-flight only on
-    precisely-known amounts (see `_check_passthrough_amounts`);
-    anything that depends on the trigger-time market price (e.g. bare
-    `STOP_LOSS` BUY notional) is silently passed through — the caller
-    accepted exchange-side reject risk by choosing the ticket type.
+    The ticket's `quantity` field is in the original symbol's quote
+    units (e.g. "spend 1000 USDT to BUY BTC"). The split converts to
+    base via `ticket.estimated_price`, runs the same split math as
+    `split_allocate`, then converts each sub-allocation back into a
+    per-bucket quote amount using the same `estimated_price`. The
+    sub-ticket placed on each bucket is itself a
+    `MarketOrderTicket(QUOTE)`, so its `quantity` is the per-bucket
+    quote amount in that bucket's quote currency.
+
+    BUY: aggregate notional pre-flight uses `ticket.quantity`
+    directly as the projected notional (stablecoin parity makes the
+    primary-quote amount the same notional in every alt bucket). Each
+    bucket's free quote balance is used as a cap inside the split
+    math.
+
+    SELL: aggregate free-base pre-flight checks that the base asset
+    has at least `base_total = ticket.quantity / estimated_price`
+    available across all sub-orders combined.
+
+    Splitting depends on alt account currencies being stablecoins
+    pegged to the primary (see README §1).
     """
     side = ticket.side
-
-    exc, normalized = ticket.symbol.apply_filters(
-        ticket, validate_only=False
-    )
-    if exc is not None:
-        return None, []
-
-    notional, base_qty = _check_passthrough_amounts(normalized)
-    base_asset = normalized.symbol.base_asset
-    quote_asset = normalized.symbol.quote_asset
+    base_asset = ticket.symbol.base_asset
+    estimated_price = ticket.estimated_price
+    base_total = ticket.quantity / estimated_price
 
     if side is OrderSide.BUY:
-        if notional is not None:
-            exc, exposure_now = state.exposure(
-                base_asset,
-                include_unsettled_inflow=True,
-                include_unsettled_outflow=False,
-            )
-            if exc is not None:
-                return exc, None
-            projected = exposure_now.notional_value + notional
-            if projected > exposure_now.notional_limit:
-                return None, []
-            balance = state._balances.get_balance(quote_asset)
-            if balance is None or balance.free < notional:
-                return None, []
+        exc, exposure_now = state.exposure(
+            base_asset,
+            include_unsettled_inflow=True,
+            include_unsettled_outflow=False,
+        )
+        if exc is not None:
+            return exc, None
+        projected = exposure_now.notional_value + ticket.quantity
+        if projected > exposure_now.notional_limit:
+            return None, []
     else:
-        if base_qty is not None:
-            balance = state._balances.get_balance(base_asset)
-            if balance is None or balance.free < base_qty:
-                return None, []
+        balance = state._balances.get_balance(base_asset)
+        if balance is None or balance.free < base_total:
+            return None, []
 
-    order = state._create_order(normalized, data)
-    return None, [order]
+    weights_vec = state._alt_currency_weights[
+        0 if side is OrderSide.BUY else 1
+    ]
+    full_weights = (*weights_vec, DECIMAL_ONE)
 
+    resources: List[AllocationResource] = []
+    symbol_position: Dict[Symbol, int] = {}
 
-def _check_passthrough_amounts(
-    ticket: OrderTicket,
-) -> Tuple[Optional[Decimal], Optional[Decimal]]:
-    """
-    Compute the (notional, base_quantity) pair that the passthrough
-    pre-flight can rely on. `None` for either slot means "depends on
-    trigger-time market price — do NOT use for pre-flight rejection".
-    See README "Allocation pre-flight" for the carve-out table.
-    """
-    if isinstance(ticket, MarketOrderTicket):
-        if ticket.quantity_type is MarketQuantityType.QUOTE:
-            # quote_quantity IS the notional amount on BUY; base
-            # quantity is unknown until the fill price lands.
-            return ticket.quantity, None
-        # MARKET(BASE) is split-flow; defensive None / quantity.
-        return None, ticket.quantity
+    for i, acct_cur in enumerate(state._config.account_currencies):
+        weight = full_weights[i]
+        if weight <= DECIMAL_ZERO:
+            continue
+        symbol_name = state._config.get_symbol_name(base_asset, acct_cur)
+        alt_symbol = state._symbols.get_symbol(symbol_name)
+        if alt_symbol is None:
+            continue
+        if side is OrderSide.BUY:
+            balance = state._balances.get_balance(acct_cur)
+            if balance is None or balance.free <= DECIMAL_ZERO:
+                continue
+            free = balance.free
+        else:
+            free = DECIMAL_INF
+        resources.append(AllocationResource(alt_symbol, free, weight))
+        symbol_position[alt_symbol] = i
 
-    # StopLossLimitOrderTicket / TakeProfitLimitOrderTicket: both have
-    # a precise limit `price` -> notional & base both known.
-    if isinstance(ticket, StopLossLimitOrderTicket):
-        return ticket.quantity * ticket.price, ticket.quantity
+    if not resources:
+        return None, []
 
-    # Bare StopLossOrderTicket / TakeProfitOrderTicket: market-on-
-    # trigger; notional depends on trigger-time price -> None.
-    if isinstance(ticket, StopLossOrderTicket):
-        return None, ticket.quantity
+    indexed: List[Tuple[int, 'Order']] = []
 
-    # Defensive: any other passthrough ticket type.
-    return None, None
+    def assign(symbol: Symbol, sub_base: Decimal) -> Decimal:
+        if sub_base <= DECIMAL_ZERO:
+            return DECIMAL_ZERO
+        # Re-derive the per-bucket quote amount (in the alt symbol's
+        # quote currency) from sub_base using the same estimated_price.
+        sub_quote = sub_base * estimated_price
+        candidate = replace(ticket, symbol=symbol, quantity=sub_quote)
+        exc, normalized = candidate.symbol.apply_filters(
+            candidate, validate_only=False
+        )
+        if exc is not None:
+            return sub_base
+        # Translate the (possibly-normalized) quote quantity back to
+        # base for the leftover-return contract of `Assigner`.
+        normalized_base = normalized.quantity / estimated_price
+        order = state._create_order(normalized, data)
+        indexed.append((symbol_position[symbol], order))
+        return sub_base - normalized_base
+
+    if side is OrderSide.BUY:
+        buy_allocate(resources, base_total, estimated_price, assign)
+    else:
+        sell_allocate(resources, base_total, assign)
+
+    indexed.sort(key=lambda io: io[0])
+    return None, [order for _, order in indexed]

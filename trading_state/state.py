@@ -85,10 +85,12 @@ from .order_ticket import (
     OrderTicket,
     LimitOrderTicket,
     MarketOrderTicket,
+    StopLossOrderTicket,
+    StopLossLimitOrderTicket,
 )
 from .allocate import (
-    passthrough_allocate,
     split_allocate,
+    split_allocate_quote,
 )
 from .common import (
     DECIMAL_ZERO,
@@ -102,6 +104,7 @@ from .exceptions import (
     DuplicateOrderIdError,
     InvalidOrderForImportError,
     SymbolNotDefinedError,
+    SymbolPriceNotReadyError,
 )
 from .exposure import Exposure
 from .reconciliation import (
@@ -709,16 +712,44 @@ class TradingState(EventEmitter[TradingStateEvent]):
             return split_allocate(
                 self, ticket, reference_price=ticket.price, data=data
             )
+
         if isinstance(ticket, MarketOrderTicket):
             if ticket.quantity_type is MarketQuantityType.QUOTE:
-                return passthrough_allocate(self, ticket, data=data)
+                return split_allocate_quote(self, ticket, data=data)
             return split_allocate(
                 self, ticket,
                 reference_price=ticket.estimated_price,
                 data=data,
             )
-        # Stop-loss / take-profit families — passthrough flow.
-        return passthrough_allocate(self, ticket, data=data)
+
+        # Stop-Limit / TakeProfit-Limit: precise limit price as
+        # split reference. StopLossLimitOrderTicket also covers
+        # TakeProfitLimitOrderTicket through inheritance.
+        if isinstance(ticket, StopLossLimitOrderTicket):
+            return split_allocate(
+                self, ticket, reference_price=ticket.price, data=data
+            )
+
+        # Bare Stop-Loss / Take-Profit (market-on-trigger):
+        # `stop_price` is the best-available estimate. Trailing-delta
+        # variants don't carry a fixed stop price; fall back to the
+        # symbol's last `set_price` so the split math has a reference.
+        # StopLossOrderTicket also covers TakeProfitOrderTicket via
+        # inheritance.
+        if isinstance(ticket, StopLossOrderTicket):
+            ref = ticket.stop_price
+            if ref is None:
+                ref = self.get_price(ticket.symbol.name)
+                if ref is None:
+                    return (
+                        SymbolPriceNotReadyError(ticket.symbol.name),
+                        None,
+                    )
+            return split_allocate(
+                self, ticket, reference_price=ref, data=data
+            )
+
+        return None, []
 
     def record(self, *args, **kwargs) -> PerformanceSnapshot:
         """Record current performance snapshot."""
