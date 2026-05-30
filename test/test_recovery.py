@@ -377,12 +377,13 @@ def test_decode_order_query_response_kwargs_match_update_order_signature():
     state = init_state()
     btcusdt = state.get_symbol(BTCUSDT_NAME)
     # Build a live order via allocate
-    _, [order] = state.allocate(
+    _, [order] = state.create_order(
         LimitOrderTicket(
             symbol=btcusdt, side=OrderSide.BUY,
             quantity=Decimal('0.1'), price=Decimal('30000'),
             time_in_force=TimeInForce.GTC,
-        )
+        ),
+        allocate=None,
     )
     state.update_order(
         order,
@@ -441,12 +442,13 @@ def test_periodic_check_refreshes_known_order_via_update_order():
     resulting (id, kwargs) is fed directly to update_order."""
     state = init_state()
     btcusdt = state.get_symbol(BTCUSDT_NAME)
-    _, [order] = state.allocate(
+    _, [order] = state.create_order(
         LimitOrderTicket(
             symbol=btcusdt, side=OrderSide.BUY,
             quantity=Decimal('0.1'), price=Decimal('30000'),
             time_in_force=TimeInForce.GTC,
-        )
+        ),
+        allocate=None,
     )
     state.update_order(
         order,
@@ -487,12 +489,13 @@ def test_mid_session_reconnect_imports_new_and_refreshes_existing():
     btcusdt = state.get_symbol(BTCUSDT_NAME)
 
     # Pre-existing local order.
-    _, [known] = state.allocate(
+    _, [known] = state.create_order(
         LimitOrderTicket(
             symbol=btcusdt, side=OrderSide.BUY,
             quantity=Decimal('0.1'), price=Decimal('30000'),
             time_in_force=TimeInForce.GTC,
-        )
+        ),
+        allocate=None,
     )
     state.update_order(
         known,
@@ -507,12 +510,13 @@ def test_mid_session_reconnect_imports_new_and_refreshes_existing():
 
     # Another pre-existing local order that the gap-fill will discover
     # has terminated.
-    _, [gap_closed] = state.allocate(
+    _, [gap_closed] = state.create_order(
         LimitOrderTicket(
             symbol=btcusdt, side=OrderSide.BUY,
             quantity=Decimal('0.05'), price=Decimal('30000'),
             time_in_force=TimeInForce.GTC,
-        )
+        ),
+        allocate=None,
     )
     state.update_order(
         gap_closed,

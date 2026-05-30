@@ -6,31 +6,35 @@ Design principles:
   retries, or polls.
 - Be passive. Every state change is the consequence of a caller-driven
   write (set_price, set_symbol, set_notional_limit, set_balances,
-  set_cash_flow, allocate, update_order, cancel_order, import_order,
-  set_alt_currency_weights). The state never reaches out to an
-  exchange.
+  set_cash_flow, create_order, update_order, cancel_order,
+  import_order). The state never reaches out to an exchange.
 - Be sync. All methods are synchronous; no callbacks-by-default; events
   are diagnostic, not control-flow.
 - Be terminologically aligned with professional trading
   (exposure / notional limit / ticket / fill / settled / unsettled).
 - No defaults on internal computation; callers must opt in or out of
   every component explicitly. The only sanctioned-with-default args
-  in this surface are caller-metadata bags (Order.data, allocate's
-  optional `data=`).
-- Fail-fast on incomplete setup (missing weights, missing symbol);
-  best-effort on per-bucket business outcomes (filter rejection,
-  insufficient balance, aggregate notional cap reached).
+  in this surface are caller-metadata bags (Order.data,
+  create_order's optional `data=`).
+- Fail-fast on incomplete setup (missing symbol, missing notional
+  limit, malformed allocation weights); best-effort on per-bucket
+  business outcomes (filter rejection, insufficient balance,
+  aggregate notional cap reached).
+- Cross-currency allocation weights are a per-call argument on
+  `create_order`, not a global state field. Weights computation
+  (book depth, stablecoin balances, basis, inventory skew) is the
+  caller's responsibility.
 
 Public flow (caller side):
     state = TradingState(config)
     state.set_symbol(...); state.set_price(...); state.set_notional_limit(...)
-    state.set_alt_currency_weights(...)
     state.set_balances([Balance(...)])
 
-    # `allocate` is the sole entry point for creating Orders. It runs
-    # cross-currency split + filter + pre-flight and materializes each
-    # surviving sub-ticket into a registered Order.
-    exc, orders = state.allocate(canonical_ticket, data={...})
+    # `create_order` is the sole entry point for creating Orders.
+    # `allocate=None` -> single Order on ticket.symbol (no split).
+    # `allocate=weights_vec` -> split across alt account currencies
+    # using the caller's weights (sized against config.alt_account_currencies).
+    exc, orders = state.create_order(canonical_ticket, allocate=None, data={...})
     for order in orders:
         state.update_order(order, status=..., updated_at=..., ...)
 
@@ -89,6 +93,8 @@ from .order_ticket import (
     StopLossLimitOrderTicket,
 )
 from .allocate import (
+    single_create,
+    single_create_quote,
     split_allocate,
     split_allocate_quote,
 )
@@ -100,8 +106,8 @@ from .common import (
 from .config import TradingConfig
 from .exceptions import (
     AccountAssetHasNoExposureError,
-    AllocationWeightsNotSetError,
     DuplicateOrderIdError,
+    InvalidAllocationWeightsError,
     InvalidOrderForImportError,
     SymbolNotDefinedError,
     SymbolPriceNotReadyError,
@@ -168,9 +174,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
     _symbols: SymbolManager
 
     _balances: BalanceManager
-
-    # No allocations for account currencies by default
-    _alt_currency_weights: Optional[Tuple[AllocationWeights, AllocationWeights]] = None
 
     _orders: OrderManager
     _recon: ReconciliationManager
@@ -265,36 +268,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
         raise on None, on a non-Decimal value, or on a value <= 0.
         """
         self._balances.set_notional_limit(asset, limit)
-
-    def set_alt_currency_weights(
-        self,
-        weights: Optional[
-            Tuple[AllocationWeights, AllocationWeights]
-        ], /,
-    ) -> None:
-        """
-        Set the BUY/SELL weights of the alternative account currencies.
-
-        Args:
-            weights: A pair (buy_weights, sell_weights). Each weights
-                tuple matches the order of `config.alt_account_currencies`.
-                The primary account currency's weight is implicitly 1.
-
-        Usage::
-
-            state.set_alt_currency_weights((
-                (Decimal('0.5'), Decimal('0.5')),  # BUY
-                (Decimal('1'),   Decimal('0')),    # SELL
-            ))
-
-        Passing None removes the configuration; allocate() will then
-        simply pass tickets through unchanged.
-        """
-        if weights is not None:
-            self._check_allocation_weights(weights[0])
-            self._check_allocation_weights(weights[1])
-
-        self._alt_currency_weights = weights
 
     def freeze(self, *args, **kwargs) -> None:
         """
@@ -650,106 +623,97 @@ class TradingState(EventEmitter[TradingStateEvent]):
 
         return None, self._attach_order(order)
 
-    def allocate(
+    def create_order(
         self,
         ticket: OrderTicket, /,
         *,
         data: Optional[Dict[str, Any]] = None,
+        allocate: Optional[AllocationWeights],
     ) -> ValueOrException[List[Order]]:
         """
-        Construct one or more Orders from a caller-built canonical
-        ticket and register them with state.
+        Construct one or more Orders from a caller-built ticket and
+        register them with state. The sole public entry point for
+        order creation.
 
-        This is the sole public entry point for creating Orders. It
-        runs cross-currency allocation (when the ticket type permits),
-        filter normalization, and BUY pre-flight checks, then
-        materializes each surviving sub-ticket into an Order via the
-        private `_create_order` path (which registers with the order
-        manager, the reconciliation manager, and emits
-        `ORDER_CREATED` per Order).
+        `allocate` is a required keyword:
+
+        - `allocate=None` — no cross-currency split. The ticket is
+          filtered, pre-flighted, and materialized into a single
+          Order on `ticket.symbol` (no primary-symbol substitution).
+          Result list has length 0 (pre-flight or filter failed
+          best-effort) or 1.
+
+        - `allocate=weights_vec` — cross-currency split using the
+          caller-supplied weights. Aligned with
+          `config.alt_account_currencies`; the primary account
+          currency is given implicit weight 1. Each surviving alt
+          bucket produces an Order on the corresponding alt symbol.
+          Result list has length 0 .. len(account_currencies); order
+          matches declaration order, skipped buckets omitted.
+
+        Weights are intentionally not a state field. Real allocation
+        decisions depend on live book depth, stablecoin balances,
+        basis, and inventory skew — all caller-side inputs.
 
         Fail-fast (returns `(exc, None)`):
-          - `AllocationWeightsNotSetError` if
-            `set_alt_currency_weights(...)` has not been called.
-          - `SymbolNotDefinedError` if `ticket.symbol` has not been
-            registered via `set_symbol(...)`.
+          - `SymbolNotDefinedError` if `ticket.symbol` is not
+            registered.
+          - `InvalidAllocationWeightsError` if `allocate` is not None
+            and the vector's length does not match
+            `config.alt_account_currencies` or contains a negative
+            weight.
+          - `SymbolPriceNotReadyError` for a trailing-delta-only stop
+            with no `set_price` on the symbol.
           - Whatever `exposure(...)` returns for the ticket's base
             asset on a BUY when those errors signal an incomplete
-            setup (NotionalLimitNotSet, ValuationPriceNotReady, etc.).
+            setup (e.g. `NotionalLimitNotSetError`).
 
-        Best-effort (returns `(None, [orders])`, possibly shorter than
-        the caller might expect — or empty):
-          - Per-bucket filter rejection -> skip that bucket.
-          - Per-bucket insufficient free balance -> skip that bucket.
+        Best-effort (returns `(None, [orders])` — list may be shorter
+        than expected, or empty):
+          - Filter rejection on any bucket (or on the single ticket
+            when `allocate=None`) skips that bucket / returns `[]`.
+          - Insufficient free balance skips the bucket / returns `[]`.
           - Aggregate notional exceeding the asset's `notional_limit`
-            -> return `(None, [])`. Real-money trading: price drift
-            between ticket construction and the pre-flight may push
-            the projected exposure over the cap; the caller decides
-            whether to scale down and retry or skip entirely.
-
-        Ticket dispatch:
-          - `LimitOrderTicket`, `MarketOrderTicket(BASE)` -> main flow
-            (cross-currency split via `allocate.buy_allocate` /
-            `allocate.sell_allocate`).
-          - `MarketOrderTicket(QUOTE)`, stop-loss / take-profit
-            variants -> passthrough flow (filter normalization +
-            precise-only pre-flight; never split because the base
-            quantity is either implicit in the quote amount or
-            trigger-dependent).
-
-        The returned list is ordered by `config.account_currencies`
-        declaration order — primary first, then alt currencies in the
-        order they were declared. Buckets that skipped are simply
-        omitted (no empty slot).
+            returns `(None, [])`.
         """
-        if self._alt_currency_weights is None:
-            return AllocationWeightsNotSetError(), None
-
         if not self._symbols.has_symbol(ticket.symbol.name):
             return SymbolNotDefinedError(ticket.symbol.name), None
 
-        if isinstance(ticket, LimitOrderTicket):
-            return split_allocate(
-                self, ticket, reference_price=ticket.price, data=data
+        if allocate is not None:
+            exc = self._validate_allocation_weights(allocate)
+            if exc is not None:
+                return exc, None
+
+        # MARKET(QUOTE) does not need a separate reference price —
+        # split / single flows read `ticket.estimated_price` directly
+        # to handle the quote<->base conversion.
+        if (
+            isinstance(ticket, MarketOrderTicket)
+            and ticket.quantity_type is MarketQuantityType.QUOTE
+        ):
+            if allocate is None:
+                return single_create_quote(self, ticket, data=data)
+            return split_allocate_quote(
+                self, ticket, weights_vec=allocate, data=data,
             )
 
-        if isinstance(ticket, MarketOrderTicket):
-            if ticket.quantity_type is MarketQuantityType.QUOTE:
-                return split_allocate_quote(self, ticket, data=data)
-            return split_allocate(
+        ref_or_exc = self._resolve_reference_price(ticket)
+        if isinstance(ref_or_exc, Exception):
+            return ref_or_exc, None
+        reference_price = ref_or_exc
+
+        if allocate is None:
+            return single_create(
                 self, ticket,
-                reference_price=ticket.estimated_price,
+                reference_price=reference_price,
                 data=data,
             )
-
-        # Stop-Limit / TakeProfit-Limit: precise limit price as
-        # split reference. StopLossLimitOrderTicket also covers
-        # TakeProfitLimitOrderTicket through inheritance.
-        if isinstance(ticket, StopLossLimitOrderTicket):
-            return split_allocate(
-                self, ticket, reference_price=ticket.price, data=data
-            )
-
-        # Bare Stop-Loss / Take-Profit (market-on-trigger):
-        # `stop_price` is the best-available estimate. Trailing-delta
-        # variants don't carry a fixed stop price; fall back to the
-        # symbol's last `set_price` so the split math has a reference.
-        # StopLossOrderTicket also covers TakeProfitOrderTicket via
-        # inheritance.
-        if isinstance(ticket, StopLossOrderTicket):
-            ref = ticket.stop_price
-            if ref is None:
-                ref = self.get_price(ticket.symbol.name)
-                if ref is None:
-                    return (
-                        SymbolPriceNotReadyError(ticket.symbol.name),
-                        None,
-                    )
-            return split_allocate(
-                self, ticket, reference_price=ref, data=data
-            )
-
-        return None, []
+        return split_allocate(
+            self, ticket,
+            weights_vec=allocate,
+            reference_price=reference_price,
+            data=data,
+        )
 
     def record(self, *args, **kwargs) -> PerformanceSnapshot:
         """Record current performance snapshot."""
@@ -764,6 +728,60 @@ class TradingState(EventEmitter[TradingStateEvent]):
     # End of public methods ---------------------------------------------
 
     # Order construction & allocation internals -------------------------
+
+    def _validate_allocation_weights(
+        self,
+        weights: AllocationWeights,
+    ) -> Optional[Exception]:
+        """
+        Structural validation for the caller's `allocate=` vector.
+        Length must match `config.alt_account_currencies`; every
+        weight must be non-negative. Returns None on success or an
+        `InvalidAllocationWeightsError` describing the first
+        violation found.
+        """
+        expected_len = len(self._config.alt_account_currencies)
+        if len(weights) != expected_len:
+            return InvalidAllocationWeightsError(
+                f'expected {expected_len} weights '
+                f'(one per alt_account_currencies entry), '
+                f'got {len(weights)}'
+            )
+        for weight in weights:
+            if weight < DECIMAL_ZERO:
+                return InvalidAllocationWeightsError(
+                    f'weight must be >= 0, got {weight}'
+                )
+        return None
+
+    def _resolve_reference_price(
+        self,
+        ticket: OrderTicket,
+    ) -> Any:
+        """
+        Per-ticket-type reference price for the split / single flows
+        (everything except `MarketOrderTicket(QUOTE)`, which handles
+        its own base/quote conversion via `ticket.estimated_price`).
+
+        Returns either a `Decimal` or an `Exception` (the latter for
+        the trailing-delta-only stop case where the symbol has no
+        registered price).
+        """
+        if isinstance(ticket, LimitOrderTicket):
+            return ticket.price
+        if isinstance(ticket, MarketOrderTicket):
+            return ticket.estimated_price
+        if isinstance(ticket, StopLossLimitOrderTicket):
+            return ticket.price
+        if isinstance(ticket, StopLossOrderTicket):
+            ref = ticket.stop_price
+            if ref is None:
+                ref = self.get_price(ticket.symbol.name)
+                if ref is None:
+                    return SymbolPriceNotReadyError(ticket.symbol.name)
+            return ref
+        # Unknown ticket type: no reference price available.
+        return SymbolPriceNotReadyError(ticket.symbol.name)
 
     def _create_order(
         self,
@@ -799,22 +817,6 @@ class TradingState(EventEmitter[TradingStateEvent]):
         self._recon.register(order)
         self.emit(TradingStateEvent.ORDER_CREATED, order)
         return order
-
-    def _check_allocation_weights(
-        self,
-        weights: AllocationWeights,
-    ) -> None:
-        for weight in weights:
-            if weight < DECIMAL_ZERO:
-                raise ValueError(
-                    'The allocation weight must not less than 0'
-                )
-
-        if len(weights) != len(self._config.alt_account_currencies):
-            raise ValueError(
-                'The number of allocation weights must be equal to '
-                'the number of alternative account currencies'
-            )
 
     def _set_balance(
         self,

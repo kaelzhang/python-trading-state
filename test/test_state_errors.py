@@ -45,25 +45,55 @@ def test_symbols() -> Symbols:
     return get_symbols()
 
 
-def test_weights_must_match_alt_count():
+def test_create_order_allocate_weights_validation():
+    """`allocate=` is validated per-call by create_order. Length must
+    match config.alt_account_currencies; every entry must be
+    non-negative. Either violation surfaces an
+    InvalidAllocationWeightsError via ValueOrException."""
+    from trading_state import (
+        InvalidAllocationWeightsError,
+        LimitOrderTicket,
+        OrderSide,
+        Symbol,
+        TimeInForce,
+    )
+
     state = TradingState(
         TradingConfig(
             account_currency=USDT,
             alt_account_currencies=(USDC,),
         ),
     )
+    state.set_symbol(Symbol(BTCUSDT_NAME, BTC, USDT))
+    state.set_price(BTCUSDT_NAME, Decimal('10000'))
+    state.set_notional_limit(BTC, Decimal('100000'))
+    state.set_balances([
+        Balance(USDT, Decimal('100000'), Decimal('0'), balance_time()),
+    ])
+    sym = state.get_symbol(BTCUSDT_NAME)
+    ticket = LimitOrderTicket(
+        symbol=sym,
+        side=OrderSide.BUY,
+        quantity=Decimal('1'),
+        price=Decimal('10000'),
+        time_in_force=TimeInForce.GTC,
+    )
 
-    with pytest.raises(ValueError, match='must be equal to'):
-        state.set_alt_currency_weights((
-            (Decimal('0.5'), Decimal('0.2')),
-            (Decimal('0.5'), Decimal('0')),
-        ))
+    # Wrong length (2 entries, config has 1 alt).
+    exc, out = state.create_order(
+        ticket,
+        allocate=(Decimal('0.5'), Decimal('0.2')),
+    )
+    assert out is None
+    assert isinstance(exc, InvalidAllocationWeightsError)
 
-    with pytest.raises(ValueError, match='less than 0'):
-        state.set_alt_currency_weights((
-            (Decimal('-1'),),
-            (Decimal('0'),),
-        ))
+    # Negative weight.
+    exc, out = state.create_order(
+        ticket,
+        allocate=(Decimal('-1'),),
+    )
+    assert out is None
+    assert isinstance(exc, InvalidAllocationWeightsError)
 
 
 def test_exposure_errors_propagate_through_value_or_exception(
@@ -155,7 +185,7 @@ def test_feature_not_allowed_error(test_symbols: Symbols):
         estimated_price=Decimal('10000'),
     )
 
-    exception, orders = state.allocate(ticket)
+    exception, orders = state.create_order(ticket, allocate=None)
 
     assert exception is None
     assert orders == []

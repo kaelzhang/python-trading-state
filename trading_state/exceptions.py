@@ -148,18 +148,24 @@ class InsufficientFreeBalanceError(Exception):
         self.asset = asset
 
 
-class AllocationWeightsNotSetError(Exception):
+class InvalidAllocationWeightsError(Exception):
     """
-    Raised by `state.allocate(...)` when called before
-    `set_alt_currency_weights(...)`. Weights must be configured
-    explicitly (even if `((), ())` for a single account currency)
-    before allocation is allowed.
+    Raised by `state.create_order(..., allocate=weights)` when the
+    weights tuple is malformed. `reason` is a short string describing
+    which check failed — e.g. length-mismatch against
+    `config.alt_account_currencies` or a negative weight.
+
+    Weights live on the caller's side (recomputed per call from live
+    book depth, stablecoin balances, basis, etc.); they are not part
+    of `trading_state`'s setup. This exception only fires when the
+    caller's vector is structurally wrong, not for business outcomes
+    such as "all buckets exhausted".
     """
-    def __init__(self) -> None:
+    def __init__(self, reason: str) -> None:
         super().__init__(
-            'allocation weights have not been set; call '
-            'state.set_alt_currency_weights(...) first'
+            f'invalid allocation weights: {reason}'
         )
+        self.reason = reason
 
 
 class DuplicateOrderIdError(Exception):

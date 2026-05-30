@@ -35,14 +35,11 @@ from trading_state import (
 
 config = TradingConfig(
     account_currency='USDT',
-    # Alt account currencies must be stablecoins pegged to the primary
-    # account currency (USDT / USDC / FDUSD / DAI, etc.). The whole
-    # point of configuring alts is to split a single trading decision
-    # across multiple same-base symbols to distribute book depth and
-    # reduce slippage; that math relies on price equivalence across
-    # the configured currencies. Using a non-stablecoin alt (e.g.
-    # BUSD with a broken peg, or anything FX-exposed) makes the split
-    # systematically biased.
+    # Alt account currencies should be stablecoins pegged to the
+    # primary account currency (USDC, FDUSD, DAI, etc.). They are the
+    # other quote currencies you can route into when you want to split
+    # a trade for depth — the splitting math assumes USDT≈USDC≈primary
+    # in value. Non-stablecoin alts will systematically bias the split.
     alt_account_currencies=('USDC',),
     benchmark_assets=('BTC',),
 )
@@ -60,14 +57,6 @@ state.set_price('BTCUSDC', Decimal('30000'))
 # Required for every base asset the strategy takes exposure on.
 state.set_notional_limit('BTC', Decimal('100000'))
 
-# Cross-currency allocation weights for the alt account currencies.
-# Required even if you do not intend to split across alts — pass zero
-# weights to route everything through the primary account currency.
-state.set_alt_currency_weights((
-    (Decimal('0.5'),),   # BUY weights against alt_account_currencies
-    (Decimal('0'),),     # SELL weights
-))
-
 # Initial balances from the exchange's account snapshot.
 # Balance.time is required: it lets the library tell unsettled flow
 # (fills not yet reflected in a balance update) from settled balance.
@@ -79,7 +68,7 @@ state.set_balances([
 
 ### 2) Place a trade and keep state in sync with the exchange
 
-Suppose your strategy decided to buy 0.2 BTC at 30000 USDT. Encode that decision as an `OrderTicket`, hand it to `state.allocate(...)`, and the library returns one `Order` per cross-currency bucket that survived allocation (the BUY weights above gave each of USDT and USDC a non-zero share, so this single ticket fans out into two Orders).
+Suppose your strategy decided to buy 0.2 BTC at 30000 USDT. Encode that decision as an `OrderTicket` and hand it to `state.create_order(...)`. The library registers the resulting `Order` (or `Order`s, if you asked it to split — see below) and emits `ORDER_CREATED` for each. From there on, the caller drives every transition through `state.update_order(...)`.
 
 ```py
 from trading_state import (
@@ -99,21 +88,22 @@ ticket = LimitOrderTicket(
     time_in_force=TimeInForce.GTC,
 )
 
-# allocate runs the cross-currency split, the per-bucket exchange
-# filters, and the BUY pre-flight (notional cap + free balance). It
-# returns one Order per surviving bucket — each Order is already
-# registered with the order manager, and ORDER_CREATED has been
-# emitted once per Order. Each Order starts at status INIT.
-exc, orders = state.allocate(ticket, data={'strategy': 'momentum'})
+# `allocate` is a required keyword: pass `None` to skip cross-currency
+# splitting and create a single Order on the ticket's symbol. The
+# library runs filter normalization and BUY pre-flight (notional cap
+# + free balance) regardless of which path you take.
+exc, orders = state.create_order(
+    ticket,
+    data={'strategy': 'momentum'},
+    allocate=None,
+)
 if exc is not None:
-    # Setup error (weights missing, symbol not registered, notional
-    # limit not set, etc.). Caller decides: log, raise, or repair.
+    # Setup error (symbol not registered, notional limit not set,
+    # allocate vector malformed when splitting, etc.).
     ...
 elif not orders:
-    # Best-effort outcome: every bucket was skipped (filter rejection,
-    # insufficient balance, aggregate notional cap reached). The
-    # caller's decision was not honoured this round; nothing landed
-    # in state.
+    # Best-effort outcome: filter or pre-flight knocked the order
+    # out; nothing landed in state.
     ...
 ```
 
@@ -175,9 +165,35 @@ if exc is None:
 
 `state.update_order` silently drops stale writes (status / time / filled-quantity regressions) and emits a diagnostic `STALE_UPDATE` event. It never raises a business exception.
 
-#### Splits and pre-flight for every ticket type
+#### Splitting a single trade across alt account currencies
 
-`allocate` applies the same cross-currency split to **every** ticket type — `MarketOrderTicket(QUOTE)` and the stop-loss / take-profit families included. The split reference price is taken from whichever price field the ticket carries:
+When the strategy wants to distribute a trade across the configured alt account currencies (to source depth from multiple books and reduce slippage), pass the per-call weights via `allocate=`. The vector is aligned with `config.alt_account_currencies`; the primary account currency has implicit weight 1. Weights are intentionally per-call because in production they are recomputed every decision from live inputs (book depth, stablecoin balances, basis, inventory skew) — none of which the library holds.
+
+Two patterns work, pick whichever fits your routing logic:
+
+**Delegate the split to trading_state.** Provide a weights vector; the library splits the canonical ticket across alt buckets, filter-normalizes each, runs per-bucket pre-flight, and registers one Order per surviving bucket.
+
+```py
+weights = my_router.compute_buy_weights(live_book_depth, free_balances)
+exc, orders = state.create_order(ticket, allocate=weights)
+# orders has one entry per surviving account-currency bucket, in
+# `config.account_currencies` declaration order. The loop above
+# (SUBMITTING -> encode -> POST -> decode -> update_order) works
+# unchanged.
+```
+
+**Split caller-side, then submit each sub-ticket without further splitting.** Useful when your router does something the library's split math doesn't model (e.g., venue-aware sizing, latency-weighted shares).
+
+```py
+sub_tickets = my_router.split(ticket, live_book_depth)
+for sub_ticket in sub_tickets:
+    exc, orders = state.create_order(sub_ticket, allocate=None)
+    # ... drive each order through the SUBMITTING -> POST -> ... loop
+```
+
+#### Split reference and pre-flight per ticket type
+
+When `allocate=` triggers the split flow, each ticket type contributes a different price field as the split reference; the pre-flight checks below use the same reference:
 
 | Ticket | split reference | aggregate BUY notional check | per-bucket BUY quote balance | aggregate SELL base balance |
 |---|---|---|---|---|
@@ -189,7 +205,7 @@ if exc is None:
 
 For bare stop / take-profit BUYs, the notional pre-flight is an estimate (real fill happens at trigger-time market price). An estimated overshoot results in an empty result list, accepted as the trade-off for catching oversize orders before they hit the exchange.
 
-Stop / take-profit splits inherit a basis-asymmetry risk: in a fast move, one alt symbol may trigger before another, leaving the protective intent partially honoured. The library does not model OCO (one-cancels-other); using split stops means accepting this trade-off in exchange for distributed depth.
+Stop / take-profit splits inherit a basis-asymmetry risk: in a fast move, one alt symbol may trigger before another, leaving the protective intent partially honoured. The library does not model OCO (one-cancels-other); using split stops means accepting this trade-off in exchange for distributed depth. If that is unacceptable for your strategy, pass `allocate=None` so the stop stays on a single market.
 
 ### 3) Check exposure when sizing the next trade
 

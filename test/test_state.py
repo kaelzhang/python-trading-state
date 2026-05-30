@@ -87,7 +87,7 @@ def test_allocate_returns_init_order_then_caller_drives_state_machine():
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
 
-    exc, orders = state.allocate(ticket, data={'strategy': 'momentum'})
+    exc, orders = state.create_order(ticket, data={'strategy': 'momentum'}, allocate=None)
 
     assert exc is None
     assert orders is not None
@@ -149,7 +149,7 @@ def test_filter_rejection_in_allocate_returns_empty_list_no_state_change():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('0.00001'), Decimal('10000')
     )
-    exc, orders = state.allocate(ticket)
+    exc, orders = state.create_order(ticket, allocate=None)
     assert exc is None
     assert orders == []
     assert len(list(state.query_orders())) == 0
@@ -161,7 +161,7 @@ def test_update_order_silently_drops_status_regression_and_emits_stale():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
 
     t0 = datetime(2024, 1, 1, 0, 0, 0)
     state.update_order(
@@ -209,7 +209,7 @@ def test_update_order_silently_drops_filled_regression():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
 
     t0 = datetime(2024, 1, 1)
     state.update_order(
@@ -248,7 +248,7 @@ def test_update_order_silently_drops_time_regression():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
 
     t1 = datetime(2024, 1, 1, 0, 0, 0)
     state.update_order(
@@ -332,7 +332,7 @@ def test_unsettled_inflow_outflow_and_exposure_modes():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
 
     t_fill = balance_time(60)  # after current balance
     state.update_order(
@@ -393,7 +393,7 @@ def test_cancel_order_sets_cancelling_then_cancelled_purges():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
 
     t0 = datetime(2024, 1, 1)
     state.update_order(
@@ -437,7 +437,7 @@ def test_query_orders_by_data_subset():
         ticket = _make_buy_limit_ticket(
             state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
         )
-        _, [order] = state.allocate(ticket, data={'tag': tag})
+        _, [order] = state.create_order(ticket, data={'tag': tag}, allocate=None)
         state.update_order(
             order,
             status=OrderStatus.CREATED,
@@ -483,7 +483,7 @@ def test_order_fill_records_trade_and_pnl():
         price=Decimal('10000'),
         time_in_force=TimeInForce.GTC,
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
     assert order is not None
     assert order.ticket.quantity == Decimal('20')
 
@@ -550,7 +550,7 @@ def test_query_orders_unknown_criterion_matches_nothing():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
     state.update_order(
         order,
         status=OrderStatus.CREATED,
@@ -575,7 +575,7 @@ def test_order_rejected_path():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
     state.update_order(
         order,
         status=OrderStatus.CREATED,
@@ -616,7 +616,7 @@ def test_unsettled_outflow_from_sell_fill():
         price=Decimal('10000'),
         time_in_force=TimeInForce.GTC,
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
     t_fill = balance_time(60)
     state.update_order(
         order,
@@ -656,7 +656,7 @@ def test_unsettled_handles_commission_asset_and_unrelated_balance_update():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000'),
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
     state.update_order(
         order,
         status=OrderStatus.FILLED,
@@ -711,7 +711,7 @@ def test_purge_fully_settled_after_balance_catches_up_with_commission():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDT_NAME, Decimal('1'), Decimal('10000'),
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
     t_fill = balance_time(60)
     state.update_order(
         order,
@@ -747,7 +747,7 @@ def test_completed_order_rejects_further_updates():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
     t = datetime(2024, 1, 1)
     state.update_order(
         order,
@@ -798,7 +798,7 @@ def test_user_order_listener_survives_terminal_status():
     ticket = _make_buy_limit_ticket(
         state, BTCUSDC_NAME, Decimal('1'), Decimal('10000')
     )
-    _, [order] = state.allocate(ticket)
+    _, [order] = state.create_order(ticket, allocate=None)
 
     seen_statuses = []
     order.on(

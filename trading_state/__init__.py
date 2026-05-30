@@ -23,7 +23,6 @@ from .enums import (
 
 from .exceptions import (
     AccountAssetHasNoExposureError,
-    AllocationWeightsNotSetError,
     AssetNotDefinedError,
     SymbolNotDefinedError,
     SymbolPriceNotReadyError,
@@ -34,6 +33,7 @@ from .exceptions import (
     DuplicateOrderIdError,
     FeatureNotAllowedError,
     InsufficientFreeBalanceError,
+    InvalidAllocationWeightsError,
     InvalidExchangeData,
     InvalidOrderForImportError,
     NotionalLimitExceededError,

@@ -809,17 +809,19 @@ def test_decoded_dicts_round_trip_through_state_update_order():
     state.set_symbol(sym)
     state.set_price("BTCUSDT", Decimal("30000"))
     state.set_notional_limit("BTC", Decimal("100000"))
-    state.set_alt_currency_weights(((), ()))
     state.set_balances([
         Balance("BTC", Decimal("1"), DECIMAL_ZERO, datetime(2024, 1, 1)),
         Balance("USDT", Decimal("100000"), DECIMAL_ZERO,
                 datetime(2024, 1, 1)),
     ])
 
-    exc, orders = state.allocate(LimitOrderTicket(
-        symbol=sym, side=OrderSide.BUY, quantity=Decimal("0.1"),
-        price=Decimal("30000"), time_in_force=TimeInForce.GTC,
-    ))
+    exc, orders = state.create_order(
+        LimitOrderTicket(
+            symbol=sym, side=OrderSide.BUY, quantity=Decimal("0.1"),
+            price=Decimal("30000"), time_in_force=TimeInForce.GTC,
+        ),
+        allocate=None,
+    )
     assert exc is None
     assert len(orders) == 1
     order = orders[0]

@@ -1,38 +1,42 @@
 """
-Allocation algorithms used by state.allocate() to split a single base
-asset quantity across multiple account-currency symbols according to
-caller-configured weights, while respecting per-bucket free balances
-(BUY) and per-bucket exchange filters.
+Allocation backends called by `state.create_order(...)`. Four
+state-coupled flows, picked by `state.create_order` according to the
+ticket type and the presence of the `allocate=` keyword:
 
-Every ticket type that survives `state.allocate(...)` goes through a
-split flow — there is no passthrough for any ticket. The reason
-weights exist in the first place is to distribute depth across pairs
-sharing the same base asset, and that is most valuable for the order
-types (MARKET, stop-on-trigger) that most directly hit the book.
+  - `single_create`        — `allocate=None` for base-quantity tickets
+                             (LIMIT / MARKET(BASE) / stop / take-profit
+                             / their *Limit variants).  No split,
+                             ticket.symbol preserved.
 
-Two state-coupled flows:
+  - `single_create_quote`  — `allocate=None` for `MarketOrderTicket
+                             (QUOTE)`.  No split, base/quote-aware
+                             pre-flight on the original symbol.
 
-- `split_allocate` — base-quantity split. Used by LIMIT / LIMIT_MAKER
-  / MARKET(BASE) / stop / take-profit / their *Limit variants. The
-  caller of `split_allocate` supplies a `reference_price` derived
-  from whichever price field the ticket carries (`price`,
-  `estimated_price`, `stop_price`, or — for trailing-delta stops —
-  the symbol's last `set_price`).
+  - `split_allocate`       — `allocate=weights_vec` for base-quantity
+                             tickets.  Splits the base quantity across
+                             every weighted account-currency bucket.
 
-- `split_allocate_quote` — quote-quantity split. Used for
-  MARKET(QUOTE), where the caller-specified quantity is already in
-  quote units. The flow converts to base via `estimated_price`,
-  runs the same split math, then converts each sub-allocation back
-  to a per-bucket quote amount.
+  - `split_allocate_quote` — `allocate=weights_vec` for `MarketOrder
+                             Ticket(QUOTE)`.  Converts the quote
+                             quantity to base via `estimated_price`,
+                             runs the standard split, then converts
+                             each sub-allocation back to a per-bucket
+                             quote amount in that bucket's quote
+                             currency.
 
-Both flows materialize Orders through `state._create_order`, which
-attaches lifecycle listeners and emits `ORDER_CREATED`.
+The split flows receive `weights_vec` from the caller of
+`state.create_order` rather than from a state field; the caller is
+expected to compute weights live from book depth, available
+stablecoin balances, basis, inventory skew, etc.
 
-Splitting assumes the alt account currencies are stablecoins pegged
-to the primary — see README §1. Under that assumption,
-`estimated_price` (and limit `price`, and `stop_price`) used as a
-cross-bucket reference produces orders whose effective per-bucket
-quote amounts are equivalent up to basis noise.
+All four flows materialize Orders through `state._create_order`,
+which attaches lifecycle listeners and emits `ORDER_CREATED`.
+
+Splitting (when the caller asks for it) assumes the alt account
+currencies are stablecoins pegged to the primary — see README §1.
+Under that assumption, `estimated_price` (and limit `price`, and
+`stop_price`) used as a cross-bucket reference produces orders whose
+effective per-bucket quote amounts are equivalent up to basis noise.
 """
 from __future__ import annotations
 
@@ -215,6 +219,7 @@ def split_allocate(
     state: 'TradingState',
     ticket: OrderTicket,
     *,
+    weights_vec: Tuple[Decimal, ...],
     reference_price: Decimal,
     data: Optional[Dict[str, Any]],
 ) -> ValueOrException[List['Order']]:
@@ -222,6 +227,11 @@ def split_allocate(
     Cross-currency split flow for base-quantity tickets: LIMIT /
     LIMIT_MAKER / MARKET(BASE) / STOP_LOSS / STOP_LOSS_LIMIT /
     TAKE_PROFIT / TAKE_PROFIT_LIMIT.
+
+    `weights_vec` is the per-call vector the caller passed to
+    `state.create_order(..., allocate=...)`. It is aligned with
+    `config.alt_account_currencies`; the primary account currency is
+    given implicit weight 1 and lives at the tail of the full vector.
 
     `reference_price` is the per-ticket price reference the caller's
     dispatch chose: `ticket.price` for LIMIT-side variants,
@@ -256,9 +266,6 @@ def split_allocate(
         if projected > exposure_now.notional_limit:
             return None, []
 
-    weights_vec = state._alt_currency_weights[
-        0 if side is OrderSide.BUY else 1
-    ]
     # alt weights first (matches alt_account_currencies order),
     # primary at the tail with implicit weight 1 — together matches
     # config.account_currencies.
@@ -319,6 +326,7 @@ def split_allocate_quote(
     state: 'TradingState',
     ticket: 'MarketOrderTicket',
     *,
+    weights_vec: Tuple[Decimal, ...],
     data: Optional[Dict[str, Any]],
 ) -> ValueOrException[List['Order']]:
     """
@@ -332,6 +340,10 @@ def split_allocate_quote(
     sub-ticket placed on each bucket is itself a
     `MarketOrderTicket(QUOTE)`, so its `quantity` is the per-bucket
     quote amount in that bucket's quote currency.
+
+    `weights_vec` is the per-call vector passed via
+    `state.create_order(..., allocate=...)`; same semantics as
+    `split_allocate`.
 
     BUY: aggregate notional pre-flight uses `ticket.quantity`
     directly as the projected notional (stablecoin parity makes the
@@ -367,9 +379,6 @@ def split_allocate_quote(
         if balance is None or balance.free < base_total:
             return None, []
 
-    weights_vec = state._alt_currency_weights[
-        0 if side is OrderSide.BUY else 1
-    ]
     full_weights = (*weights_vec, DECIMAL_ONE)
 
     resources: List[AllocationResource] = []
@@ -424,3 +433,120 @@ def split_allocate_quote(
 
     indexed.sort(key=lambda io: io[0])
     return None, [order for _, order in indexed]
+
+
+def single_create(
+    state: 'TradingState',
+    ticket: OrderTicket,
+    *,
+    reference_price: Decimal,
+    data: Optional[Dict[str, Any]],
+) -> ValueOrException[List['Order']]:
+    """
+    No-split flow for base-quantity tickets: LIMIT / LIMIT_MAKER /
+    MARKET(BASE) / STOP_LOSS / STOP_LOSS_LIMIT / TAKE_PROFIT /
+    TAKE_PROFIT_LIMIT, when the caller passes `allocate=None`.
+
+    Unlike `split_allocate`, `ticket.symbol` is preserved — the
+    caller's choice of pair is final, and the library never
+    substitutes a primary-symbol equivalent.
+
+    Behaviour mirrors a single-bucket split: filter normalization,
+    then per-side pre-flight against the asset's notional cap and
+    the caller's free balance. Filter / notional / balance failures
+    are best-effort: returns `(None, [])` so the caller sees the same
+    "nothing landed" signal as the split path.
+
+    `reference_price` is the per-ticket price reference picked by
+    `state.create_order`'s dispatch (`ticket.price`,
+    `ticket.estimated_price`, `ticket.stop_price`, or the symbol's
+    last `set_price` for trailing-delta stops).
+    """
+    side = ticket.side
+    base_asset = ticket.symbol.base_asset
+    quote_asset = ticket.symbol.quote_asset
+
+    exc, normalized = ticket.symbol.apply_filters(
+        ticket, validate_only=False
+    )
+    if exc is not None:
+        return None, []
+
+    if side is OrderSide.BUY:
+        exc, exposure_now = state.exposure(
+            base_asset,
+            include_unsettled_inflow=True,
+            include_unsettled_outflow=False,
+        )
+        if exc is not None:
+            return exc, None
+        notional = normalized.quantity * reference_price
+        if (
+            exposure_now.notional_value + notional
+            > exposure_now.notional_limit
+        ):
+            return None, []
+        balance = state._balances.get_balance(quote_asset)
+        if balance is None or balance.free < notional:
+            return None, []
+    else:
+        balance = state._balances.get_balance(base_asset)
+        if balance is None or balance.free < normalized.quantity:
+            return None, []
+
+    order = state._create_order(normalized, data)
+    return None, [order]
+
+
+def single_create_quote(
+    state: 'TradingState',
+    ticket: 'MarketOrderTicket',
+    *,
+    data: Optional[Dict[str, Any]],
+) -> ValueOrException[List['Order']]:
+    """
+    No-split flow for `MarketOrderTicket(QUOTE)` when the caller
+    passes `allocate=None`.
+
+    The ticket's `quantity` is already the notional, so the BUY
+    notional pre-flight uses it directly. SELL needs a base-side
+    free-balance check; the implied base is `quantity /
+    estimated_price`.
+
+    `ticket.symbol` is preserved.
+    """
+    side = ticket.side
+    base_asset = ticket.symbol.base_asset
+    quote_asset = ticket.symbol.quote_asset
+    estimated_price = ticket.estimated_price
+    base_total = ticket.quantity / estimated_price
+
+    exc, normalized = ticket.symbol.apply_filters(
+        ticket, validate_only=False
+    )
+    if exc is not None:
+        return None, []
+
+    if side is OrderSide.BUY:
+        exc, exposure_now = state.exposure(
+            base_asset,
+            include_unsettled_inflow=True,
+            include_unsettled_outflow=False,
+        )
+        if exc is not None:
+            return exc, None
+        if (
+            exposure_now.notional_value + ticket.quantity
+            > exposure_now.notional_limit
+        ):
+            return None, []
+        balance = state._balances.get_balance(quote_asset)
+        if balance is None or balance.free < ticket.quantity:
+            return None, []
+    else:
+        balance = state._balances.get_balance(base_asset)
+        if balance is None or balance.free < base_total:
+            return None, []
+
+    order = state._create_order(normalized, data)
+    return None, [order]

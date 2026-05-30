@@ -100,7 +100,7 @@ class Trader:
             price=price,
             time_in_force=TimeInForce.GTC,
         )
-        exc, orders = self._state.allocate(ticket)
+        exc, orders = self._state.create_order(ticket, allocate=None)
         if exc is not None or not orders:
             return
         order = orders[0]
@@ -146,7 +146,7 @@ class Trader:
             price=price,
             time_in_force=TimeInForce.GTC,
         )
-        exc, orders = self._state.allocate(ticket)
+        exc, orders = self._state.create_order(ticket, allocate=None)
         if exc is not None or not orders:
             return
         order = orders[0]
