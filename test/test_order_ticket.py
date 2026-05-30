@@ -149,37 +149,3 @@ def test_plain_limit_requires_time_in_force():
         )
 
 
-def test_ticket_apply_filters_and_validate():
-    """Tickets route apply_filters / validate through their bound symbol."""
-    from trading_state.filters import PrecisionFilter
-
-    sym_with_filter = Symbol(
-        name='AB',
-        base_asset='A',
-        quote_asset='B',
-    )
-    sym_with_filter.add_filter(
-        PrecisionFilter(base_asset_precision=2, quote_asset_precision=3)
-    )
-
-    ticket = LimitOrderTicket(
-        symbol=sym_with_filter,
-        side=OrderSide.SELL,
-        quantity=Decimal('1.2345'),
-        price=Decimal('10'),
-        time_in_force=TimeInForce.GTC,
-    )
-
-    # apply_filters normalizes
-    exc, normalized = ticket.apply_filters()
-    assert exc is None
-    assert normalized is not ticket
-    assert normalized.quantity == Decimal('1.23')
-
-    # validate fails on the un-normalized input
-    exc = ticket.validate()
-    assert isinstance(exc, ValueError)
-
-    # validate passes on the already-normalized ticket
-    exc = normalized.validate()
-    assert exc is None

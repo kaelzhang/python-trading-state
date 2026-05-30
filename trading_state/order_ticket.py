@@ -13,7 +13,6 @@ from typing import (
     Union,
 )
 
-from .common import ValueOrException
 from .enums import (
     MarketQuantityType,
     OrderSide,
@@ -80,32 +79,6 @@ class BaseOrderTicket:
             if getattr(self, key, None) != value:
                 return False
         return True
-
-    def apply_filters(
-        self,
-    ) -> ValueOrException['BaseOrderTicket']:
-        """
-        Run all of self.symbol's filters in normalize mode and return the
-        (possibly new) filter-applied ticket.
-
-        Returns:
-            (None, self)        — no filter changed anything
-            (None, new_ticket)  — normalized; a frozen copy with adjusted fields
-            (exc, None)         — a filter rejected
-        """
-        return self.symbol.apply_filters(self, validate_only=False)
-
-    def validate(self) -> Optional[Exception]:
-        """
-        Strict-validate against self.symbol's filters. No normalization.
-
-        Returns:
-            None       — passes all filters as-is
-            Exception  — some filter rejected
-        """
-        exc, _ = self.symbol.apply_filters(self, validate_only=True)
-        return exc
-
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class LimitOrderTicket(BaseOrderTicket):
